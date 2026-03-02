@@ -1550,6 +1550,7 @@ var require_picomatch2 = __commonJS({
 // src/extraction/run.ts
 var import_picomatch = __toESM(require_picomatch2(), 1);
 import { spawn } from "child_process";
+import { existsSync } from "fs";
 import { readFile as readFile3 } from "fs/promises";
 import path3 from "path";
 
@@ -15617,6 +15618,8 @@ function buildExtractionPrompt(input) {
     "- Use exact file matchers when memory is tied to one specific file (for example: `src/app.ts`).",
     "- Use directory globs (`dir/**`) only when memory clearly applies to multiple files under that directory.",
     "- Do not emit broad catch-all patterns (`*`, `**`, `**/*`, `/`).",
+    "- Never include line suffixes in path matchers (invalid: `foo.ts:12`, `foo.ts#L12`).",
+    "- Never output sentence fragments or prose as path matchers.",
     "- If there is no clear file relation, use `path_matchers: []`.",
     "",
     "OUTPUT JSON SCHEMA",
@@ -15883,7 +15886,7 @@ function tightenActionPathMatchers(action, relatedPaths, projectRoot) {
     return action;
   }
   const relatedPathSet = new Set(relatedPaths);
-  const explicitPaths = extractActionPathHints(action, projectRoot, relatedPaths).map((pathHint) => resolveHintToRelatedPath(pathHint, relatedPaths)).filter((pathHint) => relatedPathSet.has(pathHint) || looksFileLikePath(pathHint));
+  const explicitPaths = extractActionPathHints(action, projectRoot, relatedPaths).map((pathHint) => resolveHintToRelatedPath(pathHint, relatedPaths)).filter((pathHint) => relatedPathSet.has(pathHint) || isExistingProjectPath(pathHint, projectRoot));
   if (explicitPaths.length > 0) {
     const explicitMatchers = explicitPaths.map((pathHint) => ({
       path_matcher: pathHint,
@@ -15945,6 +15948,10 @@ function sanitizePathMatchers(inputMatchers, relatedPaths, projectRoot) {
     if (!normalizedPattern || isOverlyBroadMatcher(normalizedPattern)) {
       continue;
     }
+    const hasGlobPattern = hasGlobChars(normalizedPattern);
+    if (!hasGlobPattern && relatedPaths.length === 0 && !isExistingProjectPath(normalizedPattern, projectRoot)) {
+      continue;
+    }
     if (relatedPaths.length > 0) {
       const matcherFn = (0, import_picomatch.default)(normalizedPattern, { dot: true });
       const matches = relatedPaths.filter((relatedPath) => matcherFn(relatedPath));
@@ -15976,6 +15983,10 @@ function normalizeMatcherPattern(pattern, projectRoot) {
   if (!normalized) {
     return null;
   }
+  normalized = stripTrailingLineReference(normalized);
+  if (!normalized || normalized.includes(":")) {
+    return null;
+  }
   const projectRootPosix = projectRoot.replaceAll("\\", "/");
   if (path3.isAbsolute(normalized)) {
     const absolutePosix = normalized.replaceAll("\\", "/");
@@ -15995,6 +16006,23 @@ function isDirectoryMatcher(matcher) {
 }
 function isOverlyBroadMatcher(matcher) {
   return matcher === "*" || matcher === "**" || matcher === "**/*" || matcher === "/" || matcher === "./*" || matcher === "./**" || /^\*\*\/[^/*?]+\/\*\*\/?$/.test(matcher);
+}
+function stripTrailingLineReference(value) {
+  return value.replace(/#L?\d+$/i, "").replace(/:\d+$/, "");
+}
+function hasGlobChars(value) {
+  return /[*?[\]{}()]/.test(value);
+}
+function isExistingProjectPath(candidate, projectRoot) {
+  if (!candidate || hasGlobChars(candidate)) {
+    return false;
+  }
+  const absoluteRoot = path3.resolve(projectRoot);
+  const absoluteCandidate = path3.resolve(projectRoot, candidate);
+  if (absoluteCandidate !== absoluteRoot && !absoluteCandidate.startsWith(`${absoluteRoot}${path3.sep}`)) {
+    return false;
+  }
+  return existsSync(absoluteCandidate);
 }
 function clampPriority(priority) {
   if (!Number.isFinite(priority)) {

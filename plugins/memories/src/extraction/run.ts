@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -125,6 +126,8 @@ function buildExtractionPrompt(input: {
     '- Use exact file matchers when memory is tied to one specific file (for example: `src/app.ts`).',
     '- Use directory globs (`dir/**`) only when memory clearly applies to multiple files under that directory.',
     '- Do not emit broad catch-all patterns (`*`, `**`, `**/*`, `/`).',
+    '- Never include line suffixes in path matchers (invalid: `foo.ts:12`, `foo.ts#L12`).',
+    '- Never output sentence fragments or prose as path matchers.',
     '- If there is no clear file relation, use `path_matchers: []`.',
     '',
     'OUTPUT JSON SCHEMA',
@@ -438,7 +441,7 @@ function tightenActionPathMatchers(
   const relatedPathSet = new Set(relatedPaths);
   const explicitPaths = extractActionPathHints(action, projectRoot, relatedPaths)
     .map((pathHint) => resolveHintToRelatedPath(pathHint, relatedPaths))
-    .filter((pathHint) => relatedPathSet.has(pathHint) || looksFileLikePath(pathHint));
+    .filter((pathHint) => relatedPathSet.has(pathHint) || isExistingProjectPath(pathHint, projectRoot));
   if (explicitPaths.length > 0) {
     const explicitMatchers: MemoryAction['path_matchers'] = explicitPaths.map((pathHint) => ({
       path_matcher: pathHint,
@@ -511,6 +514,10 @@ function sanitizePathMatchers(
     if (!normalizedPattern || isOverlyBroadMatcher(normalizedPattern)) {
       continue;
     }
+    const hasGlobPattern = hasGlobChars(normalizedPattern);
+    if (!hasGlobPattern && relatedPaths.length === 0 && !isExistingProjectPath(normalizedPattern, projectRoot)) {
+      continue;
+    }
 
     if (relatedPaths.length > 0) {
       const matcherFn = picomatch(normalizedPattern, { dot: true });
@@ -547,6 +554,10 @@ function normalizeMatcherPattern(pattern: string, projectRoot: string): string |
   if (!normalized) {
     return null;
   }
+  normalized = stripTrailingLineReference(normalized);
+  if (!normalized || normalized.includes(':')) {
+    return null;
+  }
 
   const projectRootPosix = projectRoot.replaceAll('\\', '/');
   if (path.isAbsolute(normalized)) {
@@ -578,6 +589,29 @@ function isOverlyBroadMatcher(matcher: string): boolean {
     matcher === './**' ||
     /^\*\*\/[^/*?]+\/\*\*\/?$/.test(matcher)
   );
+}
+
+function stripTrailingLineReference(value: string): string {
+  return value.replace(/#L?\d+$/i, '').replace(/:\d+$/, '');
+}
+
+function hasGlobChars(value: string): boolean {
+  return /[*?[\]{}()]/.test(value);
+}
+
+function isExistingProjectPath(candidate: string, projectRoot: string): boolean {
+  if (!candidate || hasGlobChars(candidate)) {
+    return false;
+  }
+  const absoluteRoot = path.resolve(projectRoot);
+  const absoluteCandidate = path.resolve(projectRoot, candidate);
+  if (
+    absoluteCandidate !== absoluteRoot &&
+    !absoluteCandidate.startsWith(`${absoluteRoot}${path.sep}`)
+  ) {
+    return false;
+  }
+  return existsSync(absoluteCandidate);
 }
 
 function clampPriority(priority: number): number {
