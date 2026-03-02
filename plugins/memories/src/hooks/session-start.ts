@@ -1,10 +1,16 @@
+import { ensureEngine } from '../engine/ensure-engine.js';
 import { readJsonFromStdin, writeFailOpenOutput, writeHookOutput } from '../shared/hook-io.js';
 import { error } from '../shared/logger.js';
 import { hookLog } from '../shared/logs.js';
 import { formatMemoryRecallMarkdown } from '../shared/markdown.js';
 import { ensureProjectDirectories } from '../shared/paths.js';
 import type { SearchResponse } from '../shared/types.js';
-import { isEngineUnavailableError, resolveEndpointFromLock, resolveHookProjectRoot } from './common.js';
+import {
+  isEngineUnavailableError,
+  isInternalClaudeRun,
+  postEngineJson,
+  resolveHookProjectRoot,
+} from './common.js';
 import { sessionStartPayloadSchema } from './schemas.js';
 
 async function run(): Promise<void> {
@@ -12,9 +18,23 @@ async function run(): Promise<void> {
   const projectRoot = resolveHookProjectRoot(payload);
   const paths = await ensureProjectDirectories(projectRoot);
 
+  if (isInternalClaudeRun()) {
+    await hookLog(paths.hookLogPath, {
+      at: new Date().toISOString(),
+      event: 'SessionStart',
+      status: 'skipped',
+      detail: 'internal Claude run; skipping memory hooks',
+    });
+    writeHookOutput({ continue: true });
+    return;
+  }
+
   try {
-    const endpoint = await resolveEndpointFromLock(projectRoot);
+    const endpoint = await ensureEngine(projectRoot);
     const sessionId = payload.session_id?.trim();
+    if (sessionId) {
+      await postEngineJson(endpoint, '/sessions/connect', { session_id: sessionId });
+    }
 
     const pinnedResponse = await fetch(`http://${endpoint.host}:${endpoint.port}/memories/pinned`);
     if (!pinnedResponse.ok) {

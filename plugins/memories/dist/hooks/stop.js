@@ -14004,6 +14004,9 @@ async function resolveEndpointFromLock(projectRoot) {
 function isEngineUnavailableError(error49) {
   return error49 instanceof Error && error49.message.includes("Engine lock metadata not found");
 }
+function isInternalClaudeRun() {
+  return process.env.CLAUDE_MEMORY_INTERNAL_CLAUDE === "1";
+}
 
 // src/hooks/schemas.ts
 var sessionStartPayloadSchema = external_exports.object({
@@ -14056,6 +14059,17 @@ async function run() {
   }
   const projectRoot = resolveHookProjectRoot(payload);
   const { hookLogPath } = await ensureProjectDirectories(projectRoot);
+  if (isInternalClaudeRun()) {
+    await hookLog(hookLogPath, {
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      event: "Stop",
+      status: "skipped",
+      session_id: payload.session_id,
+      detail: "internal Claude run; skipping memory hooks"
+    });
+    writeHookOutput({ continue: true });
+    return;
+  }
   try {
     if (payload.stop_hook_active) {
       await hookLog(hookLogPath, {

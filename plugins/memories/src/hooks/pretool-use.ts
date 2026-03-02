@@ -7,6 +7,7 @@ import { hookLog } from '../shared/logs.js';
 import { ensureProjectDirectories } from '../shared/paths.js';
 import {
   isEngineUnavailableError,
+  isInternalClaudeRun,
   postEngineJson,
   resolveEndpointFromLock,
   resolveHookProjectRoot,
@@ -80,6 +81,17 @@ async function run(): Promise<void> {
   const payload = (await readJsonFromStdin(preToolUsePayloadSchema)) ?? {};
   const projectRoot = resolveHookProjectRoot(payload);
   const paths = await ensureProjectDirectories(projectRoot);
+
+  if (isInternalClaudeRun()) {
+    await hookLog(paths.hookLogPath, {
+      at: new Date().toISOString(),
+      event: 'PreToolUse',
+      status: 'skipped',
+      detail: 'internal Claude run; skipping memory hooks',
+    });
+    writeHookOutput({ continue: true });
+    return;
+  }
 
   try {
     const endpoint = await resolveEndpointFromLock(projectRoot);

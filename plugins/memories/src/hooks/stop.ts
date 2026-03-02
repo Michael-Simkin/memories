@@ -5,7 +5,12 @@ import { readJsonFromStdin, writeFailOpenOutput, writeHookOutput } from '../shar
 import { error } from '../shared/logger.js';
 import { hookLog } from '../shared/logs.js';
 import { ensureProjectDirectories, resolvePluginRoot } from '../shared/paths.js';
-import { isEngineUnavailableError, resolveEndpointFromLock, resolveHookProjectRoot } from './common.js';
+import {
+  isEngineUnavailableError,
+  isInternalClaudeRun,
+  resolveEndpointFromLock,
+  resolveHookProjectRoot,
+} from './common.js';
 import { stopPayloadSchema } from './schemas.js';
 
 interface StopWorkerPayload {
@@ -44,6 +49,18 @@ async function run(): Promise<void> {
 
   const projectRoot = resolveHookProjectRoot(payload);
   const { hookLogPath } = await ensureProjectDirectories(projectRoot);
+
+  if (isInternalClaudeRun()) {
+    await hookLog(hookLogPath, {
+      at: new Date().toISOString(),
+      event: 'Stop',
+      status: 'skipped',
+      session_id: payload.session_id,
+      detail: 'internal Claude run; skipping memory hooks',
+    });
+    writeHookOutput({ continue: true });
+    return;
+  }
 
   try {
     if (payload.stop_hook_active) {

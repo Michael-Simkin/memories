@@ -186,6 +186,13 @@ async function runClaudePrompt(
         'claude-opus-4-6',
       ],
       {
+        cwd: process.env.PROJECT_ROOT ?? process.cwd(),
+        env: {
+          ...process.env,
+          CLAUDE_CODE_SIMPLE: '1',
+          CLAUDE_KB_RUN: '1',
+          CLAUDE_MEMORY_INTERNAL_CLAUDE: '1',
+        },
         stdio: ['pipe', 'pipe', 'pipe'],
       },
     );

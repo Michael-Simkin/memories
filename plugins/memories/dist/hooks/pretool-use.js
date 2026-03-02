@@ -13995,6 +13995,9 @@ async function resolveEndpointFromLock(projectRoot) {
 function isEngineUnavailableError(error49) {
   return error49 instanceof Error && error49.message.includes("Engine lock metadata not found");
 }
+function isInternalClaudeRun() {
+  return process.env.CLAUDE_MEMORY_INTERNAL_CLAUDE === "1";
+}
 async function postEngineJson(endpoint, route, payload) {
   const response = await fetch(`http://${endpoint.host}:${endpoint.port}${route}`, {
     method: "POST",
@@ -14078,6 +14081,16 @@ async function run() {
   const payload = await readJsonFromStdin(preToolUsePayloadSchema) ?? {};
   const projectRoot = resolveHookProjectRoot(payload);
   const paths = await ensureProjectDirectories(projectRoot);
+  if (isInternalClaudeRun()) {
+    await hookLog(paths.hookLogPath, {
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      event: "PreToolUse",
+      status: "skipped",
+      detail: "internal Claude run; skipping memory hooks"
+    });
+    writeHookOutput({ continue: true });
+    return;
+  }
   try {
     const endpoint = await resolveEndpointFromLock(projectRoot);
     const query = buildQuery(payload.tool_name, payload.tool_input);

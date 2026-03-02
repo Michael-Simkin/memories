@@ -41,6 +41,10 @@ export function isEngineUnavailableError(error: unknown): boolean {
   return error instanceof Error && error.message.includes('Engine lock metadata not found');
 }
 
+export function isInternalClaudeRun(): boolean {
+  return process.env.CLAUDE_MEMORY_INTERNAL_CLAUDE === '1';
+}
+
 export async function postEngineJson<TInput, TOutput>(
   endpoint: { host: string; port: number },
   route: string,
