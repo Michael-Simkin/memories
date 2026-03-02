@@ -1,0 +1,24 @@
+{
+  "name": "memories",
+  "owner": {
+    "name": "Michael Simkin",
+    "email": "michaelsi@monday.com"
+  },
+  "metadata": {
+    "description": "Claude Code memory-focused plugins"
+  },
+  "plugins": [
+    {
+      "name": "memories",
+      "source": "./plugins/memories",
+      "description": "Local project memory for Claude Code with semantic + lexical retrieval",
+      "homepage": "https://github.com/michaelsi/claude-memory/tree/main/plugins/memories",
+      "repository": "https://github.com/michaelsi/claude-memory",
+      "license": "MIT",
+      "keywords": ["claude-code", "memory", "sqlite", "hooks"],
+      "category": "developer-productivity",
+      "tags": ["memory", "context", "retrieval"],
+      "strict": true
+    }
+  ]
+}

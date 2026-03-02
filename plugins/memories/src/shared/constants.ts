@@ -1,0 +1,12 @@
+export const ENGINE_HOST = '127.0.0.1';
+export const MAX_HOOK_INJECTION_TOKENS = 6000;
+export const DEFAULT_SEMANTIC_K = 30;
+export const DEFAULT_LEXICAL_K = 30;
+export const DEFAULT_SEARCH_LIMIT = 10;
+export const MAX_SEARCH_LIMIT = 50;
+export const MEMORY_TYPES = ['fact', 'rule', 'decision', 'episode'] as const;
+export const ENGINE_LOCK_FILE = 'engine.lock.json';
+export const MEMORY_DB_FILE = 'ai_memory.db';
+export const OPERATION_LOG_FILE = 'ai_memory_operations.log';
+export const HOOK_LOG_FILE = 'ai_memory_hook_events.log';
+export const EMBEDDING_DIMENSIONS = 3072;

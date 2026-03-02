@@ -1,0 +1,35 @@
+{
+  "name": "memories-plugin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Project-scoped memory plugin for Claude Code",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "npm run build:backend && npm run build:web",
+    "build:backend": "tsup --config tsup.config.ts",
+    "build:web": "vite build --config web/vite.config.ts",
+    "lint": "eslint \"src/**/*.{ts,tsx}\" \"web/**/*.{ts,tsx}\"",
+    "typecheck": "tsc --project tsconfig.json --noEmit && tsc --project web/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "@tanstack/react-query": "^5.87.4",
+    "better-sqlite3": "^12.4.1",
+    "express": "^5.1.0",
+    "google-auth-library": "^10.6.1",
+    "picomatch": "^4.0.3",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "sqlite-vec": "^0.1.7-alpha.2",
+    "ulid": "^3.0.1",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/picomatch": "^4.0.2",
+    "@vitejs/plugin-react": "^5.1.0"
+  }
+}

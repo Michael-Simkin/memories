@@ -1,0 +1,5 @@
+{
+  "maxHookInjectionTokens": 6000,
+  "pretoolSemanticK": 30,
+  "pretoolLexicalK": 30
+}

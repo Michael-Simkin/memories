@@ -1,0 +1,4 @@
+node_modules
+dist
+plugins/memories/dist
+plugins/memories/web/dist

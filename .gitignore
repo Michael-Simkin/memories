@@ -1,0 +1,6 @@
+.grepai
+.grepai/
+node_modules/
+plugins/memories/dist/
+plugins/memories/web/dist/
+.memories/
