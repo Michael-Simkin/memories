@@ -5,7 +5,7 @@
   "author": {
     "name": "Michael Simkin"
   },
-  "repository": "https://github.com/michaelsi/claude-memory",
+  "repository": "https://github.com/Michael-Simkin/memories",
   "license": "MIT",
   "keywords": ["memory", "retrieval", "hooks", "sqlite"],
   "skills": "./skills"
