@@ -39,6 +39,9 @@ const COMMAND_PATH_REGEX =
   /(?:^|[\s"'`])((?:\/[^\s"'`]+)|(?:\.\.?\/[^\s"'`]+)|(?:[A-Za-z0-9._-]+\/[A-Za-z0-9._/-]+))(?=$|[\s"'`])/g;
 const INLINE_PATH_REGEX =
   /(?:\/[A-Za-z0-9._-][A-Za-z0-9._/\\-]*|(?:\.\.?\/)?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)/g;
+const BARE_FILENAME_REGEX = /\b[A-Za-z0-9._-]+\.[A-Za-z0-9]{1,12}\b/g;
+const NATURAL_LANGUAGE_FILE_REGEX =
+  /\b([a-z0-9][a-z0-9 _-]{0,80}?)\s+([a-z0-9]{1,8})\s+file\b/gi;
 
 function readHandoffArg(argv: string[]): string | null {
   const index = argv.indexOf('--handoff');
@@ -426,9 +429,9 @@ function tightenActionPathMatchers(
   }
 
   const relatedPathSet = new Set(relatedPaths);
-  const explicitPaths = extractActionPathHints(action, projectRoot).filter(
-    (pathHint) => relatedPathSet.has(pathHint) || looksFileLikePath(pathHint),
-  );
+  const explicitPaths = extractActionPathHints(action, projectRoot, relatedPaths)
+    .map((pathHint) => resolveHintToRelatedPath(pathHint, relatedPaths))
+    .filter((pathHint) => relatedPathSet.has(pathHint) || looksFileLikePath(pathHint));
   if (explicitPaths.length > 0) {
     const explicitMatchers: MemoryAction['path_matchers'] = explicitPaths.map((pathHint) => ({
       path_matcher: pathHint,
@@ -453,7 +456,11 @@ function tightenActionPathMatchers(
   };
 }
 
-function extractActionPathHints(action: MemoryAction, projectRoot: string): string[] {
+function extractActionPathHints(
+  action: MemoryAction,
+  projectRoot: string,
+  relatedPaths: string[],
+): string[] {
   const combined = [action.content ?? '', action.reason, ...action.evidence].join('\n');
   const matched = new Set<string>();
   for (const pathMatch of combined.matchAll(INLINE_PATH_REGEX)) {
@@ -465,6 +472,22 @@ function extractActionPathHints(action: MemoryAction, projectRoot: string): stri
     if (normalized) {
       matched.add(normalized);
     }
+  }
+  for (const fileMatch of combined.matchAll(BARE_FILENAME_REGEX)) {
+    const candidate = fileMatch[0];
+    if (!candidate) {
+      continue;
+    }
+    const normalized = normalizeTranscriptPathCandidate(candidate, projectRoot);
+    if (normalized) {
+      matched.add(normalized);
+    }
+  }
+  for (const inferredPath of inferMentionedRelatedFiles(combined, relatedPaths)) {
+    matched.add(inferredPath);
+  }
+  for (const naturalHint of extractNaturalLanguageFileHints(combined, relatedPaths)) {
+    matched.add(naturalHint);
   }
   return [...matched];
 }
@@ -545,7 +568,8 @@ function isOverlyBroadMatcher(matcher: string): boolean {
     matcher === '**/*' ||
     matcher === '/' ||
     matcher === './*' ||
-    matcher === './**'
+    matcher === './**' ||
+    /^\*\*\/[^/*?]+\/\*\*\/?$/.test(matcher)
   );
 }
 
@@ -589,6 +613,112 @@ function looksFileLikePath(value: string): boolean {
     return false;
   }
   return base.includes('.') || base.startsWith('.');
+}
+
+function resolveHintToRelatedPath(hint: string, relatedPaths: string[]): string {
+  if (relatedPaths.includes(hint)) {
+    return hint;
+  }
+  if (hint.includes('/')) {
+    return hint;
+  }
+  const lowerHint = hint.toLowerCase();
+  const basenameMatches = relatedPaths.filter((relatedPath) => {
+    return path.posix.basename(relatedPath).toLowerCase() === lowerHint;
+  });
+  if (basenameMatches.length === 1) {
+    return basenameMatches[0] ?? hint;
+  }
+  return hint;
+}
+
+function inferMentionedRelatedFiles(text: string, relatedPaths: string[]): string[] {
+  const loweredText = text.toLowerCase();
+  const textTokens = toWordTokens(loweredText);
+  if (textTokens.length === 0) {
+    return [];
+  }
+
+  const tokenSet = new Set(textTokens);
+  const scored: Array<{ path: string; score: number }> = [];
+  for (const relatedPath of relatedPaths) {
+    if (!looksFileLikePath(relatedPath)) {
+      continue;
+    }
+    const base = path.posix.basename(relatedPath).toLowerCase();
+    let score = 0;
+    if (loweredText.includes(base)) {
+      score += 0.7;
+    }
+    const baseTokens = toWordTokens(base).filter((token) => token.length >= 2);
+    if (baseTokens.length === 0) {
+      continue;
+    }
+    const matchedTokenCount = baseTokens.reduce((count, token) => {
+      return tokenSet.has(token) ? count + 1 : count;
+    }, 0);
+    score += matchedTokenCount / baseTokens.length;
+    if (score >= 0.85) {
+      scored.push({ path: relatedPath, score });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+  const topScore = scored[0]?.score ?? 0;
+  if (topScore < 0.85) {
+    return [];
+  }
+  return scored.filter((item) => item.score >= topScore - 0.05).map((item) => item.path);
+}
+
+function extractNaturalLanguageFileHints(text: string, relatedPaths: string[]): string[] {
+  const hints = new Set<string>();
+  for (const match of text.matchAll(NATURAL_LANGUAGE_FILE_REGEX)) {
+    const stemRaw = match[1]?.trim();
+    const extRaw = match[2]?.trim().toLowerCase();
+    if (!stemRaw || !extRaw) {
+      continue;
+    }
+    const stemTokens = toWordTokens(stemRaw).filter((token) => token.length >= 2);
+    if (stemTokens.length === 0) {
+      continue;
+    }
+
+    const relatedMatches = relatedPaths.filter((relatedPath) => {
+      if (!looksFileLikePath(relatedPath)) {
+        return false;
+      }
+      const base = path.posix.basename(relatedPath);
+      const parsed = path.posix.parse(base);
+      const fileExt = parsed.ext.replace(/^\./, '').toLowerCase();
+      if (fileExt !== extRaw) {
+        return false;
+      }
+      const baseTokens = toWordTokens(parsed.name);
+      if (baseTokens.length === 0) {
+        return false;
+      }
+      return stemTokens.every((token) => baseTokens.includes(token));
+    });
+
+    if (relatedMatches.length > 0) {
+      for (const relatedMatch of relatedMatches) {
+        hints.add(relatedMatch);
+      }
+      continue;
+    }
+
+    hints.add(`${stemTokens.join('_')}.${extRaw}`);
+  }
+  return [...hints];
+}
+
+function toWordTokens(input: string): string[] {
+  return input
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2);
 }
 
 async function searchCandidates(

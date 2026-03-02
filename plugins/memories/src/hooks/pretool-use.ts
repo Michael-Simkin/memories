@@ -1,12 +1,16 @@
 import path from 'node:path';
 
-import { ensureEngine } from '../engine/ensure-engine.js';
 import { MAX_HOOK_INJECTION_TOKENS } from '../shared/constants.js';
 import { readJsonFromStdin, writeFailOpenOutput, writeHookOutput } from '../shared/hook-io.js';
 import { error } from '../shared/logger.js';
 import { hookLog } from '../shared/logs.js';
 import { ensureProjectDirectories } from '../shared/paths.js';
-import { postEngineJson, resolveHookProjectRoot } from './common.js';
+import {
+  isEngineUnavailableError,
+  postEngineJson,
+  resolveEndpointFromLock,
+  resolveHookProjectRoot,
+} from './common.js';
 import { preToolUsePayloadSchema } from './schemas.js';
 
 interface RetrievalResponse {
@@ -78,7 +82,7 @@ async function run(): Promise<void> {
   const paths = await ensureProjectDirectories(projectRoot);
 
   try {
-    const endpoint = await ensureEngine(projectRoot);
+    const endpoint = await resolveEndpointFromLock(projectRoot);
     const query = buildQuery(payload.tool_name, payload.tool_input);
     const targetPaths = collectPathCandidates(payload.tool_input);
 
@@ -110,6 +114,16 @@ async function run(): Promise<void> {
       },
     });
   } catch (runError: unknown) {
+    if (isEngineUnavailableError(runError)) {
+      await hookLog(paths.hookLogPath, {
+        at: new Date().toISOString(),
+        event: 'PreToolUse',
+        status: 'skipped',
+        detail: 'engine not running; skipping memory injection',
+      });
+      writeHookOutput({ continue: true });
+      return;
+    }
     await hookLog(paths.hookLogPath, {
       at: new Date().toISOString(),
       event: 'PreToolUse',

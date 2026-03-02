@@ -1,13 +1,10 @@
-import { ulid } from 'ulid';
-
-import { ensureEngine } from '../engine/ensure-engine.js';
 import { readJsonFromStdin, writeFailOpenOutput, writeHookOutput } from '../shared/hook-io.js';
 import { error } from '../shared/logger.js';
 import { hookLog } from '../shared/logs.js';
 import { formatMemoryRecallMarkdown } from '../shared/markdown.js';
 import { ensureProjectDirectories } from '../shared/paths.js';
 import type { SearchResponse } from '../shared/types.js';
-import { postEngineJson, resolveHookProjectRoot } from './common.js';
+import { isEngineUnavailableError, resolveEndpointFromLock, resolveHookProjectRoot } from './common.js';
 import { sessionStartPayloadSchema } from './schemas.js';
 
 async function run(): Promise<void> {
@@ -16,12 +13,13 @@ async function run(): Promise<void> {
   const paths = await ensureProjectDirectories(projectRoot);
 
   try {
-    const endpoint = await ensureEngine(projectRoot);
-    const sessionId = payload.session_id?.trim() || ulid();
-
-    await postEngineJson(endpoint, '/sessions/connect', { session_id: sessionId });
+    const endpoint = await resolveEndpointFromLock(projectRoot);
+    const sessionId = payload.session_id?.trim();
 
     const pinnedResponse = await fetch(`http://${endpoint.host}:${endpoint.port}/memories/pinned`);
+    if (!pinnedResponse.ok) {
+      throw new Error(`Pinned memory fetch failed: ${pinnedResponse.status} ${pinnedResponse.statusText}`);
+    }
     const pinned = (await pinnedResponse.json()) as SearchResponse;
 
     const markdown = formatMemoryRecallMarkdown({
@@ -36,7 +34,7 @@ async function run(): Promise<void> {
       at: new Date().toISOString(),
       event: 'SessionStart',
       status: 'ok',
-      session_id: sessionId,
+      ...(sessionId ? { session_id: sessionId } : {}),
       data: { endpoint: `${endpoint.host}:${endpoint.port}` },
     });
 
@@ -49,6 +47,16 @@ async function run(): Promise<void> {
       },
     });
   } catch (runError: unknown) {
+    if (isEngineUnavailableError(runError)) {
+      await hookLog(paths.hookLogPath, {
+        at: new Date().toISOString(),
+        event: 'SessionStart',
+        status: 'skipped',
+        detail: 'engine not running; skipping memory injection',
+      });
+      writeHookOutput({ continue: true });
+      return;
+    }
     await hookLog(paths.hookLogPath, {
       at: new Date().toISOString(),
       event: 'SessionStart',

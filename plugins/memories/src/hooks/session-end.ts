@@ -3,10 +3,10 @@ import { error } from '../shared/logger.js';
 import { hookLog } from '../shared/logs.js';
 import { ensureProjectDirectories } from '../shared/paths.js';
 import {
+  isEngineUnavailableError,
   postEngineJson,
   resolveEndpointFromLock,
   resolveHookProjectRoot,
-  resolveSessionId,
 } from './common.js';
 import { sessionEndPayloadSchema } from './schemas.js';
 
@@ -16,13 +16,13 @@ async function run(): Promise<void> {
   const paths = await ensureProjectDirectories(projectRoot);
 
   try {
-    const sessionId = await resolveSessionId(payload);
+    const sessionId = payload.session_id?.trim();
     if (!sessionId) {
       await hookLog(paths.hookLogPath, {
         at: new Date().toISOString(),
         event: 'SessionEnd',
         status: 'skipped',
-        detail: 'No session_id could be resolved',
+        detail: 'No session_id in payload',
       });
       writeHookOutput({ continue: true });
       return;
@@ -39,6 +39,16 @@ async function run(): Promise<void> {
 
     writeHookOutput({ continue: true });
   } catch (runError: unknown) {
+    if (isEngineUnavailableError(runError)) {
+      await hookLog(paths.hookLogPath, {
+        at: new Date().toISOString(),
+        event: 'SessionEnd',
+        status: 'skipped',
+        detail: 'engine not running; skipping session disconnect',
+      });
+      writeHookOutput({ continue: true });
+      return;
+    }
     await hookLog(paths.hookLogPath, {
       at: new Date().toISOString(),
       event: 'SessionEnd',

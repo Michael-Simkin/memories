@@ -8,9 +8,82 @@ var __export = (target, all) => {
 // src/hooks/pretool-use.ts
 import path4 from "path";
 
-// src/engine/ensure-engine.ts
-import { spawn } from "child_process";
-import { setTimeout as wait } from "timers/promises";
+// src/shared/constants.ts
+var ENGINE_HOST = "127.0.0.1";
+var MAX_HOOK_INJECTION_TOKENS = 6e3;
+var ENGINE_LOCK_FILE = "engine.lock.json";
+var MEMORY_DB_FILE = "ai_memory.db";
+var OPERATION_LOG_FILE = "ai_memory_operations.log";
+var HOOK_LOG_FILE = "ai_memory_hook_events.log";
+
+// src/shared/hook-io.ts
+async function readStdinText() {
+  const chunks = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8").trim();
+}
+async function readJsonFromStdin(schema) {
+  const text = await readStdinText();
+  if (!text) {
+    return null;
+  }
+  let parsedJson;
+  try {
+    parsedJson = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const parsed = schema.safeParse(parsedJson);
+  if (!parsed.success) {
+    return null;
+  }
+  return parsed.data;
+}
+function writeHookOutput(payload) {
+  process.stdout.write(`${JSON.stringify(payload)}
+`);
+}
+function writeFailOpenOutput() {
+  writeHookOutput({ continue: true });
+}
+
+// src/shared/logger.ts
+var ORDER = {
+  info: 10,
+  warn: 20,
+  error: 30
+};
+var configuredLevel = (process.env.LOG_LEVEL ?? "info").toLowerCase();
+function shouldWrite(level) {
+  if (configuredLevel === "silent") {
+    return false;
+  }
+  if (!(configuredLevel in ORDER)) {
+    return true;
+  }
+  return ORDER[level] >= ORDER[configuredLevel];
+}
+function write(level, message, data) {
+  if (!shouldWrite(level)) {
+    return;
+  }
+  const payload = {
+    level,
+    message,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    ...data ? { data } : {}
+  };
+  process.stderr.write(`${JSON.stringify(payload)}
+`);
+}
+function error(message, data) {
+  write("error", message, data);
+}
+
+// src/shared/logs.ts
+import { readFile as readFile2 } from "fs/promises";
 
 // src/shared/fs-utils.ts
 import { appendFile, readFile, rename, rm, writeFile } from "fs/promises";
@@ -30,26 +103,72 @@ async function appendJsonLine(filePath, payload) {
   await appendFile(filePath, `${JSON.stringify(payload)}
 `, "utf8");
 }
-async function removeFileIfExists(filePath) {
-  try {
-    await rm(filePath);
-  } catch (error49) {
-    if (!isErrno(error49) || error49.code !== "ENOENT") {
-      throw error49;
-    }
-  }
-}
-function isPidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 function isErrno(error49) {
   return typeof error49 === "object" && error49 !== null && "code" in error49;
 }
+
+// src/shared/logs.ts
+var SECRET_PATTERNS = [
+  /sk-[A-Za-z0-9_-]{12,}/g,
+  /AIza[0-9A-Za-z\-_]{20,}/g,
+  /(?<=token[=:]\s?)[A-Za-z0-9._-]+/gi
+];
+function redactValue(value) {
+  let redacted = value;
+  for (const pattern of SECRET_PATTERNS) {
+    redacted = redacted.replaceAll(pattern, "[REDACTED]");
+  }
+  return redacted;
+}
+function redactUnknown(value) {
+  if (typeof value === "string") {
+    return redactValue(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactUnknown(entry));
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value);
+    return Object.fromEntries(entries.map(([key, entry]) => [key, redactUnknown(entry)]));
+  }
+  return value;
+}
+async function hookLog(path5, payload) {
+  await appendJsonLine(path5, redactUnknown(payload));
+}
+
+// src/shared/paths.ts
+import { mkdir } from "fs/promises";
+import path2 from "path";
+function resolveProjectRoot(explicitProjectRoot) {
+  if (explicitProjectRoot && path2.isAbsolute(explicitProjectRoot)) {
+    return explicitProjectRoot;
+  }
+  const envRoot = process.env.CLAUDE_PROJECT_DIR;
+  if (envRoot && path2.isAbsolute(envRoot)) {
+    return envRoot;
+  }
+  return process.cwd();
+}
+function getProjectPaths(projectRoot) {
+  const memoriesDir = path2.join(projectRoot, ".memories");
+  return {
+    projectRoot,
+    memoriesDir,
+    dbPath: path2.join(memoriesDir, MEMORY_DB_FILE),
+    hookLogPath: path2.join(memoriesDir, HOOK_LOG_FILE),
+    lockPath: path2.join(memoriesDir, ENGINE_LOCK_FILE),
+    operationLogPath: path2.join(memoriesDir, OPERATION_LOG_FILE)
+  };
+}
+async function ensureProjectDirectories(projectRoot) {
+  const projectPaths = getProjectPaths(projectRoot);
+  await mkdir(projectPaths.memoriesDir, { recursive: true });
+  return projectPaths;
+}
+
+// src/hooks/common.ts
+import path3 from "path";
 
 // ../../node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -4322,7 +4441,7 @@ __export(locales_exports, {
 });
 
 // ../../node_modules/zod/v4/locales/ar.js
-var error = () => {
+var error2 = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0641", verb: "\u0623\u0646 \u064A\u062D\u0648\u064A" },
     file: { unit: "\u0628\u0627\u064A\u062A", verb: "\u0623\u0646 \u064A\u062D\u0648\u064A" },
@@ -4424,12 +4543,12 @@ var error = () => {
 };
 function ar_default() {
   return {
-    localeError: error()
+    localeError: error2()
   };
 }
 
 // ../../node_modules/zod/v4/locales/az.js
-var error2 = () => {
+var error3 = () => {
   const Sizable = {
     string: { unit: "simvol", verb: "olmal\u0131d\u0131r" },
     file: { unit: "bayt", verb: "olmal\u0131d\u0131r" },
@@ -4530,7 +4649,7 @@ var error2 = () => {
 };
 function az_default() {
   return {
-    localeError: error2()
+    localeError: error3()
   };
 }
 
@@ -4550,7 +4669,7 @@ function getBelarusianPlural(count, one, few, many) {
   }
   return many;
 }
-var error3 = () => {
+var error4 = () => {
   const Sizable = {
     string: {
       unit: {
@@ -4687,12 +4806,12 @@ var error3 = () => {
 };
 function be_default() {
   return {
-    localeError: error3()
+    localeError: error4()
   };
 }
 
 // ../../node_modules/zod/v4/locales/bg.js
-var error4 = () => {
+var error5 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0430", verb: "\u0434\u0430 \u0441\u044A\u0434\u044A\u0440\u0436\u0430" },
     file: { unit: "\u0431\u0430\u0439\u0442\u0430", verb: "\u0434\u0430 \u0441\u044A\u0434\u044A\u0440\u0436\u0430" },
@@ -4808,12 +4927,12 @@ var error4 = () => {
 };
 function bg_default() {
   return {
-    localeError: error4()
+    localeError: error5()
   };
 }
 
 // ../../node_modules/zod/v4/locales/ca.js
-var error5 = () => {
+var error6 = () => {
   const Sizable = {
     string: { unit: "car\xE0cters", verb: "contenir" },
     file: { unit: "bytes", verb: "contenir" },
@@ -4917,12 +5036,12 @@ var error5 = () => {
 };
 function ca_default() {
   return {
-    localeError: error5()
+    localeError: error6()
   };
 }
 
 // ../../node_modules/zod/v4/locales/cs.js
-var error6 = () => {
+var error7 = () => {
   const Sizable = {
     string: { unit: "znak\u016F", verb: "m\xEDt" },
     file: { unit: "bajt\u016F", verb: "m\xEDt" },
@@ -5029,12 +5148,12 @@ var error6 = () => {
 };
 function cs_default() {
   return {
-    localeError: error6()
+    localeError: error7()
   };
 }
 
 // ../../node_modules/zod/v4/locales/da.js
-var error7 = () => {
+var error8 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "havde" },
     file: { unit: "bytes", verb: "havde" },
@@ -5145,12 +5264,12 @@ var error7 = () => {
 };
 function da_default() {
   return {
-    localeError: error7()
+    localeError: error8()
   };
 }
 
 // ../../node_modules/zod/v4/locales/de.js
-var error8 = () => {
+var error9 = () => {
   const Sizable = {
     string: { unit: "Zeichen", verb: "zu haben" },
     file: { unit: "Bytes", verb: "zu haben" },
@@ -5254,12 +5373,12 @@ var error8 = () => {
 };
 function de_default() {
   return {
-    localeError: error8()
+    localeError: error9()
   };
 }
 
 // ../../node_modules/zod/v4/locales/en.js
-var error9 = () => {
+var error10 = () => {
   const Sizable = {
     string: { unit: "characters", verb: "to have" },
     file: { unit: "bytes", verb: "to have" },
@@ -5363,12 +5482,12 @@ var error9 = () => {
 };
 function en_default() {
   return {
-    localeError: error9()
+    localeError: error10()
   };
 }
 
 // ../../node_modules/zod/v4/locales/eo.js
-var error10 = () => {
+var error11 = () => {
   const Sizable = {
     string: { unit: "karaktrojn", verb: "havi" },
     file: { unit: "bajtojn", verb: "havi" },
@@ -5473,12 +5592,12 @@ var error10 = () => {
 };
 function eo_default() {
   return {
-    localeError: error10()
+    localeError: error11()
   };
 }
 
 // ../../node_modules/zod/v4/locales/es.js
-var error11 = () => {
+var error12 = () => {
   const Sizable = {
     string: { unit: "caracteres", verb: "tener" },
     file: { unit: "bytes", verb: "tener" },
@@ -5606,12 +5725,12 @@ var error11 = () => {
 };
 function es_default() {
   return {
-    localeError: error11()
+    localeError: error12()
   };
 }
 
 // ../../node_modules/zod/v4/locales/fa.js
-var error12 = () => {
+var error13 = () => {
   const Sizable = {
     string: { unit: "\u06A9\u0627\u0631\u0627\u06A9\u062A\u0631", verb: "\u062F\u0627\u0634\u062A\u0647 \u0628\u0627\u0634\u062F" },
     file: { unit: "\u0628\u0627\u06CC\u062A", verb: "\u062F\u0627\u0634\u062A\u0647 \u0628\u0627\u0634\u062F" },
@@ -5721,12 +5840,12 @@ var error12 = () => {
 };
 function fa_default() {
   return {
-    localeError: error12()
+    localeError: error13()
   };
 }
 
 // ../../node_modules/zod/v4/locales/fi.js
-var error13 = () => {
+var error14 = () => {
   const Sizable = {
     string: { unit: "merkki\xE4", subject: "merkkijonon" },
     file: { unit: "tavua", subject: "tiedoston" },
@@ -5834,12 +5953,12 @@ var error13 = () => {
 };
 function fi_default() {
   return {
-    localeError: error13()
+    localeError: error14()
   };
 }
 
 // ../../node_modules/zod/v4/locales/fr.js
-var error14 = () => {
+var error15 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
     file: { unit: "octets", verb: "avoir" },
@@ -5943,12 +6062,12 @@ var error14 = () => {
 };
 function fr_default() {
   return {
-    localeError: error14()
+    localeError: error15()
   };
 }
 
 // ../../node_modules/zod/v4/locales/fr-CA.js
-var error15 = () => {
+var error16 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
     file: { unit: "octets", verb: "avoir" },
@@ -6051,12 +6170,12 @@ var error15 = () => {
 };
 function fr_CA_default() {
   return {
-    localeError: error15()
+    localeError: error16()
   };
 }
 
 // ../../node_modules/zod/v4/locales/he.js
-var error16 = () => {
+var error17 = () => {
   const TypeNames = {
     string: { label: "\u05DE\u05D7\u05E8\u05D5\u05D6\u05EA", gender: "f" },
     number: { label: "\u05DE\u05E1\u05E4\u05E8", gender: "m" },
@@ -6246,12 +6365,12 @@ var error16 = () => {
 };
 function he_default() {
   return {
-    localeError: error16()
+    localeError: error17()
   };
 }
 
 // ../../node_modules/zod/v4/locales/hu.js
-var error17 = () => {
+var error18 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "legyen" },
     file: { unit: "byte", verb: "legyen" },
@@ -6355,7 +6474,7 @@ var error17 = () => {
 };
 function hu_default() {
   return {
-    localeError: error17()
+    localeError: error18()
   };
 }
 
@@ -6370,7 +6489,7 @@ function withDefiniteArticle(word) {
   const lastChar = word[word.length - 1];
   return word + (vowels.includes(lastChar) ? "\u0576" : "\u0568");
 }
-var error18 = () => {
+var error19 = () => {
   const Sizable = {
     string: {
       unit: {
@@ -6503,12 +6622,12 @@ var error18 = () => {
 };
 function hy_default() {
   return {
-    localeError: error18()
+    localeError: error19()
   };
 }
 
 // ../../node_modules/zod/v4/locales/id.js
-var error19 = () => {
+var error20 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "memiliki" },
     file: { unit: "byte", verb: "memiliki" },
@@ -6610,12 +6729,12 @@ var error19 = () => {
 };
 function id_default() {
   return {
-    localeError: error19()
+    localeError: error20()
   };
 }
 
 // ../../node_modules/zod/v4/locales/is.js
-var error20 = () => {
+var error21 = () => {
   const Sizable = {
     string: { unit: "stafi", verb: "a\xF0 hafa" },
     file: { unit: "b\xE6ti", verb: "a\xF0 hafa" },
@@ -6720,12 +6839,12 @@ var error20 = () => {
 };
 function is_default() {
   return {
-    localeError: error20()
+    localeError: error21()
   };
 }
 
 // ../../node_modules/zod/v4/locales/it.js
-var error21 = () => {
+var error22 = () => {
   const Sizable = {
     string: { unit: "caratteri", verb: "avere" },
     file: { unit: "byte", verb: "avere" },
@@ -6829,12 +6948,12 @@ var error21 = () => {
 };
 function it_default() {
   return {
-    localeError: error21()
+    localeError: error22()
   };
 }
 
 // ../../node_modules/zod/v4/locales/ja.js
-var error22 = () => {
+var error23 = () => {
   const Sizable = {
     string: { unit: "\u6587\u5B57", verb: "\u3067\u3042\u308B" },
     file: { unit: "\u30D0\u30A4\u30C8", verb: "\u3067\u3042\u308B" },
@@ -6937,12 +7056,12 @@ var error22 = () => {
 };
 function ja_default() {
   return {
-    localeError: error22()
+    localeError: error23()
   };
 }
 
 // ../../node_modules/zod/v4/locales/ka.js
-var error23 = () => {
+var error24 = () => {
   const Sizable = {
     string: { unit: "\u10E1\u10D8\u10DB\u10D1\u10DD\u10DA\u10DD", verb: "\u10E3\u10DC\u10D3\u10D0 \u10E8\u10D4\u10D8\u10EA\u10D0\u10D5\u10D3\u10D4\u10E1" },
     file: { unit: "\u10D1\u10D0\u10D8\u10E2\u10D8", verb: "\u10E3\u10DC\u10D3\u10D0 \u10E8\u10D4\u10D8\u10EA\u10D0\u10D5\u10D3\u10D4\u10E1" },
@@ -7050,12 +7169,12 @@ var error23 = () => {
 };
 function ka_default() {
   return {
-    localeError: error23()
+    localeError: error24()
   };
 }
 
 // ../../node_modules/zod/v4/locales/km.js
-var error24 = () => {
+var error25 = () => {
   const Sizable = {
     string: { unit: "\u178F\u17BD\u17A2\u1780\u17D2\u179F\u179A", verb: "\u1782\u17BD\u179A\u1798\u17B6\u1793" },
     file: { unit: "\u1794\u17C3", verb: "\u1782\u17BD\u179A\u1798\u17B6\u1793" },
@@ -7161,7 +7280,7 @@ var error24 = () => {
 };
 function km_default() {
   return {
-    localeError: error24()
+    localeError: error25()
   };
 }
 
@@ -7171,7 +7290,7 @@ function kh_default() {
 }
 
 // ../../node_modules/zod/v4/locales/ko.js
-var error25 = () => {
+var error26 = () => {
   const Sizable = {
     string: { unit: "\uBB38\uC790", verb: "to have" },
     file: { unit: "\uBC14\uC774\uD2B8", verb: "to have" },
@@ -7278,7 +7397,7 @@ var error25 = () => {
 };
 function ko_default() {
   return {
-    localeError: error25()
+    localeError: error26()
   };
 }
 
@@ -7296,7 +7415,7 @@ function getUnitTypeFromNumber(number4) {
     return "one";
   return "few";
 }
-var error26 = () => {
+var error27 = () => {
   const Sizable = {
     string: {
       unit: {
@@ -7482,12 +7601,12 @@ var error26 = () => {
 };
 function lt_default() {
   return {
-    localeError: error26()
+    localeError: error27()
   };
 }
 
 // ../../node_modules/zod/v4/locales/mk.js
-var error27 = () => {
+var error28 = () => {
   const Sizable = {
     string: { unit: "\u0437\u043D\u0430\u0446\u0438", verb: "\u0434\u0430 \u0438\u043C\u0430\u0430\u0442" },
     file: { unit: "\u0431\u0430\u0458\u0442\u0438", verb: "\u0434\u0430 \u0438\u043C\u0430\u0430\u0442" },
@@ -7592,12 +7711,12 @@ var error27 = () => {
 };
 function mk_default() {
   return {
-    localeError: error27()
+    localeError: error28()
   };
 }
 
 // ../../node_modules/zod/v4/locales/ms.js
-var error28 = () => {
+var error29 = () => {
   const Sizable = {
     string: { unit: "aksara", verb: "mempunyai" },
     file: { unit: "bait", verb: "mempunyai" },
@@ -7700,12 +7819,12 @@ var error28 = () => {
 };
 function ms_default() {
   return {
-    localeError: error28()
+    localeError: error29()
   };
 }
 
 // ../../node_modules/zod/v4/locales/nl.js
-var error29 = () => {
+var error30 = () => {
   const Sizable = {
     string: { unit: "tekens", verb: "heeft" },
     file: { unit: "bytes", verb: "heeft" },
@@ -7811,12 +7930,12 @@ var error29 = () => {
 };
 function nl_default() {
   return {
-    localeError: error29()
+    localeError: error30()
   };
 }
 
 // ../../node_modules/zod/v4/locales/no.js
-var error30 = () => {
+var error31 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "\xE5 ha" },
     file: { unit: "bytes", verb: "\xE5 ha" },
@@ -7920,12 +8039,12 @@ var error30 = () => {
 };
 function no_default() {
   return {
-    localeError: error30()
+    localeError: error31()
   };
 }
 
 // ../../node_modules/zod/v4/locales/ota.js
-var error31 = () => {
+var error32 = () => {
   const Sizable = {
     string: { unit: "harf", verb: "olmal\u0131d\u0131r" },
     file: { unit: "bayt", verb: "olmal\u0131d\u0131r" },
@@ -8030,12 +8149,12 @@ var error31 = () => {
 };
 function ota_default() {
   return {
-    localeError: error31()
+    localeError: error32()
   };
 }
 
 // ../../node_modules/zod/v4/locales/ps.js
-var error32 = () => {
+var error33 = () => {
   const Sizable = {
     string: { unit: "\u062A\u0648\u06A9\u064A", verb: "\u0648\u0644\u0631\u064A" },
     file: { unit: "\u0628\u0627\u06CC\u067C\u0633", verb: "\u0648\u0644\u0631\u064A" },
@@ -8145,12 +8264,12 @@ var error32 = () => {
 };
 function ps_default() {
   return {
-    localeError: error32()
+    localeError: error33()
   };
 }
 
 // ../../node_modules/zod/v4/locales/pl.js
-var error33 = () => {
+var error34 = () => {
   const Sizable = {
     string: { unit: "znak\xF3w", verb: "mie\u0107" },
     file: { unit: "bajt\xF3w", verb: "mie\u0107" },
@@ -8255,12 +8374,12 @@ var error33 = () => {
 };
 function pl_default() {
   return {
-    localeError: error33()
+    localeError: error34()
   };
 }
 
 // ../../node_modules/zod/v4/locales/pt.js
-var error34 = () => {
+var error35 = () => {
   const Sizable = {
     string: { unit: "caracteres", verb: "ter" },
     file: { unit: "bytes", verb: "ter" },
@@ -8364,7 +8483,7 @@ var error34 = () => {
 };
 function pt_default() {
   return {
-    localeError: error34()
+    localeError: error35()
   };
 }
 
@@ -8384,7 +8503,7 @@ function getRussianPlural(count, one, few, many) {
   }
   return many;
 }
-var error35 = () => {
+var error36 = () => {
   const Sizable = {
     string: {
       unit: {
@@ -8521,12 +8640,12 @@ var error35 = () => {
 };
 function ru_default() {
   return {
-    localeError: error35()
+    localeError: error36()
   };
 }
 
 // ../../node_modules/zod/v4/locales/sl.js
-var error36 = () => {
+var error37 = () => {
   const Sizable = {
     string: { unit: "znakov", verb: "imeti" },
     file: { unit: "bajtov", verb: "imeti" },
@@ -8631,12 +8750,12 @@ var error36 = () => {
 };
 function sl_default() {
   return {
-    localeError: error36()
+    localeError: error37()
   };
 }
 
 // ../../node_modules/zod/v4/locales/sv.js
-var error37 = () => {
+var error38 = () => {
   const Sizable = {
     string: { unit: "tecken", verb: "att ha" },
     file: { unit: "bytes", verb: "att ha" },
@@ -8742,12 +8861,12 @@ var error37 = () => {
 };
 function sv_default() {
   return {
-    localeError: error37()
+    localeError: error38()
   };
 }
 
 // ../../node_modules/zod/v4/locales/ta.js
-var error38 = () => {
+var error39 = () => {
   const Sizable = {
     string: { unit: "\u0B8E\u0BB4\u0BC1\u0BA4\u0BCD\u0BA4\u0BC1\u0B95\u0BCD\u0B95\u0BB3\u0BCD", verb: "\u0B95\u0BCA\u0BA3\u0BCD\u0B9F\u0BBF\u0BB0\u0BC1\u0B95\u0BCD\u0B95 \u0BB5\u0BC7\u0BA3\u0BCD\u0B9F\u0BC1\u0BAE\u0BCD" },
     file: { unit: "\u0BAA\u0BC8\u0B9F\u0BCD\u0B9F\u0BC1\u0B95\u0BB3\u0BCD", verb: "\u0B95\u0BCA\u0BA3\u0BCD\u0B9F\u0BBF\u0BB0\u0BC1\u0B95\u0BCD\u0B95 \u0BB5\u0BC7\u0BA3\u0BCD\u0B9F\u0BC1\u0BAE\u0BCD" },
@@ -8853,12 +8972,12 @@ var error38 = () => {
 };
 function ta_default() {
   return {
-    localeError: error38()
+    localeError: error39()
   };
 }
 
 // ../../node_modules/zod/v4/locales/th.js
-var error39 = () => {
+var error40 = () => {
   const Sizable = {
     string: { unit: "\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23", verb: "\u0E04\u0E27\u0E23\u0E21\u0E35" },
     file: { unit: "\u0E44\u0E1A\u0E15\u0E4C", verb: "\u0E04\u0E27\u0E23\u0E21\u0E35" },
@@ -8964,12 +9083,12 @@ var error39 = () => {
 };
 function th_default() {
   return {
-    localeError: error39()
+    localeError: error40()
   };
 }
 
 // ../../node_modules/zod/v4/locales/tr.js
-var error40 = () => {
+var error41 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "olmal\u0131" },
     file: { unit: "bayt", verb: "olmal\u0131" },
@@ -9070,12 +9189,12 @@ var error40 = () => {
 };
 function tr_default() {
   return {
-    localeError: error40()
+    localeError: error41()
   };
 }
 
 // ../../node_modules/zod/v4/locales/uk.js
-var error41 = () => {
+var error42 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0456\u0432", verb: "\u043C\u0430\u0442\u0438\u043C\u0435" },
     file: { unit: "\u0431\u0430\u0439\u0442\u0456\u0432", verb: "\u043C\u0430\u0442\u0438\u043C\u0435" },
@@ -9179,7 +9298,7 @@ var error41 = () => {
 };
 function uk_default() {
   return {
-    localeError: error41()
+    localeError: error42()
   };
 }
 
@@ -9189,7 +9308,7 @@ function ua_default() {
 }
 
 // ../../node_modules/zod/v4/locales/ur.js
-var error42 = () => {
+var error43 = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0648\u0641", verb: "\u06C1\u0648\u0646\u0627" },
     file: { unit: "\u0628\u0627\u0626\u0679\u0633", verb: "\u06C1\u0648\u0646\u0627" },
@@ -9295,12 +9414,12 @@ var error42 = () => {
 };
 function ur_default() {
   return {
-    localeError: error42()
+    localeError: error43()
   };
 }
 
 // ../../node_modules/zod/v4/locales/uz.js
-var error43 = () => {
+var error44 = () => {
   const Sizable = {
     string: { unit: "belgi", verb: "bo\u2018lishi kerak" },
     file: { unit: "bayt", verb: "bo\u2018lishi kerak" },
@@ -9405,12 +9524,12 @@ var error43 = () => {
 };
 function uz_default() {
   return {
-    localeError: error43()
+    localeError: error44()
   };
 }
 
 // ../../node_modules/zod/v4/locales/vi.js
-var error44 = () => {
+var error45 = () => {
   const Sizable = {
     string: { unit: "k\xFD t\u1EF1", verb: "c\xF3" },
     file: { unit: "byte", verb: "c\xF3" },
@@ -9514,12 +9633,12 @@ var error44 = () => {
 };
 function vi_default() {
   return {
-    localeError: error44()
+    localeError: error45()
   };
 }
 
 // ../../node_modules/zod/v4/locales/zh-CN.js
-var error45 = () => {
+var error46 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u7B26", verb: "\u5305\u542B" },
     file: { unit: "\u5B57\u8282", verb: "\u5305\u542B" },
@@ -9624,12 +9743,12 @@ var error45 = () => {
 };
 function zh_CN_default() {
   return {
-    localeError: error45()
+    localeError: error46()
   };
 }
 
 // ../../node_modules/zod/v4/locales/zh-TW.js
-var error46 = () => {
+var error47 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u5143", verb: "\u64C1\u6709" },
     file: { unit: "\u4F4D\u5143\u7D44", verb: "\u64C1\u6709" },
@@ -9732,12 +9851,12 @@ var error46 = () => {
 };
 function zh_TW_default() {
   return {
-    localeError: error46()
+    localeError: error47()
   };
 }
 
 // ../../node_modules/zod/v4/locales/yo.js
-var error47 = () => {
+var error48 = () => {
   const Sizable = {
     string: { unit: "\xE0mi", verb: "n\xED" },
     file: { unit: "bytes", verb: "n\xED" },
@@ -9840,7 +9959,7 @@ var error47 = () => {
 };
 function yo_default() {
   return {
-    localeError: error47()
+    localeError: error48()
   };
 }
 
@@ -13819,14 +13938,6 @@ function date4(params) {
 // ../../node_modules/zod/v4/classic/external.js
 config(en_default());
 
-// src/shared/constants.ts
-var ENGINE_HOST = "127.0.0.1";
-var MAX_HOOK_INJECTION_TOKENS = 6e3;
-var ENGINE_LOCK_FILE = "engine.lock.json";
-var MEMORY_DB_FILE = "ai_memory.db";
-var OPERATION_LOG_FILE = "ai_memory_operations.log";
-var HOOK_LOG_FILE = "ai_memory_hook_events.log";
-
 // src/shared/lockfile.ts
 var lockMetadataSchema = external_exports.object({
   host: external_exports.string(),
@@ -13856,206 +13967,7 @@ function isLoopback(host) {
   return host === ENGINE_HOST || host === "localhost" || host === "::1";
 }
 
-// src/shared/logger.ts
-var ORDER = {
-  info: 10,
-  warn: 20,
-  error: 30
-};
-var configuredLevel = (process.env.LOG_LEVEL ?? "info").toLowerCase();
-function shouldWrite(level) {
-  if (configuredLevel === "silent") {
-    return false;
-  }
-  if (!(configuredLevel in ORDER)) {
-    return true;
-  }
-  return ORDER[level] >= ORDER[configuredLevel];
-}
-function write(level, message, data) {
-  if (!shouldWrite(level)) {
-    return;
-  }
-  const payload = {
-    level,
-    message,
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    ...data ? { data } : {}
-  };
-  process.stderr.write(`${JSON.stringify(payload)}
-`);
-}
-function info(message, data) {
-  write("info", message, data);
-}
-function warn(message, data) {
-  write("warn", message, data);
-}
-function error48(message, data) {
-  write("error", message, data);
-}
-
-// src/shared/paths.ts
-import { mkdir } from "fs/promises";
-import path2 from "path";
-function resolveProjectRoot(explicitProjectRoot) {
-  if (explicitProjectRoot && path2.isAbsolute(explicitProjectRoot)) {
-    return explicitProjectRoot;
-  }
-  const envRoot = process.env.CLAUDE_PROJECT_DIR;
-  if (envRoot && path2.isAbsolute(envRoot)) {
-    return envRoot;
-  }
-  return process.cwd();
-}
-function resolvePluginRoot() {
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-  if (pluginRoot && path2.isAbsolute(pluginRoot)) {
-    return pluginRoot;
-  }
-  return process.cwd();
-}
-function getProjectPaths(projectRoot) {
-  const memoriesDir = path2.join(projectRoot, ".memories");
-  return {
-    projectRoot,
-    memoriesDir,
-    dbPath: path2.join(memoriesDir, MEMORY_DB_FILE),
-    hookLogPath: path2.join(memoriesDir, HOOK_LOG_FILE),
-    lockPath: path2.join(memoriesDir, ENGINE_LOCK_FILE),
-    operationLogPath: path2.join(memoriesDir, OPERATION_LOG_FILE)
-  };
-}
-async function ensureProjectDirectories(projectRoot) {
-  const projectPaths = getProjectPaths(projectRoot);
-  await mkdir(projectPaths.memoriesDir, { recursive: true });
-  return projectPaths;
-}
-
-// src/engine/ensure-engine.ts
-async function isEngineHealthy(endpoint) {
-  const timeoutMs = 120;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`http://${endpoint.host}:${endpoint.port}/health`, {
-      method: "GET",
-      signal: controller.signal
-    });
-    return response.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-async function ensureEngine(projectRoot) {
-  const paths = await ensureProjectDirectories(projectRoot);
-  const pluginRoot = resolvePluginRoot();
-  const lock = await readLockMetadata(paths.lockPath);
-  if (lock && isPidAlive(lock.pid)) {
-    const endpoint = { host: lock.host, port: lock.port };
-    if (await isEngineHealthy(endpoint)) {
-      return endpoint;
-    }
-  }
-  if (lock && !isPidAlive(lock.pid)) {
-    await removeFileIfExists(paths.lockPath);
-  }
-  const engineEntrypoint = `${pluginRoot}/dist/engine/main.js`;
-  const child = spawn("node", [engineEntrypoint], {
-    detached: true,
-    env: {
-      ...process.env,
-      CLAUDE_PLUGIN_ROOT: pluginRoot,
-      PROJECT_ROOT: projectRoot
-    },
-    stdio: "ignore"
-  });
-  child.unref();
-  const startedAt = Date.now();
-  const maxWaitMs = 4e3;
-  while (Date.now() - startedAt < maxWaitMs) {
-    const next = await readLockMetadata(paths.lockPath);
-    if (next && isPidAlive(next.pid)) {
-      const endpoint = { host: next.host, port: next.port };
-      if (await isEngineHealthy(endpoint)) {
-        info("Engine is ready", endpoint);
-        return endpoint;
-      }
-    }
-    await wait(80);
-  }
-  warn("Engine readiness exceeded budget", { maxWaitMs });
-  throw new Error("Engine failed to become healthy in time");
-}
-
-// src/shared/hook-io.ts
-async function readStdinText() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks).toString("utf8").trim();
-}
-async function readJsonFromStdin(schema) {
-  const text = await readStdinText();
-  if (!text) {
-    return null;
-  }
-  let parsedJson;
-  try {
-    parsedJson = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  const parsed = schema.safeParse(parsedJson);
-  if (!parsed.success) {
-    return null;
-  }
-  return parsed.data;
-}
-function writeHookOutput(payload) {
-  process.stdout.write(`${JSON.stringify(payload)}
-`);
-}
-function writeFailOpenOutput() {
-  writeHookOutput({ continue: true });
-}
-
-// src/shared/logs.ts
-import { readFile as readFile2 } from "fs/promises";
-var SECRET_PATTERNS = [
-  /sk-[A-Za-z0-9_-]{12,}/g,
-  /AIza[0-9A-Za-z\-_]{20,}/g,
-  /(?<=token[=:]\s?)[A-Za-z0-9._-]+/gi
-];
-function redactValue(value) {
-  let redacted = value;
-  for (const pattern of SECRET_PATTERNS) {
-    redacted = redacted.replaceAll(pattern, "[REDACTED]");
-  }
-  return redacted;
-}
-function redactUnknown(value) {
-  if (typeof value === "string") {
-    return redactValue(value);
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactUnknown(entry));
-  }
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value);
-    return Object.fromEntries(entries.map(([key, entry]) => [key, redactUnknown(entry)]));
-  }
-  return value;
-}
-async function hookLog(path5, payload) {
-  await appendJsonLine(path5, redactUnknown(payload));
-}
-
 // src/hooks/common.ts
-import path3 from "path";
 function resolveHookProjectRoot(payload) {
   if (payload.project_root && path3.isAbsolute(payload.project_root)) {
     return payload.project_root;
@@ -14064,6 +13976,24 @@ function resolveHookProjectRoot(payload) {
     return payload.cwd;
   }
   return resolveProjectRoot();
+}
+async function resolveEndpointFromLock(projectRoot) {
+  const paths = getProjectPaths(projectRoot);
+  const lock = await readLockMetadata(paths.lockPath);
+  if (!lock) {
+    throw new Error("Engine lock metadata not found");
+  }
+  if (lock.host !== ENGINE_HOST && lock.host !== "localhost" && lock.host !== "::1") {
+    throw new Error(`Lock host is not loopback: ${lock.host}`);
+  }
+  return {
+    host: lock.host,
+    port: lock.port,
+    lockPath: paths.lockPath
+  };
+}
+function isEngineUnavailableError(error49) {
+  return error49 instanceof Error && error49.message.includes("Engine lock metadata not found");
 }
 async function postEngineJson(endpoint, route, payload) {
   const response = await fetch(`http://${endpoint.host}:${endpoint.port}${route}`, {
@@ -14149,7 +14079,7 @@ async function run() {
   const projectRoot = resolveHookProjectRoot(payload);
   const paths = await ensureProjectDirectories(projectRoot);
   try {
-    const endpoint = await ensureEngine(projectRoot);
+    const endpoint = await resolveEndpointFromLock(projectRoot);
     const query = buildQuery(payload.tool_name, payload.tool_input);
     const targetPaths = collectPathCandidates(payload.tool_input);
     const retrieval = await postEngineJson(endpoint, "/retrieval/pretool", {
@@ -14175,13 +14105,23 @@ async function run() {
       }
     });
   } catch (runError) {
+    if (isEngineUnavailableError(runError)) {
+      await hookLog(paths.hookLogPath, {
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        event: "PreToolUse",
+        status: "skipped",
+        detail: "engine not running; skipping memory injection"
+      });
+      writeHookOutput({ continue: true });
+      return;
+    }
     await hookLog(paths.hookLogPath, {
       at: (/* @__PURE__ */ new Date()).toISOString(),
       event: "PreToolUse",
       status: "error",
       detail: runError instanceof Error ? runError.message : String(runError)
     });
-    error48("PreToolUse hook failed", {
+    error("PreToolUse hook failed", {
       error: runError instanceof Error ? runError.message : String(runError)
     });
     writeFailOpenOutput();

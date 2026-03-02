@@ -37,21 +37,8 @@ export async function resolveEndpointFromLock(projectRoot: string): Promise<{
   };
 }
 
-export async function resolveSessionId(payload: {
-  session_id?: string | undefined;
-  project_root?: string | undefined;
-  cwd?: string | undefined;
-}): Promise<string | null> {
-  if (payload.session_id && payload.session_id.trim()) {
-    return payload.session_id;
-  }
-  const projectRoot = resolveHookProjectRoot(payload);
-  const { lockPath } = getProjectPaths(projectRoot);
-  const lock = await readLockMetadata(lockPath);
-  if (!lock || lock.connected_session_ids.length !== 1) {
-    return null;
-  }
-  return lock.connected_session_ids[0] ?? null;
+export function isEngineUnavailableError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('Engine lock metadata not found');
 }
 
 export async function postEngineJson<TInput, TOutput>(

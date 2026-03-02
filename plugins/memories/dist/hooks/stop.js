@@ -14001,6 +14001,9 @@ async function resolveEndpointFromLock(projectRoot) {
     lockPath: paths.lockPath
   };
 }
+function isEngineUnavailableError(error49) {
+  return error49 instanceof Error && error49.message.includes("Engine lock metadata not found");
+}
 
 // src/hooks/schemas.ts
 var sessionStartPayloadSchema = external_exports.object({
@@ -14084,6 +14087,17 @@ async function run() {
     });
     writeHookOutput({ continue: true });
   } catch (runError) {
+    if (isEngineUnavailableError(runError)) {
+      await hookLog(hookLogPath, {
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        event: "Stop",
+        status: "skipped",
+        session_id: payload.session_id,
+        detail: "engine not running; skipping extraction handoff"
+      });
+      writeHookOutput({ continue: true });
+      return;
+    }
     await hookLog(hookLogPath, {
       at: (/* @__PURE__ */ new Date()).toISOString(),
       event: "Stop",

@@ -5,7 +5,7 @@ import { readJsonFromStdin, writeFailOpenOutput, writeHookOutput } from '../shar
 import { error } from '../shared/logger.js';
 import { hookLog } from '../shared/logs.js';
 import { ensureProjectDirectories, resolvePluginRoot } from '../shared/paths.js';
-import { resolveEndpointFromLock, resolveHookProjectRoot } from './common.js';
+import { isEngineUnavailableError, resolveEndpointFromLock, resolveHookProjectRoot } from './common.js';
 import { stopPayloadSchema } from './schemas.js';
 
 interface StopWorkerPayload {
@@ -81,6 +81,17 @@ async function run(): Promise<void> {
     });
     writeHookOutput({ continue: true });
   } catch (runError: unknown) {
+    if (isEngineUnavailableError(runError)) {
+      await hookLog(hookLogPath, {
+        at: new Date().toISOString(),
+        event: 'Stop',
+        status: 'skipped',
+        session_id: payload.session_id,
+        detail: 'engine not running; skipping extraction handoff',
+      });
+      writeHookOutput({ continue: true });
+      return;
+    }
     await hookLog(hookLogPath, {
       at: new Date().toISOString(),
       event: 'Stop',

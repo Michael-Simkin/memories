@@ -13990,17 +13990,8 @@ async function resolveEndpointFromLock(projectRoot) {
     lockPath: paths.lockPath
   };
 }
-async function resolveSessionId(payload) {
-  if (payload.session_id && payload.session_id.trim()) {
-    return payload.session_id;
-  }
-  const projectRoot = resolveHookProjectRoot(payload);
-  const { lockPath } = getProjectPaths(projectRoot);
-  const lock = await readLockMetadata(lockPath);
-  if (!lock || lock.connected_session_ids.length !== 1) {
-    return null;
-  }
-  return lock.connected_session_ids[0] ?? null;
+function isEngineUnavailableError(error49) {
+  return error49 instanceof Error && error49.message.includes("Engine lock metadata not found");
 }
 async function postEngineJson(endpoint, route, payload) {
   const response = await fetch(`http://${endpoint.host}:${endpoint.port}${route}`, {
@@ -14048,13 +14039,13 @@ async function run() {
   const projectRoot = resolveHookProjectRoot(payload);
   const paths = await ensureProjectDirectories(projectRoot);
   try {
-    const sessionId = await resolveSessionId(payload);
+    const sessionId = payload.session_id?.trim();
     if (!sessionId) {
       await hookLog(paths.hookLogPath, {
         at: (/* @__PURE__ */ new Date()).toISOString(),
         event: "SessionEnd",
         status: "skipped",
-        detail: "No session_id could be resolved"
+        detail: "No session_id in payload"
       });
       writeHookOutput({ continue: true });
       return;
@@ -14069,6 +14060,16 @@ async function run() {
     });
     writeHookOutput({ continue: true });
   } catch (runError) {
+    if (isEngineUnavailableError(runError)) {
+      await hookLog(paths.hookLogPath, {
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        event: "SessionEnd",
+        status: "skipped",
+        detail: "engine not running; skipping session disconnect"
+      });
+      writeHookOutput({ continue: true });
+      return;
+    }
     await hookLog(paths.hookLogPath, {
       at: (/* @__PURE__ */ new Date()).toISOString(),
       event: "SessionEnd",
