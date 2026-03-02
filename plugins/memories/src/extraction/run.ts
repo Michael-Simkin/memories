@@ -1,6 +1,10 @@
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 
+import picomatch from 'picomatch';
+
+import { normalizePathForMatch } from '../shared/fs-utils.js';
 import { error } from '../shared/logger.js';
 import { appendOperationLog, hookLog } from '../shared/logs.js';
 import { getProjectPaths } from '../shared/paths.js';
@@ -26,6 +30,16 @@ interface EngineSearchResponse {
   };
 }
 
+interface TranscriptContext {
+  relatedPaths: string[];
+  transcriptSnippet: string;
+}
+
+const COMMAND_PATH_REGEX =
+  /(?:^|[\s"'`])((?:\/[^\s"'`]+)|(?:\.\.?\/[^\s"'`]+)|(?:[A-Za-z0-9._-]+\/[A-Za-z0-9._/-]+))(?=$|[\s"'`])/g;
+const INLINE_PATH_REGEX =
+  /(?:\/[A-Za-z0-9._-][A-Za-z0-9._/\\-]*|(?:\.\.?\/)?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)/g;
+
 function readHandoffArg(argv: string[]): string | null {
   const index = argv.indexOf('--handoff');
   if (index === -1) {
@@ -34,18 +48,30 @@ function readHandoffArg(argv: string[]): string | null {
   return argv[index + 1] ?? null;
 }
 
-async function readTranscriptSnippet(transcriptPath: string): Promise<string> {
+async function readTranscriptContext(
+  transcriptPath: string,
+  projectRoot: string,
+): Promise<TranscriptContext> {
   const raw = await readFile(transcriptPath, 'utf8');
   const lines = raw
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
-  const tail = lines.slice(Math.max(0, lines.length - 80));
-  return tail.join('\n');
+  const recentLines = lines.slice(Math.max(0, lines.length - 300));
+  const snippetLines = recentLines.slice(Math.max(0, recentLines.length - 120));
+  const events = recentLines
+    .map((line) => safeJsonParse(line))
+    .filter((line): line is Record<string, unknown> => isObject(line));
+
+  return {
+    relatedPaths: collectRelatedPathsFromEvents(events, projectRoot),
+    transcriptSnippet: snippetLines.join('\n'),
+  };
 }
 
 function buildExtractionPrompt(input: {
   transcriptSnippet: string;
+  relatedPaths: string[];
   lastAssistantMessage?: string;
   candidateMemories: EngineSearchResponse['results'];
 }): string {
@@ -92,6 +118,12 @@ function buildExtractionPrompt(input: {
     '- Keep `is_pinned=false` for transient implementation notes, one-off episodes, and short-lived decisions.',
     '- If uncertain whether something should be pinned, prefer `is_pinned=false`.',
     '',
+    'PATH MATCHER QUALITY RULES',
+    '- Use exact file matchers when memory is tied to one specific file (for example: `src/app.ts`).',
+    '- Use directory globs (`dir/**`) only when memory clearly applies to multiple files under that directory.',
+    '- Do not emit broad catch-all patterns (`*`, `**`, `**/*`, `/`).',
+    '- If there is no clear file relation, use `path_matchers: []`.',
+    '',
     'OUTPUT JSON SCHEMA',
     '{',
     '  "actions": [',
@@ -121,6 +153,11 @@ function buildExtractionPrompt(input: {
     '',
     'EXISTING MEMORY CANDIDATES',
     candidateText,
+    '',
+    'RELATED FILE CONTEXT (project-relative)',
+    ...(input.relatedPaths.length > 0
+      ? input.relatedPaths.slice(0, 80).map((relatedPath) => `- ${relatedPath}`)
+      : ['- None detected']),
     '',
     'LAST ASSISTANT MESSAGE',
     input.lastAssistantMessage ?? '',
@@ -259,6 +296,301 @@ function listTopLevelKeys(value: unknown): string {
   return keys.length > 0 ? keys.join(', ') : '(none)';
 }
 
+function collectRelatedPathsFromEvents(events: Record<string, unknown>[], projectRoot: string): string[] {
+  const discovered = new Set<string>();
+  for (const event of events) {
+    const message = isObject(event.message) ? event.message : null;
+    if (!message) {
+      continue;
+    }
+    const content = Array.isArray(message.content) ? message.content : [];
+    for (const block of content) {
+      if (!isObject(block)) {
+        continue;
+      }
+      if (block.type !== 'tool_use') {
+        continue;
+      }
+      const input = isObject(block.input) ? block.input : null;
+      if (!input) {
+        continue;
+      }
+      collectPathCandidatesFromObject(input, projectRoot, discovered);
+      const command = typeof input.command === 'string' ? input.command : null;
+      if (command) {
+        collectPathCandidatesFromCommand(command, projectRoot, discovered);
+      }
+    }
+  }
+  return [...discovered].sort();
+}
+
+function collectPathCandidatesFromObject(
+  value: Record<string, unknown>,
+  projectRoot: string,
+  discovered: Set<string>,
+): void {
+  for (const [key, candidate] of Object.entries(value)) {
+    if (typeof candidate === 'string') {
+      const keyLower = key.toLowerCase();
+      if (
+        keyLower.includes('path') ||
+        keyLower.includes('file') ||
+        keyLower.includes('target') ||
+        keyLower.includes('cwd')
+      ) {
+        const normalized = normalizeTranscriptPathCandidate(candidate, projectRoot);
+        if (normalized) {
+          discovered.add(normalized);
+        }
+      }
+      continue;
+    }
+    if (Array.isArray(candidate)) {
+      for (const entry of candidate) {
+        if (isObject(entry)) {
+          collectPathCandidatesFromObject(entry, projectRoot, discovered);
+        } else if (typeof entry === 'string') {
+          const normalized = normalizeTranscriptPathCandidate(entry, projectRoot);
+          if (normalized) {
+            discovered.add(normalized);
+          }
+        }
+      }
+      continue;
+    }
+    if (isObject(candidate)) {
+      collectPathCandidatesFromObject(candidate, projectRoot, discovered);
+    }
+  }
+}
+
+function collectPathCandidatesFromCommand(
+  command: string,
+  projectRoot: string,
+  discovered: Set<string>,
+): void {
+  for (const match of command.matchAll(COMMAND_PATH_REGEX)) {
+    const candidate = match[1];
+    if (!candidate) {
+      continue;
+    }
+    const normalized = normalizeTranscriptPathCandidate(candidate, projectRoot);
+    if (normalized) {
+      discovered.add(normalized);
+    }
+  }
+}
+
+function normalizeTranscriptPathCandidate(candidate: string, projectRoot: string): string | null {
+  let value = candidate.trim();
+  if (!value) {
+    return null;
+  }
+
+  value = value.replace(/^['"`]+|['"`]+$/g, '').replaceAll('\\', '/');
+  if (!value || value.includes('*') || value.startsWith('http://') || value.startsWith('https://')) {
+    return null;
+  }
+  if (value.startsWith('~') || value.startsWith('$') || value.includes('${')) {
+    return null;
+  }
+
+  const projectRootPosix = projectRoot.replaceAll('\\', '/');
+  if (path.isAbsolute(value)) {
+    const absolutePosix = value.replaceAll('\\', '/');
+    if (!absolutePosix.startsWith(`${projectRootPosix}/`) && absolutePosix !== projectRootPosix) {
+      return null;
+    }
+    const relative = path.posix.relative(projectRootPosix, absolutePosix);
+    value = relative;
+  }
+
+  const normalized = normalizePathForMatch(value);
+  if (!normalized || normalized.startsWith('..')) {
+    return null;
+  }
+  if (!/[A-Za-z0-9]/.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function tightenActionPathMatchers(
+  action: MemoryAction,
+  relatedPaths: string[],
+  projectRoot: string,
+): MemoryAction {
+  if (action.action === 'skip' || action.action === 'delete') {
+    return action;
+  }
+
+  const relatedPathSet = new Set(relatedPaths);
+  const explicitPaths = extractActionPathHints(action, projectRoot).filter(
+    (pathHint) => relatedPathSet.has(pathHint) || looksFileLikePath(pathHint),
+  );
+  if (explicitPaths.length > 0) {
+    const explicitMatchers: MemoryAction['path_matchers'] = explicitPaths.map((pathHint) => ({
+      path_matcher: pathHint,
+      priority: 220,
+    }));
+    if (arePathMatchersEqual(action.path_matchers, explicitMatchers)) {
+      return action;
+    }
+    return {
+      ...action,
+      path_matchers: explicitMatchers,
+    };
+  }
+
+  const sanitized = sanitizePathMatchers(action.path_matchers, relatedPaths, projectRoot);
+  if (arePathMatchersEqual(action.path_matchers, sanitized)) {
+    return action;
+  }
+  return {
+    ...action,
+    path_matchers: sanitized,
+  };
+}
+
+function extractActionPathHints(action: MemoryAction, projectRoot: string): string[] {
+  const combined = [action.content ?? '', action.reason, ...action.evidence].join('\n');
+  const matched = new Set<string>();
+  for (const pathMatch of combined.matchAll(INLINE_PATH_REGEX)) {
+    const candidate = pathMatch[0];
+    if (!candidate) {
+      continue;
+    }
+    const normalized = normalizeTranscriptPathCandidate(candidate, projectRoot);
+    if (normalized) {
+      matched.add(normalized);
+    }
+  }
+  return [...matched];
+}
+
+function sanitizePathMatchers(
+  inputMatchers: MemoryAction['path_matchers'],
+  relatedPaths: string[],
+  projectRoot: string,
+): MemoryAction['path_matchers'] {
+  const seen = new Set<string>();
+  const sanitized: MemoryAction['path_matchers'] = [];
+  for (const matcher of inputMatchers) {
+    const normalizedPattern = normalizeMatcherPattern(matcher.path_matcher, projectRoot);
+    if (!normalizedPattern || isOverlyBroadMatcher(normalizedPattern)) {
+      continue;
+    }
+
+    if (relatedPaths.length > 0) {
+      const matcherFn = picomatch(normalizedPattern, { dot: true });
+      const matches = relatedPaths.filter((relatedPath) => matcherFn(relatedPath));
+      if (matches.length === 0) {
+        continue;
+      }
+
+      // Tighten wildcard matchers to exact file patterns when only one file is implicated.
+      if ((normalizedPattern.includes('*') || isDirectoryMatcher(normalizedPattern)) && matches.length === 1) {
+        const exact = matches[0] ?? normalizedPattern;
+        if (!seen.has(exact)) {
+          seen.add(exact);
+          sanitized.push({ path_matcher: exact, priority: Math.max(200, matcher.priority) });
+        }
+        continue;
+      }
+    }
+
+    if (seen.has(normalizedPattern)) {
+      continue;
+    }
+    seen.add(normalizedPattern);
+    sanitized.push({
+      path_matcher: normalizedPattern,
+      priority: clampPriority(matcher.priority),
+    });
+  }
+  return sanitized;
+}
+
+function normalizeMatcherPattern(pattern: string, projectRoot: string): string | null {
+  let normalized = pattern.trim().replace(/^['"`]+|['"`]+$/g, '').replaceAll('\\', '/');
+  if (!normalized) {
+    return null;
+  }
+
+  const projectRootPosix = projectRoot.replaceAll('\\', '/');
+  if (path.isAbsolute(normalized)) {
+    const absolutePosix = normalized.replaceAll('\\', '/');
+    if (!absolutePosix.startsWith(`${projectRootPosix}/`) && absolutePosix !== projectRootPosix) {
+      return null;
+    }
+    normalized = path.posix.relative(projectRootPosix, absolutePosix);
+  }
+
+  normalized = normalized.replaceAll(/\/{2,}/g, '/').replaceAll(/^\.\//g, '');
+  if (!normalized || normalized.startsWith('..') || normalized.startsWith('/')) {
+    return null;
+  }
+  return normalized;
+}
+
+function isDirectoryMatcher(matcher: string): boolean {
+  return matcher.endsWith('/**') || matcher.endsWith('/**/*');
+}
+
+function isOverlyBroadMatcher(matcher: string): boolean {
+  return (
+    matcher === '*' ||
+    matcher === '**' ||
+    matcher === '**/*' ||
+    matcher === '/' ||
+    matcher === './*' ||
+    matcher === './**'
+  );
+}
+
+function clampPriority(priority: number): number {
+  if (!Number.isFinite(priority)) {
+    return 100;
+  }
+  const rounded = Math.round(priority);
+  if (rounded < 0) {
+    return 0;
+  }
+  if (rounded > 1000) {
+    return 1000;
+  }
+  return rounded;
+}
+
+function arePathMatchersEqual(
+  left: MemoryAction['path_matchers'],
+  right: MemoryAction['path_matchers'],
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const lhs = left[index];
+    const rhs = right[index];
+    if (!lhs || !rhs) {
+      return false;
+    }
+    if (lhs.path_matcher !== rhs.path_matcher || lhs.priority !== rhs.priority) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function looksFileLikePath(value: string): boolean {
+  const base = value.split('/').filter(Boolean).at(-1) ?? '';
+  if (!base) {
+    return false;
+  }
+  return base.includes('.') || base.startsWith('.');
+}
+
 async function searchCandidates(
   endpoint: { host: string; port: number },
   query: string,
@@ -360,12 +692,13 @@ async function run(): Promise<void> {
       detail: 'worker-started',
     });
 
-    const transcriptSnippet = await readTranscriptSnippet(payload.transcript_path);
-    const candidateQuery = payload.last_assistant_message ?? transcriptSnippet.slice(0, 500);
+    const transcript = await readTranscriptContext(payload.transcript_path, payload.project_root);
+    const candidateQuery = payload.last_assistant_message ?? transcript.transcriptSnippet.slice(0, 500);
     const candidates = await searchCandidates(payload.endpoint, candidateQuery);
 
     const prompt = buildExtractionPrompt({
-      transcriptSnippet,
+      transcriptSnippet: transcript.transcriptSnippet,
+      relatedPaths: transcript.relatedPaths,
       candidateMemories: candidates.results,
       ...(payload.last_assistant_message
         ? { lastAssistantMessage: payload.last_assistant_message }
@@ -378,7 +711,10 @@ async function run(): Promise<void> {
     }
 
     const extraction = extractionOutputSchema.parse(parseCliJson(claudeResult.stdout));
-    for (const action of extraction.actions) {
+    const tightenedActions = extraction.actions.map((action) =>
+      tightenActionPathMatchers(action, transcript.relatedPaths, payload.project_root),
+    );
+    for (const action of tightenedActions) {
       const operationAt = new Date().toISOString();
       if (action.action === 'skip' || action.confidence < CONFIDENCE_THRESHOLD) {
         await appendOperationLog(projectPaths.operationLogPath, {
