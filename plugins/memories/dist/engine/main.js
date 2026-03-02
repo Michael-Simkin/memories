@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -57102,7 +57103,7 @@ var operationLogSchema = external_exports.object({
 });
 
 // src/storage/database.ts
-import { DatabaseSync } from "sqlite";
+import { DatabaseSync } from "node:sqlite";
 
 // ../../node_modules/ulid/dist/node/index.js
 import crypto2 from "crypto";
