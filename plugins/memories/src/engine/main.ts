@@ -1,11 +1,15 @@
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import type { Server } from 'node:http';
 import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { createEngineApp } from '../api/app.js';
 import { ENGINE_HOST } from '../shared/constants.js';
 import { removeLockIfOwned, writeLockMetadata } from '../shared/lockfile.js';
-import { error, info } from '../shared/logger.js';
+import { error, info, warn } from '../shared/logger.js';
 import {
   ensureProjectDirectories,
   resolvePluginRoot,
@@ -15,6 +19,65 @@ import {
 const closeServer = promisify((server: Server, callback: (err?: Error) => void): void => {
   server.close(callback);
 });
+
+const SQLITE_VEC_VERSION = '0.1.7-alpha.2';
+
+function vecPlatformPackage(): string {
+  return `sqlite-vec-${os.platform()}-${os.arch()}`;
+}
+
+function vecExtSuffix(): string {
+  if (os.platform() === 'darwin') return '.dylib';
+  if (os.platform() === 'win32') return '.dll';
+  return '.so';
+}
+
+function vecBinaryPath(pluginRoot: string): string {
+  return path.join(pluginRoot, 'native', 'node_modules', vecPlatformPackage(), `vec0${vecExtSuffix()}`);
+}
+
+function vecExtensionPath(pluginRoot: string): string {
+  return path.join(pluginRoot, 'native', 'node_modules', vecPlatformPackage(), 'vec0');
+}
+
+async function ensureSqliteVec(pluginRoot: string): Promise<string | null> {
+  if (existsSync(vecBinaryPath(pluginRoot))) {
+    return vecExtensionPath(pluginRoot);
+  }
+
+  const pkgSpec = `${vecPlatformPackage()}@${SQLITE_VEC_VERSION}`;
+  const prefixDir = path.join(pluginRoot, 'native');
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'npm',
+        ['install', '--prefix', prefixDir, pkgSpec],
+        { timeout: 30_000 },
+        (err, _stdout, stderr) => {
+          if (err) {
+            reject(new Error(`npm install ${pkgSpec} failed: ${stderr || err.message}`));
+            return;
+          }
+          resolve();
+        },
+      );
+    });
+  } catch (installError) {
+    warn('sqlite-vec install failed; semantic search will use JS fallback', {
+      error: installError instanceof Error ? installError.message : String(installError),
+    });
+    return null;
+  }
+
+  if (!existsSync(vecBinaryPath(pluginRoot))) {
+    warn('sqlite-vec binary missing after install; using JS fallback');
+    return null;
+  }
+
+  info('sqlite-vec installed successfully', { package: pkgSpec });
+  return vecExtensionPath(pluginRoot);
+}
 
 async function pickPort(): Promise<number> {
   const fromEnv = process.env.MEMORIES_ENGINE_PORT;
@@ -51,6 +114,7 @@ async function bootstrap(): Promise<void> {
   const pluginRoot = resolvePluginRoot();
   const paths = await ensureProjectDirectories(projectRoot);
   const port = await pickPort();
+  const vecPath = await ensureSqliteVec(pluginRoot);
   let server: Server | null = null;
   let shuttingDown = false;
 
@@ -74,6 +138,7 @@ async function bootstrap(): Promise<void> {
     operationLogPath: paths.operationLogPath,
     hookLogPath: paths.hookLogPath,
     port,
+    vecExtensionPath: vecPath,
     onSessionDrain: async () => {
       await shutdown('session-drain');
     },

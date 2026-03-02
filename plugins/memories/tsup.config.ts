@@ -13,6 +13,7 @@ export default defineConfig({
     'mcp/search-server': 'src/mcp/search-server.ts',
   },
   format: ['esm'],
+  noExternal: [/.*/],
   outDir: 'dist',
   platform: 'node',
   sourcemap: true,

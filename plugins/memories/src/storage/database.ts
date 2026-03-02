@@ -1,5 +1,5 @@
-import Database from 'better-sqlite3';
-import { load as loadSqliteVec } from 'sqlite-vec';
+import { DatabaseSync } from 'node:sqlite';
+
 import { ulid } from 'ulid';
 
 import { warn } from '../shared/logger.js';
@@ -73,15 +73,17 @@ const STOP_WORDS = new Set<string>([
 ]);
 
 export class MemoryStore {
-  private readonly db: Database.Database;
+  private readonly db: DatabaseSync;
   private readonly vecEnabled: boolean;
 
-  public constructor(dbPath: string) {
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('foreign_keys = ON');
-    this.db.pragma('busy_timeout = 5000');
-    this.vecEnabled = this.tryEnableVec();
+  public constructor(dbPath: string, vecExtensionPath?: string | null) {
+    this.db = new DatabaseSync(dbPath, {
+      allowExtension: true,
+      enableForeignKeyConstraints: true,
+      timeout: 5000,
+    });
+    this.db.exec('PRAGMA journal_mode = WAL');
+    this.vecEnabled = this.tryEnableVec(vecExtensionPath ?? null);
     this.initialize();
   }
 
@@ -90,7 +92,7 @@ export class MemoryStore {
   }
 
   public memoryCount(): number {
-    const row = this.db.prepare('SELECT COUNT(*) as count FROM memories').get() as {
+    const row = this.db.prepare('SELECT COUNT(*) as count FROM memories').get() as unknown as {
       count: number;
     };
     return row.count;
@@ -106,7 +108,7 @@ export class MemoryStore {
           LIMIT ? OFFSET ?
         `,
       )
-      .all(limit, offset) as MemoryRow[];
+      .all(limit, offset) as unknown as MemoryRow[];
     return rows.map((row) => this.inflateMemory(row));
   }
 
@@ -119,7 +121,7 @@ export class MemoryStore {
           WHERE id = ?
         `,
       )
-      .get(id) as MemoryRow | undefined;
+      .get(id) as unknown as MemoryRow | undefined;
     if (!row) {
       return null;
     }
@@ -136,7 +138,7 @@ export class MemoryStore {
           ORDER BY updated_at DESC
         `,
       )
-      .all() as Array<
+      .all() as unknown as Array<
       Pick<MemoryRow, 'id' | 'memory_type' | 'content' | 'tags_json' | 'is_pinned' | 'updated_at'>
     >;
     return rows.map((row) => ({
@@ -237,7 +239,7 @@ export class MemoryStore {
             LIMIT ?
           `,
         )
-        .all(input.limit) as Array<
+        .all(input.limit) as unknown as Array<
         Pick<MemoryRow, 'id' | 'memory_type' | 'content' | 'tags_json' | 'is_pinned' | 'updated_at'>
       >;
 
@@ -272,7 +274,7 @@ export class MemoryStore {
           LIMIT ?
         `,
       )
-      .all(this.makeFtsQueryFromTerms(terms), candidateLimit) as LexicalRow[];
+      .all(this.makeFtsQueryFromTerms(terms), candidateLimit) as unknown as LexicalRow[];
 
     const bm25Range = this.computeBm25Range(rows);
     const loweredQuery = normalizedQuery.toLowerCase();
@@ -327,7 +329,7 @@ export class MemoryStore {
           WHERE (${includePinned ? '1=1' : 'm.is_pinned = 0'})
         `,
       )
-      .all() as Array<
+      .all() as unknown as Array<
       EmbeddingRow & Pick<MemoryRow, 'memory_type' | 'content' | 'tags_json' | 'is_pinned'>
     >;
 
@@ -392,7 +394,7 @@ export class MemoryStore {
           ORDER BY priority DESC
         `,
       )
-      .all() as MemoryPathMatcherRow[];
+      .all() as unknown as MemoryPathMatcherRow[];
   }
 
   public getMemoriesByIds(ids: string[]): SearchResult[] {
@@ -408,7 +410,7 @@ export class MemoryStore {
           WHERE id IN (${placeholders})
         `,
       )
-      .all(...ids) as Array<
+      .all(...ids) as unknown as Array<
       Pick<MemoryRow, 'id' | 'memory_type' | 'content' | 'tags_json' | 'is_pinned' | 'updated_at'>
     >;
 
@@ -482,12 +484,16 @@ export class MemoryStore {
     }
   }
 
-  private tryEnableVec(): boolean {
+  private tryEnableVec(extensionPath: string | null): boolean {
+    if (!extensionPath) {
+      warn('sqlite-vec extension path not provided; using JS semantic fallback');
+      return false;
+    }
     try {
-      loadSqliteVec(this.db);
+      this.db.loadExtension(extensionPath);
       return true;
     } catch (error) {
-      warn('sqlite-vec extension unavailable; using JS semantic fallback', {
+      warn('sqlite-vec extension failed to load; using JS semantic fallback', {
         error: error instanceof Error ? error.message : String(error),
       });
       return false;
@@ -495,8 +501,15 @@ export class MemoryStore {
   }
 
   private withTransaction<T>(fn: () => T): T {
-    const wrapped = this.db.transaction(fn);
-    return wrapped();
+    this.db.exec('BEGIN');
+    try {
+      const result = fn();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   private syncFts(memoryId: string, content: string, tags: string[]): void {
@@ -533,7 +546,7 @@ export class MemoryStore {
           ORDER BY priority DESC, created_at DESC
         `,
       )
-      .all(row.id) as MatcherRow[];
+      .all(row.id) as unknown as MatcherRow[];
 
     return {
       id: row.id,

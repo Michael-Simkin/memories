@@ -27,6 +27,7 @@ export interface EngineAppOptions {
   operationLogPath: string;
   hookLogPath: string;
   port: number;
+  vecExtensionPath: string | null;
   onSessionDrain: () => Promise<void>;
 }
 
@@ -58,7 +59,10 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
   app.use(express.json({ limit: '2mb' }));
 
   const startedAtMs = Date.now();
-  const store = new MemoryStore(path.join(options.projectRoot, '.memories', 'ai_memory.db'));
+  const store = new MemoryStore(
+    path.join(options.projectRoot, '.memories', 'ai_memory.db'),
+    options.vecExtensionPath,
+  );
   const embeddings = new EmbeddingClient();
   const retrieval = new RetrievalService(store, embeddings);
   const activeSessions = new Set<string>();
