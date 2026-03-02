@@ -54,7 +54,7 @@ export async function createMemory(payload: {
   content: string;
   tags: string[];
   is_pinned: boolean;
-  path_matchers: Array<{ path_matcher: string; priority: number }>;
+  path_matchers: Array<{ path_matcher: string }>;
 }): Promise<void> {
   const response = await fetch('/memories/add', {
     method: 'POST',
@@ -70,7 +70,7 @@ export async function updateMemory(
     content: string;
     tags: string[];
     is_pinned: boolean;
-    path_matchers: Array<{ path_matcher: string; priority: number }>;
+    path_matchers: Array<{ path_matcher: string }>;
   },
 ): Promise<void> {
   const response = await fetch(`/memories/${memoryId}`, {

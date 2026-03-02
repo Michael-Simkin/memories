@@ -35960,8 +35960,7 @@ function getProjectPaths(projectRoot) {
 // src/shared/types.ts
 var memoryTypeSchema = external_exports3.enum(MEMORY_TYPES);
 var pathMatcherSchema = external_exports3.object({
-  path_matcher: external_exports3.string().min(1),
-  priority: external_exports3.number().int().min(0).max(1e3).default(100)
+  path_matcher: external_exports3.string().min(1)
 });
 var memorySchema = external_exports3.object({
   id: external_exports3.string().min(1),

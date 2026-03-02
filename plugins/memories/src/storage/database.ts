@@ -24,7 +24,6 @@ interface MemoryRow {
 
 interface MatcherRow {
   path_matcher: string;
-  priority: number;
 }
 
 interface EmbeddingRow {
@@ -40,7 +39,6 @@ interface LexicalRow extends MemoryRow {
 interface MemoryPathMatcherRow {
   memory_id: string;
   path_matcher: string;
-  priority: number;
 }
 
 const STOP_WORDS = new Set<string>([
@@ -389,9 +387,9 @@ export class MemoryStore {
     return this.db
       .prepare(
         `
-          SELECT memory_id, path_matcher, priority
+          SELECT memory_id, path_matcher
           FROM memory_path_matchers
-          ORDER BY priority DESC
+          ORDER BY created_at DESC
         `,
       )
       .all() as unknown as MemoryPathMatcherRow[];
@@ -446,13 +444,11 @@ export class MemoryStore {
         id TEXT PRIMARY KEY,
         memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
         path_matcher TEXT NOT NULL,
-        priority INTEGER NOT NULL DEFAULT 100,
         created_at TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_mpm_path_matcher ON memory_path_matchers(path_matcher);
       CREATE INDEX IF NOT EXISTS idx_mpm_memory_id ON memory_path_matchers(memory_id);
-      CREATE INDEX IF NOT EXISTS idx_mpm_priority ON memory_path_matchers(priority DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_mpm_unique ON memory_path_matchers(memory_id, path_matcher);
 
       CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
@@ -527,12 +523,12 @@ export class MemoryStore {
     this.db.prepare('DELETE FROM memory_path_matchers WHERE memory_id = ?').run(memoryId);
     const insert = this.db.prepare(
       `
-        INSERT INTO memory_path_matchers (id, memory_id, path_matcher, priority, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO memory_path_matchers (id, memory_id, path_matcher, created_at)
+        VALUES (?, ?, ?, ?)
       `,
     );
     for (const matcher of pathMatchers) {
-      insert.run(ulid(), memoryId, matcher.path_matcher, matcher.priority, nowIso);
+      insert.run(ulid(), memoryId, matcher.path_matcher, nowIso);
     }
   }
 
@@ -540,10 +536,10 @@ export class MemoryStore {
     const pathMatchers = this.db
       .prepare(
         `
-          SELECT path_matcher, priority
+          SELECT path_matcher
           FROM memory_path_matchers
           WHERE memory_id = ?
-          ORDER BY priority DESC, created_at DESC
+          ORDER BY created_at DESC
         `,
       )
       .all(row.id) as unknown as MatcherRow[];
@@ -558,7 +554,6 @@ export class MemoryStore {
       updated_at: row.updated_at,
       path_matchers: pathMatchers.map((matcher) => ({
         path_matcher: matcher.path_matcher,
-        priority: matcher.priority,
       })),
     };
   }

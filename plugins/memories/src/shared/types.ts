@@ -7,7 +7,6 @@ export type MemoryType = z.infer<typeof memoryTypeSchema>;
 
 export const pathMatcherSchema = z.object({
   path_matcher: z.string().min(1),
-  priority: z.number().int().min(0).max(1000).default(100),
 });
 export type PathMatcherInput = z.infer<typeof pathMatcherSchema>;
 

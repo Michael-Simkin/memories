@@ -2,7 +2,6 @@ export type MemoryType = 'fact' | 'rule' | 'decision' | 'episode';
 
 export interface PathMatcher {
   path_matcher: string;
-  priority: number;
 }
 
 export interface Memory {

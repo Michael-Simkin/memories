@@ -6,6 +6,22 @@ import type { MemoryType, SearchResult } from '../shared/types.js';
 import type { MemoryStore } from '../storage/database.js';
 import type { EmbeddingClient } from './embeddings.js';
 
+const RRF_RANK_CONSTANT = 60;
+
+interface MatcherSpecificity {
+  hasDoubleStar: boolean;
+  literalSegmentCount: number;
+  matcherLength: number;
+  scopeRank: number;
+  wildcardSegmentCount: number;
+}
+
+interface RankedPathMatch {
+  effectRank: number;
+  memory: SearchResult;
+  specificity: MatcherSpecificity;
+}
+
 function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length === 0 || b.length === 0 || a.length !== b.length) {
     return 0;
@@ -140,34 +156,48 @@ export class RetrievalService {
     }
 
     const matchers = this.store.listPathMatchers();
-    const matchScore = new Map<string, number>();
+    const bestMatchSpecificityByMemoryId = new Map<string, MatcherSpecificity>();
     for (const matcher of matchers) {
-      const matcherFn = picomatch(matcher.path_matcher);
+      const matcherFn = picomatch(matcher.path_matcher, { dot: true });
       const isMatch = normalizedPaths.some((targetPath) => matcherFn(targetPath));
       if (!isMatch) {
         continue;
       }
-      const current = matchScore.get(matcher.memory_id) ?? Number.NEGATIVE_INFINITY;
-      if (matcher.priority > current) {
-        matchScore.set(matcher.memory_id, matcher.priority);
+      const specificity = this.computeMatcherSpecificity(matcher.path_matcher);
+      const current = bestMatchSpecificityByMemoryId.get(matcher.memory_id);
+      if (!current || this.sortByMatcherSpecificity(specificity, current) < 0) {
+        bestMatchSpecificityByMemoryId.set(matcher.memory_id, specificity);
       }
     }
 
-    const ids = [...matchScore.keys()];
+    const ids = [...bestMatchSpecificityByMemoryId.keys()];
     if (ids.length === 0) {
       return [];
     }
-    const memories = this.store
+
+    const rankedPathMatches: RankedPathMatch[] = this.store
       .getMemoriesByIds(ids)
       .filter((memory) => (memoryTypes ? memoryTypes.includes(memory.memory_type) : true))
       .filter((memory) => (includePinned ? true : !memory.is_pinned))
-      .map((memory) => ({
-        ...memory,
-        score: (matchScore.get(memory.id) ?? 0) + 1000,
-      }));
+      .flatMap((memory) => {
+        const specificity = bestMatchSpecificityByMemoryId.get(memory.id);
+        if (!specificity) {
+          return [];
+        }
+        return [
+          {
+            effectRank: this.classifyPolicyEffect(memory),
+            memory,
+            specificity,
+          },
+        ];
+      });
 
-    memories.sort((a, b) => this.sortSearchResults(a, b));
-    return memories;
+    rankedPathMatches.sort((a, b) => this.sortPathMatches(a, b));
+    return rankedPathMatches.map((entry, index) => ({
+      ...entry.memory,
+      score: 1 / (index + 1),
+    }));
   }
 
   private mergeHybrid(input: {
@@ -175,14 +205,50 @@ export class RetrievalService {
     semantic: SearchResult[];
     limit: number;
   }): SearchResult[] {
-    const byId = new Map<string, SearchResult>();
-    for (const result of [...input.lexical, ...input.semantic]) {
-      const existing = byId.get(result.id);
-      if (!existing || result.score > existing.score) {
-        byId.set(result.id, result);
+    const byId = new Map<
+      string,
+      {
+        bestRank: number;
+        representative: SearchResult;
+        rrfScore: number;
       }
-    }
-    return [...byId.values()].sort((a, b) => this.sortSearchResults(a, b)).slice(0, input.limit);
+    >();
+
+    const addRankedList = (results: SearchResult[]): void => {
+      for (let index = 0; index < results.length; index += 1) {
+        const result = results[index];
+        if (!result) {
+          continue;
+        }
+        const rank = index + 1;
+        const contribution = 1 / (RRF_RANK_CONSTANT + rank);
+        const current = byId.get(result.id);
+        if (!current) {
+          byId.set(result.id, {
+            bestRank: rank,
+            representative: result,
+            rrfScore: contribution,
+          });
+          continue;
+        }
+        current.rrfScore += contribution;
+        if (rank < current.bestRank) {
+          current.bestRank = rank;
+          current.representative = result;
+        }
+      }
+    };
+
+    addRankedList(input.lexical);
+    addRankedList(input.semantic);
+
+    return [...byId.values()]
+      .map((entry) => ({
+        ...entry.representative,
+        score: entry.rrfScore,
+      }))
+      .sort((a, b) => this.sortSearchResults(a, b))
+      .slice(0, input.limit);
   }
 
   private sortSearchResults(a: SearchResult, b: SearchResult): number {
@@ -190,5 +256,88 @@ export class RetrievalService {
       return b.score - a.score;
     }
     return Date.parse(b.updated_at) - Date.parse(a.updated_at);
+  }
+
+  private sortPathMatches(a: RankedPathMatch, b: RankedPathMatch): number {
+    if (a.effectRank !== b.effectRank) {
+      return b.effectRank - a.effectRank;
+    }
+    const specificityOrder = this.sortByMatcherSpecificity(a.specificity, b.specificity);
+    if (specificityOrder !== 0) {
+      return specificityOrder;
+    }
+    if (a.memory.is_pinned !== b.memory.is_pinned) {
+      return a.memory.is_pinned ? -1 : 1;
+    }
+    return Date.parse(b.memory.updated_at) - Date.parse(a.memory.updated_at);
+  }
+
+  private sortByMatcherSpecificity(a: MatcherSpecificity, b: MatcherSpecificity): number {
+    if (a.scopeRank !== b.scopeRank) {
+      return b.scopeRank - a.scopeRank;
+    }
+    if (a.literalSegmentCount !== b.literalSegmentCount) {
+      return b.literalSegmentCount - a.literalSegmentCount;
+    }
+    if (a.wildcardSegmentCount !== b.wildcardSegmentCount) {
+      return a.wildcardSegmentCount - b.wildcardSegmentCount;
+    }
+    if (a.hasDoubleStar !== b.hasDoubleStar) {
+      return a.hasDoubleStar ? 1 : -1;
+    }
+    if (a.matcherLength !== b.matcherLength) {
+      return b.matcherLength - a.matcherLength;
+    }
+    return 0;
+  }
+
+  private computeMatcherSpecificity(pattern: string): MatcherSpecificity {
+    const normalized = normalizePathForMatch(pattern);
+    const segments = normalized.split('/').filter(Boolean);
+    const hasDoubleStar = normalized.includes('**');
+    const wildcardSegmentCount = segments.reduce((count, segment) => {
+      return this.hasGlobChars(segment) ? count + 1 : count;
+    }, 0);
+    const literalSegmentCount = segments.length - wildcardSegmentCount;
+    const hasGlob = this.hasGlobChars(normalized);
+    const isLiteral = !hasGlob;
+    const scopeRank = isLiteral ? (this.looksFileLikePath(normalized) ? 4 : 3) : hasDoubleStar ? 1 : 2;
+
+    return {
+      hasDoubleStar,
+      literalSegmentCount,
+      matcherLength: normalized.length,
+      scopeRank,
+      wildcardSegmentCount,
+    };
+  }
+
+  private classifyPolicyEffect(memory: SearchResult): number {
+    if (memory.memory_type !== 'rule') {
+      return 0;
+    }
+    const text = `${memory.content} ${memory.tags.join(' ')}`.toLowerCase();
+    const hasNegativeInstruction =
+      /\b(do not|don't|never|must not|forbidden|prohibit|cannot|can't)\b/.test(text);
+    const hasEditVerb = /\b(edit|modify|change|touch|delete|remove|overwrite|write)\b/.test(text);
+    if (hasNegativeInstruction && hasEditVerb) {
+      return 3;
+    }
+    if (/\b(must|always|required|enforce|only|policy)\b/.test(text)) {
+      return 2;
+    }
+    return 1;
+  }
+
+  private hasGlobChars(value: string): boolean {
+    return /[*?[\]{}()]/.test(value);
+  }
+
+  private looksFileLikePath(value: string): boolean {
+    const base = value.split('/').filter(Boolean).at(-1) ?? '';
+    if (!base) {
+      return false;
+    }
+    return base.includes('.') || base.startsWith('.');
   }
 }

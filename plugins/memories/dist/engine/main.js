@@ -42923,6 +42923,7 @@ function isErrno(error49) {
 }
 
 // src/retrieval/hybrid-retrieval.ts
+var RRF_RANK_CONSTANT = 60;
 function cosineSimilarity(a, b) {
   if (a.length === 0 || b.length === 0 || a.length !== b.length) {
     return 0;
@@ -43022,44 +43023,155 @@ var RetrievalService = class {
       return [];
     }
     const matchers = this.store.listPathMatchers();
-    const matchScore = /* @__PURE__ */ new Map();
+    const bestMatchSpecificityByMemoryId = /* @__PURE__ */ new Map();
     for (const matcher of matchers) {
-      const matcherFn = (0, import_picomatch.default)(matcher.path_matcher);
+      const matcherFn = (0, import_picomatch.default)(matcher.path_matcher, { dot: true });
       const isMatch = normalizedPaths.some((targetPath) => matcherFn(targetPath));
       if (!isMatch) {
         continue;
       }
-      const current = matchScore.get(matcher.memory_id) ?? Number.NEGATIVE_INFINITY;
-      if (matcher.priority > current) {
-        matchScore.set(matcher.memory_id, matcher.priority);
+      const specificity = this.computeMatcherSpecificity(matcher.path_matcher);
+      const current = bestMatchSpecificityByMemoryId.get(matcher.memory_id);
+      if (!current || this.sortByMatcherSpecificity(specificity, current) < 0) {
+        bestMatchSpecificityByMemoryId.set(matcher.memory_id, specificity);
       }
     }
-    const ids = [...matchScore.keys()];
+    const ids = [...bestMatchSpecificityByMemoryId.keys()];
     if (ids.length === 0) {
       return [];
     }
-    const memories = this.store.getMemoriesByIds(ids).filter((memory) => memoryTypes ? memoryTypes.includes(memory.memory_type) : true).filter((memory) => includePinned ? true : !memory.is_pinned).map((memory) => ({
-      ...memory,
-      score: (matchScore.get(memory.id) ?? 0) + 1e3
+    const rankedPathMatches = this.store.getMemoriesByIds(ids).filter((memory) => memoryTypes ? memoryTypes.includes(memory.memory_type) : true).filter((memory) => includePinned ? true : !memory.is_pinned).flatMap((memory) => {
+      const specificity = bestMatchSpecificityByMemoryId.get(memory.id);
+      if (!specificity) {
+        return [];
+      }
+      return [
+        {
+          effectRank: this.classifyPolicyEffect(memory),
+          memory,
+          specificity
+        }
+      ];
+    });
+    rankedPathMatches.sort((a, b) => this.sortPathMatches(a, b));
+    return rankedPathMatches.map((entry, index) => ({
+      ...entry.memory,
+      score: 1 / (index + 1)
     }));
-    memories.sort((a, b) => this.sortSearchResults(a, b));
-    return memories;
   }
   mergeHybrid(input) {
     const byId = /* @__PURE__ */ new Map();
-    for (const result of [...input.lexical, ...input.semantic]) {
-      const existing = byId.get(result.id);
-      if (!existing || result.score > existing.score) {
-        byId.set(result.id, result);
+    const addRankedList = (results) => {
+      for (let index = 0; index < results.length; index += 1) {
+        const result = results[index];
+        if (!result) {
+          continue;
+        }
+        const rank = index + 1;
+        const contribution = 1 / (RRF_RANK_CONSTANT + rank);
+        const current = byId.get(result.id);
+        if (!current) {
+          byId.set(result.id, {
+            bestRank: rank,
+            representative: result,
+            rrfScore: contribution
+          });
+          continue;
+        }
+        current.rrfScore += contribution;
+        if (rank < current.bestRank) {
+          current.bestRank = rank;
+          current.representative = result;
+        }
       }
-    }
-    return [...byId.values()].sort((a, b) => this.sortSearchResults(a, b)).slice(0, input.limit);
+    };
+    addRankedList(input.lexical);
+    addRankedList(input.semantic);
+    return [...byId.values()].map((entry) => ({
+      ...entry.representative,
+      score: entry.rrfScore
+    })).sort((a, b) => this.sortSearchResults(a, b)).slice(0, input.limit);
   }
   sortSearchResults(a, b) {
     if (a.score !== b.score) {
       return b.score - a.score;
     }
     return Date.parse(b.updated_at) - Date.parse(a.updated_at);
+  }
+  sortPathMatches(a, b) {
+    if (a.effectRank !== b.effectRank) {
+      return b.effectRank - a.effectRank;
+    }
+    const specificityOrder = this.sortByMatcherSpecificity(a.specificity, b.specificity);
+    if (specificityOrder !== 0) {
+      return specificityOrder;
+    }
+    if (a.memory.is_pinned !== b.memory.is_pinned) {
+      return a.memory.is_pinned ? -1 : 1;
+    }
+    return Date.parse(b.memory.updated_at) - Date.parse(a.memory.updated_at);
+  }
+  sortByMatcherSpecificity(a, b) {
+    if (a.scopeRank !== b.scopeRank) {
+      return b.scopeRank - a.scopeRank;
+    }
+    if (a.literalSegmentCount !== b.literalSegmentCount) {
+      return b.literalSegmentCount - a.literalSegmentCount;
+    }
+    if (a.wildcardSegmentCount !== b.wildcardSegmentCount) {
+      return a.wildcardSegmentCount - b.wildcardSegmentCount;
+    }
+    if (a.hasDoubleStar !== b.hasDoubleStar) {
+      return a.hasDoubleStar ? 1 : -1;
+    }
+    if (a.matcherLength !== b.matcherLength) {
+      return b.matcherLength - a.matcherLength;
+    }
+    return 0;
+  }
+  computeMatcherSpecificity(pattern) {
+    const normalized = normalizePathForMatch(pattern);
+    const segments = normalized.split("/").filter(Boolean);
+    const hasDoubleStar = normalized.includes("**");
+    const wildcardSegmentCount = segments.reduce((count, segment) => {
+      return this.hasGlobChars(segment) ? count + 1 : count;
+    }, 0);
+    const literalSegmentCount = segments.length - wildcardSegmentCount;
+    const hasGlob = this.hasGlobChars(normalized);
+    const isLiteral = !hasGlob;
+    const scopeRank = isLiteral ? this.looksFileLikePath(normalized) ? 4 : 3 : hasDoubleStar ? 1 : 2;
+    return {
+      hasDoubleStar,
+      literalSegmentCount,
+      matcherLength: normalized.length,
+      scopeRank,
+      wildcardSegmentCount
+    };
+  }
+  classifyPolicyEffect(memory) {
+    if (memory.memory_type !== "rule") {
+      return 0;
+    }
+    const text = `${memory.content} ${memory.tags.join(" ")}`.toLowerCase();
+    const hasNegativeInstruction = /\b(do not|don't|never|must not|forbidden|prohibit|cannot|can't)\b/.test(text);
+    const hasEditVerb = /\b(edit|modify|change|touch|delete|remove|overwrite|write)\b/.test(text);
+    if (hasNegativeInstruction && hasEditVerb) {
+      return 3;
+    }
+    if (/\b(must|always|required|enforce|only|policy)\b/.test(text)) {
+      return 2;
+    }
+    return 1;
+  }
+  hasGlobChars(value) {
+    return /[*?[\]{}()]/.test(value);
+  }
+  looksFileLikePath(value) {
+    const base = value.split("/").filter(Boolean).at(-1) ?? "";
+    if (!base) {
+      return false;
+    }
+    return base.includes(".") || base.startsWith(".");
   }
 };
 
@@ -57030,8 +57142,7 @@ function applyTokenBudget(results, maxTokens) {
 // src/shared/types.ts
 var memoryTypeSchema = external_exports.enum(MEMORY_TYPES);
 var pathMatcherSchema = external_exports.object({
-  path_matcher: external_exports.string().min(1),
-  priority: external_exports.number().int().min(0).max(1e3).default(100)
+  path_matcher: external_exports.string().min(1)
 });
 var memorySchema = external_exports.object({
   id: external_exports.string().min(1),
@@ -57466,9 +57577,9 @@ var MemoryStore = class {
   listPathMatchers() {
     return this.db.prepare(
       `
-          SELECT memory_id, path_matcher, priority
+          SELECT memory_id, path_matcher
           FROM memory_path_matchers
-          ORDER BY priority DESC
+          ORDER BY created_at DESC
         `
     ).all();
   }
@@ -57515,13 +57626,11 @@ var MemoryStore = class {
         id TEXT PRIMARY KEY,
         memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
         path_matcher TEXT NOT NULL,
-        priority INTEGER NOT NULL DEFAULT 100,
         created_at TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_mpm_path_matcher ON memory_path_matchers(path_matcher);
       CREATE INDEX IF NOT EXISTS idx_mpm_memory_id ON memory_path_matchers(memory_id);
-      CREATE INDEX IF NOT EXISTS idx_mpm_priority ON memory_path_matchers(priority DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_mpm_unique ON memory_path_matchers(memory_id, path_matcher);
 
       CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
@@ -57585,21 +57694,21 @@ var MemoryStore = class {
     this.db.prepare("DELETE FROM memory_path_matchers WHERE memory_id = ?").run(memoryId);
     const insert = this.db.prepare(
       `
-        INSERT INTO memory_path_matchers (id, memory_id, path_matcher, priority, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO memory_path_matchers (id, memory_id, path_matcher, created_at)
+        VALUES (?, ?, ?, ?)
       `
     );
     for (const matcher of pathMatchers) {
-      insert.run(ulid3(), memoryId, matcher.path_matcher, matcher.priority, nowIso);
+      insert.run(ulid3(), memoryId, matcher.path_matcher, nowIso);
     }
   }
   inflateMemory(row) {
     const pathMatchers = this.db.prepare(
       `
-          SELECT path_matcher, priority
+          SELECT path_matcher
           FROM memory_path_matchers
           WHERE memory_id = ?
-          ORDER BY priority DESC, created_at DESC
+          ORDER BY created_at DESC
         `
     ).all(row.id);
     return {
@@ -57611,8 +57720,7 @@ var MemoryStore = class {
       created_at: row.created_at,
       updated_at: row.updated_at,
       path_matchers: pathMatchers.map((matcher) => ({
-        path_matcher: matcher.path_matcher,
-        priority: matcher.priority
+        path_matcher: matcher.path_matcher
       }))
     };
   }

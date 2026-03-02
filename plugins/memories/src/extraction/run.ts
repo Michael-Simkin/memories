@@ -141,7 +141,7 @@ function buildExtractionPrompt(input: {
     '      "tags": ["string"],',
     '      "is_pinned": false,',
     '      "path_matchers": [',
-    '        { "path_matcher": "glob-like string", "priority": 100 }',
+    '        { "path_matcher": "glob-like string" }',
     '      ],',
     '      "confidence": 0.0,',
     '      "reason": "short justification",',
@@ -445,7 +445,6 @@ function tightenActionPathMatchers(
   if (explicitPaths.length > 0) {
     const explicitMatchers: MemoryAction['path_matchers'] = explicitPaths.map((pathHint) => ({
       path_matcher: pathHint,
-      priority: 220,
     }));
     if (arePathMatchersEqual(action.path_matchers, explicitMatchers)) {
       return action;
@@ -531,7 +530,7 @@ function sanitizePathMatchers(
         const exact = matches[0] ?? normalizedPattern;
         if (!seen.has(exact)) {
           seen.add(exact);
-          sanitized.push({ path_matcher: exact, priority: Math.max(200, matcher.priority) });
+          sanitized.push({ path_matcher: exact });
         }
         continue;
       }
@@ -541,10 +540,7 @@ function sanitizePathMatchers(
       continue;
     }
     seen.add(normalizedPattern);
-    sanitized.push({
-      path_matcher: normalizedPattern,
-      priority: clampPriority(matcher.priority),
-    });
+    sanitized.push({ path_matcher: normalizedPattern });
   }
   return sanitized;
 }
@@ -614,20 +610,6 @@ function isExistingProjectPath(candidate: string, projectRoot: string): boolean 
   return existsSync(absoluteCandidate);
 }
 
-function clampPriority(priority: number): number {
-  if (!Number.isFinite(priority)) {
-    return 100;
-  }
-  const rounded = Math.round(priority);
-  if (rounded < 0) {
-    return 0;
-  }
-  if (rounded > 1000) {
-    return 1000;
-  }
-  return rounded;
-}
-
 function arePathMatchersEqual(
   left: MemoryAction['path_matchers'],
   right: MemoryAction['path_matchers'],
@@ -641,7 +623,7 @@ function arePathMatchersEqual(
     if (!lhs || !rhs) {
       return false;
     }
-    if (lhs.path_matcher !== rhs.path_matcher || lhs.priority !== rhs.priority) {
+    if (lhs.path_matcher !== rhs.path_matcher) {
       return false;
     }
   }

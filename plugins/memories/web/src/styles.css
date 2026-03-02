@@ -173,6 +173,26 @@ main {
   color: #d4dcf6;
 }
 
+.memory-pill.effect-context {
+  background: #2f406f;
+  color: #d6e3ff;
+}
+
+.memory-pill.effect-preference {
+  background: #4a385d;
+  color: #ecd8ff;
+}
+
+.memory-pill.effect-must {
+  background: #2f5a46;
+  color: #cbf3dc;
+}
+
+.memory-pill.effect-deny {
+  background: #6a3240;
+  color: #ffd8e0;
+}
+
 .memory-updated {
   color: #9eaad0;
   margin-left: auto;
@@ -189,10 +209,74 @@ main {
 }
 
 .memory-path-matchers {
+  align-items: center;
   color: #a8b6de;
+  display: flex;
   font-size: 12px;
+  gap: 6px;
   margin: 0 0 6px;
   overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.memory-meta-label {
+  color: #92a2d0;
+}
+
+.memory-empty {
+  color: #7d8bb4;
+}
+
+.memory-matcher-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.memory-matcher-chip {
+  align-items: center;
+  background: #101831;
+  border: 1px solid #2f3c65;
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 8px;
+}
+
+.memory-matcher-chip code {
+  color: #d9e4ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.memory-matcher-scope {
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
+  text-transform: uppercase;
+}
+
+.memory-matcher-scope.scope-exact-file {
+  background: #265042;
+  color: #cbf3df;
+}
+
+.memory-matcher-scope.scope-exact-dir {
+  background: #2f486b;
+  color: #d6e7ff;
+}
+
+.memory-matcher-scope.scope-single-glob {
+  background: #56482b;
+  color: #f3e8c6;
+}
+
+.memory-matcher-scope.scope-deep-glob {
+  background: #5e333f;
+  color: #ffdce4;
 }
 
 .memory-score {

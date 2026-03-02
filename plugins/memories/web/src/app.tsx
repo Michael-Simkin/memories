@@ -11,7 +11,7 @@ import {
   searchMemories,
   updateMemory,
 } from './api';
-import type { Memory, MemorySearchResult, MemoryType, PathMatcher } from './types';
+import type { Memory, MemorySearchResult, MemoryType } from './types';
 
 type Tab = 'memories' | 'logs';
 const MIN_SEARCH_QUERY_LENGTH = 2;
@@ -41,26 +41,17 @@ function toDraft(memory?: Memory): MemoryDraft {
     is_pinned: memory?.is_pinned ?? false,
     memory_type: memory?.memory_type ?? 'fact',
     path_matchers:
-      memory?.path_matchers
-        .map((matcher) => `${matcher.path_matcher}:${matcher.priority}`)
-        .join('\n') ?? '',
+      memory?.path_matchers.map((matcher) => matcher.path_matcher).join('\n') ?? '',
     tags: memory?.tags.join(', ') ?? '',
   };
 }
 
-function parseMatchers(input: string): Array<{ path_matcher: string; priority: number }> {
+function parseMatchers(input: string): Array<{ path_matcher: string }> {
   return input
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => {
-      const [matcher, priorityRaw] = line.split(':');
-      const priority = Number.parseInt(priorityRaw ?? '100', 10);
-      return {
-        path_matcher: (matcher ?? '').trim(),
-        priority: Number.isInteger(priority) ? priority : 100,
-      };
-    })
+    .map((line) => ({ path_matcher: line }))
     .filter((value) => value.path_matcher.length > 0);
 }
 
@@ -71,11 +62,39 @@ function parseTags(input: string): string[] {
     .filter(Boolean);
 }
 
-function formatPathMatchers(pathMatchers: PathMatcher[]): string {
-  if (pathMatchers.length === 0) {
-    return 'none';
+type PolicyEffect = 'deny' | 'must' | 'preference' | 'context';
+type MatcherScope = 'exact-file' | 'exact-dir' | 'single-glob' | 'deep-glob';
+
+function looksFileLikePath(value: string): boolean {
+  const base = value.split('/').filter(Boolean).at(-1) ?? '';
+  return base.includes('.') || base.startsWith('.');
+}
+
+function classifyMatcherScope(pattern: string): MatcherScope {
+  const normalized = pattern.trim();
+  const hasDoubleStar = normalized.includes('**');
+  const hasGlobChars = /[*?[\]{}()]/.test(normalized);
+  if (!hasGlobChars) {
+    return looksFileLikePath(normalized) ? 'exact-file' : 'exact-dir';
   }
-  return pathMatchers.map((matcher) => `${matcher.path_matcher} (p${matcher.priority})`).join(', ');
+  return hasDoubleStar ? 'deep-glob' : 'single-glob';
+}
+
+function classifyPolicyEffect(memory: Pick<DisplayMemory, 'memory_type' | 'content' | 'tags'>): PolicyEffect {
+  if (memory.memory_type !== 'rule') {
+    return 'context';
+  }
+  const text = `${memory.content} ${memory.tags.join(' ')}`.toLowerCase();
+  const hasNegativeInstruction =
+    /\b(do not|don't|never|must not|forbidden|prohibit|cannot|can't)\b/.test(text);
+  const hasEditVerb = /\b(edit|modify|change|touch|delete|remove|overwrite|write)\b/.test(text);
+  if (hasNegativeInstruction && hasEditVerb) {
+    return 'deny';
+  }
+  if (/\b(must|always|required|enforce|only|policy)\b/.test(text)) {
+    return 'must';
+  }
+  return 'preference';
 }
 
 function toDisplayMemory(memory: Memory): DisplayMemory {
@@ -171,7 +190,7 @@ function MemoryModal(props: MemoryModalProps) {
             />
           </label>
           <label>
-            Path matchers (`glob:priority`, one per line)
+            Path matchers (one glob per line)
             <textarea
               rows={3}
               value={draft.path_matchers}
@@ -480,40 +499,60 @@ export function App() {
           {memoriesLoading ? <p>Loading…</p> : null}
           {memoriesError ? <p className="error-text">{String(memoriesError)}</p> : null}
           <ul className="memory-list">
-            {memoryRows.map((memory) => (
-              <li
-                key={memory.id}
-                className={`memory-card type-${memory.memory_type} ${memory.is_pinned ? 'is-pinned' : 'is-unpinned'}`}
-              >
-                <div className="memory-card-header">
-                  <span className={`memory-pill type-${memory.memory_type}`}>
-                    {memory.memory_type}
-                  </span>
-                  <span className={`memory-pill pin-${memory.is_pinned ? 'pinned' : 'unpinned'}`}>
-                    {memory.is_pinned ? 'Pinned' : 'Not pinned'}
-                  </span>
-                  <span className="memory-updated">
-                    Updated {new Date(memory.updated_at).toLocaleString()}
-                  </span>
-                </div>
-                <p className="memory-content">{memory.content}</p>
-                <p className="memory-tags">tags: {memory.tags.join(', ') || 'none'}</p>
-                <p className="memory-path-matchers">
-                  path matchers: {formatPathMatchers(memoryIndexById.get(memory.id)?.path_matchers ?? [])}
-                </p>
-                {isSearchActive && typeof memory.score === 'number' ? (
-                  <p className="memory-score">match score: {memory.score.toFixed(3)}</p>
-                ) : null}
-                <div className="memory-actions">
-                  <button type="button" onClick={() => openEditMemory(memory)}>
-                    Edit
-                  </button>
-                  <button type="button" onClick={() => deleteMutation.mutate(memory.id)}>
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
+            {memoryRows.map((memory) => {
+              const pathMatchers = memoryIndexById.get(memory.id)?.path_matchers ?? [];
+              const policyEffect = classifyPolicyEffect(memory);
+              return (
+                <li
+                  key={memory.id}
+                  className={`memory-card type-${memory.memory_type} ${memory.is_pinned ? 'is-pinned' : 'is-unpinned'}`}
+                >
+                  <div className="memory-card-header">
+                    <span className={`memory-pill type-${memory.memory_type}`}>
+                      {memory.memory_type}
+                    </span>
+                    <span className={`memory-pill effect-${policyEffect}`}>{policyEffect}</span>
+                    <span className={`memory-pill pin-${memory.is_pinned ? 'pinned' : 'unpinned'}`}>
+                      {memory.is_pinned ? 'Pinned' : 'Not pinned'}
+                    </span>
+                    <span className="memory-updated">
+                      Updated {new Date(memory.updated_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="memory-content">{memory.content}</p>
+                  <p className="memory-tags">tags: {memory.tags.join(', ') || 'none'}</p>
+                  <div className="memory-path-matchers">
+                    <span className="memory-meta-label">path matchers:</span>
+                    {pathMatchers.length > 0 ? (
+                      <span className="memory-matcher-list">
+                        {pathMatchers.map((matcher) => {
+                          const scope = classifyMatcherScope(matcher.path_matcher);
+                          return (
+                            <span key={`${memory.id}-${matcher.path_matcher}`} className="memory-matcher-chip">
+                              <code>{matcher.path_matcher}</code>
+                              <span className={`memory-matcher-scope scope-${scope}`}>{scope}</span>
+                            </span>
+                          );
+                        })}
+                      </span>
+                    ) : (
+                      <span className="memory-empty">none</span>
+                    )}
+                  </div>
+                  {isSearchActive && typeof memory.score === 'number' ? (
+                    <p className="memory-score">match score: {memory.score.toFixed(3)}</p>
+                  ) : null}
+                  <div className="memory-actions">
+                    <button type="button" onClick={() => openEditMemory(memory)}>
+                      Edit
+                    </button>
+                    <button type="button" onClick={() => deleteMutation.mutate(memory.id)}>
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </section>
       ) : (

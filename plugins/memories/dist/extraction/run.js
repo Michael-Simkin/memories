@@ -15432,8 +15432,7 @@ config(en_default());
 // src/shared/types.ts
 var memoryTypeSchema = external_exports.enum(MEMORY_TYPES);
 var pathMatcherSchema = external_exports.object({
-  path_matcher: external_exports.string().min(1),
-  priority: external_exports.number().int().min(0).max(1e3).default(100)
+  path_matcher: external_exports.string().min(1)
 });
 var memorySchema = external_exports.object({
   id: external_exports.string().min(1),
@@ -15633,7 +15632,7 @@ function buildExtractionPrompt(input) {
     '      "tags": ["string"],',
     '      "is_pinned": false,',
     '      "path_matchers": [',
-    '        { "path_matcher": "glob-like string", "priority": 100 }',
+    '        { "path_matcher": "glob-like string" }',
     "      ],",
     '      "confidence": 0.0,',
     '      "reason": "short justification",',
@@ -15889,8 +15888,7 @@ function tightenActionPathMatchers(action, relatedPaths, projectRoot) {
   const explicitPaths = extractActionPathHints(action, projectRoot, relatedPaths).map((pathHint) => resolveHintToRelatedPath(pathHint, relatedPaths)).filter((pathHint) => relatedPathSet.has(pathHint) || isExistingProjectPath(pathHint, projectRoot));
   if (explicitPaths.length > 0) {
     const explicitMatchers = explicitPaths.map((pathHint) => ({
-      path_matcher: pathHint,
-      priority: 220
+      path_matcher: pathHint
     }));
     if (arePathMatchersEqual(action.path_matchers, explicitMatchers)) {
       return action;
@@ -15962,7 +15960,7 @@ function sanitizePathMatchers(inputMatchers, relatedPaths, projectRoot) {
         const exact = matches[0] ?? normalizedPattern;
         if (!seen.has(exact)) {
           seen.add(exact);
-          sanitized.push({ path_matcher: exact, priority: Math.max(200, matcher.priority) });
+          sanitized.push({ path_matcher: exact });
         }
         continue;
       }
@@ -15971,10 +15969,7 @@ function sanitizePathMatchers(inputMatchers, relatedPaths, projectRoot) {
       continue;
     }
     seen.add(normalizedPattern);
-    sanitized.push({
-      path_matcher: normalizedPattern,
-      priority: clampPriority(matcher.priority)
-    });
+    sanitized.push({ path_matcher: normalizedPattern });
   }
   return sanitized;
 }
@@ -16024,19 +16019,6 @@ function isExistingProjectPath(candidate, projectRoot) {
   }
   return existsSync(absoluteCandidate);
 }
-function clampPriority(priority) {
-  if (!Number.isFinite(priority)) {
-    return 100;
-  }
-  const rounded = Math.round(priority);
-  if (rounded < 0) {
-    return 0;
-  }
-  if (rounded > 1e3) {
-    return 1e3;
-  }
-  return rounded;
-}
 function arePathMatchersEqual(left, right) {
   if (left.length !== right.length) {
     return false;
@@ -16047,7 +16029,7 @@ function arePathMatchersEqual(left, right) {
     if (!lhs || !rhs) {
       return false;
     }
-    if (lhs.path_matcher !== rhs.path_matcher || lhs.priority !== rhs.priority) {
+    if (lhs.path_matcher !== rhs.path_matcher) {
       return false;
     }
   }
