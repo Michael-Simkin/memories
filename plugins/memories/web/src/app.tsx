@@ -136,12 +136,10 @@ function MemoryModal(props: MemoryModalProps) {
             Type
             <select
               value={draft.memory_type}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  memory_type: event.currentTarget.value as MemoryType,
-                }))
-              }
+              onChange={(event) => {
+                const value = event.currentTarget.value as MemoryType;
+                setDraft((current) => ({ ...current, memory_type: value }));
+              }}
             >
               <option value="fact">fact</option>
               <option value="rule">rule</option>
@@ -155,9 +153,10 @@ function MemoryModal(props: MemoryModalProps) {
               rows={4}
               required
               value={draft.content}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, content: event.currentTarget.value }))
-              }
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setDraft((current) => ({ ...current, content: value }));
+              }}
             />
           </label>
           <label>
@@ -165,9 +164,10 @@ function MemoryModal(props: MemoryModalProps) {
             <input
               type="text"
               value={draft.tags}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, tags: event.currentTarget.value }))
-              }
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setDraft((current) => ({ ...current, tags: value }));
+              }}
             />
           </label>
           <label>
@@ -175,9 +175,10 @@ function MemoryModal(props: MemoryModalProps) {
             <textarea
               rows={3}
               value={draft.path_matchers}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, path_matchers: event.currentTarget.value }))
-              }
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setDraft((current) => ({ ...current, path_matchers: value }));
+              }}
             />
           </label>
           <label className="pin-toggle-row">
@@ -187,9 +188,10 @@ function MemoryModal(props: MemoryModalProps) {
                 type="checkbox"
                 className="pin-toggle-input"
                 checked={draft.is_pinned}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, is_pinned: event.currentTarget.checked }))
-                }
+                onChange={(event) => {
+                  const checked = event.currentTarget.checked;
+                  setDraft((current) => ({ ...current, is_pinned: checked }));
+                }}
               />
               <span className="pin-toggle-slider" aria-hidden="true" />
             </span>
@@ -458,7 +460,10 @@ export function App() {
               <input
                 type="text"
                 value={searchInput}
-                onChange={(event) => setSearchInput(event.currentTarget.value)}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setSearchInput(value);
+                }}
                 placeholder="Search memories (semantic + lexical)"
               />
               {searchInput.length > 0 ? (
