@@ -1,6 +1,6 @@
 {
   "name": "memories",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Project-scoped memory for Claude Code",
   "author": {
     "name": "Michael Simkin"
