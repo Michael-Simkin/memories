@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { ulid } from 'ulid';
 
+import { EMBEDDING_DIMENSIONS } from '../shared/constants.js';
 import { warn } from '../shared/logger.js';
 import type {
   AddMemoryInput,
@@ -357,6 +358,14 @@ export class MemoryStore {
       .run(memoryId, JSON.stringify(vector), now);
 
     if (this.vecEnabled) {
+      if (vector.length !== EMBEDDING_DIMENSIONS) {
+        warn('Skipping vec_memory sync due embedding dimension mismatch', {
+          actual: vector.length,
+          expected: EMBEDDING_DIMENSIONS,
+          memoryId,
+        });
+        return;
+      }
       try {
         this.db.prepare('DELETE FROM vec_memory WHERE id = ?').run(memoryId);
         this.db
@@ -469,7 +478,7 @@ export class MemoryStore {
         this.db.exec(`
           CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
             id TEXT PRIMARY KEY,
-            vector float[3072] distance_metric=cosine
+            vector float[${EMBEDDING_DIMENSIONS}] distance_metric=cosine
           );
         `);
       } catch (error) {
@@ -521,15 +530,33 @@ export class MemoryStore {
     nowIso: string,
   ): void {
     this.db.prepare('DELETE FROM memory_path_matchers WHERE memory_id = ?').run(memoryId);
+    const normalizedPathMatchers = this.normalizePathMatchers(pathMatchers);
+    if (normalizedPathMatchers.length === 0) {
+      return;
+    }
     const insert = this.db.prepare(
       `
         INSERT INTO memory_path_matchers (id, memory_id, path_matcher, created_at)
         VALUES (?, ?, ?, ?)
       `,
     );
-    for (const matcher of pathMatchers) {
+    for (const matcher of normalizedPathMatchers) {
       insert.run(ulid(), memoryId, matcher.path_matcher, nowIso);
     }
+  }
+
+  private normalizePathMatchers(pathMatchers: PathMatcherInput[]): PathMatcherInput[] {
+    const seen = new Set<string>();
+    const normalized: PathMatcherInput[] = [];
+    for (const matcher of pathMatchers) {
+      const pathMatcher = matcher.path_matcher.trim();
+      if (!pathMatcher || seen.has(pathMatcher)) {
+        continue;
+      }
+      seen.add(pathMatcher);
+      normalized.push({ path_matcher: pathMatcher });
+    }
+    return normalized;
   }
 
   private inflateMemory(row: MemoryRow): MemoryRecord {

@@ -1,88 +1,100 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
-import { GoogleAuth } from 'google-auth-library';
-
-import { EMBEDDING_DIMENSIONS } from '../shared/constants.js';
+import {
+  EMBEDDING_DIMENSIONS,
+  OLLAMA_EMBED_MODEL,
+  OLLAMA_EMBED_TIMEOUT_MS,
+  OLLAMA_URL,
+} from '../shared/constants.js';
 import { warn } from '../shared/logger.js';
 
-const execFileAsync = promisify(execFile);
-const TOKEN_CACHE_TTL_MS = 45 * 60 * 1000;
-const TOKEN_FAILURE_BACKOFF_MS = 15 * 1000;
+const REQUEST_FAILURE_BACKOFF_MS = 15 * 1000;
+const DEFAULT_KEEP_ALIVE = '30m';
 
 export class EmbeddingClient {
-  private readonly auth: GoogleAuth;
-  private readonly projectId: string | null;
-  private readonly region: string | null;
+  private readonly baseUrl: string;
   private readonly model: string;
-  private tokenCache: { token: string; expiresAtMs: number } | null;
-  private nextTokenRetryAtMs: number;
+  private nextRetryAtMs: number;
 
-  public constructor(model = 'gemini-embedding-001') {
-    this.projectId = process.env.ANTHROPIC_VERTEX_PROJECT_ID ?? null;
-    this.region = process.env.CLOUD_ML_REGION ?? null;
+  public constructor(model = OLLAMA_EMBED_MODEL, baseUrl = OLLAMA_URL) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.model = model;
-    this.auth = new GoogleAuth({
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-      ...(this.projectId ? { projectId: this.projectId } : {}),
-    });
-    this.tokenCache = null;
-    this.nextTokenRetryAtMs = 0;
+    this.nextRetryAtMs = 0;
   }
 
   public isConfigured(): boolean {
-    return Boolean(this.projectId && this.region);
+    return this.baseUrl.length > 0 && this.model.length > 0;
   }
 
   public async embed(text: string): Promise<number[] | null> {
-    if (!this.projectId || !this.region) {
+    if (!this.isConfigured()) {
       return null;
     }
-    const token = await this.getAccessToken();
-    if (!token) {
-      warn('Embedding auth unavailable: unable to acquire Google access token');
+    if (this.nextRetryAtMs > Date.now()) {
       return null;
     }
 
-    const endpoint = `https://${this.region}-aiplatform.googleapis.com/v1/projects/${this.projectId}/locations/${this.region}/publishers/google/models/${this.model}:predict`;
-    const body = {
-      instances: [{ content: text, task_type: 'RETRIEVAL_QUERY' }],
-      parameters: { outputDimensionality: EMBEDDING_DIMENSIONS },
-    };
+    const normalizedText = text.trim();
+    if (!normalizedText) {
+      return null;
+    }
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      warn('Embedding call failed', {
-        status: response.status,
-        statusText: response.statusText,
-        errorText,
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OLLAMA_EMBED_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${this.baseUrl}/api/embed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: this.model,
+          input: normalizedText,
+          keep_alive: DEFAULT_KEEP_ALIVE,
+        }),
       });
-      return null;
-    }
 
-    const payload = (await response.json()) as unknown;
-    const parsed = this.parseEmbedding(payload);
-    if (!parsed) {
-      warn('Embedding response did not contain vector');
-      return null;
-    }
-    if (parsed.length !== EMBEDDING_DIMENSIONS) {
-      warn('Embedding dimensions mismatch', {
-        expected: EMBEDDING_DIMENSIONS,
-        actual: parsed.length,
+      if (!response.ok) {
+        const errorText = await response.text();
+        warn('Ollama embedding call failed', {
+          status: response.status,
+          statusText: response.statusText,
+          errorText,
+          model: this.model,
+          url: this.baseUrl,
+        });
+        this.nextRetryAtMs = Date.now() + REQUEST_FAILURE_BACKOFF_MS;
+        return null;
+      }
+
+      const parsed = this.parseEmbedding(await response.json());
+      if (!parsed) {
+        warn('Ollama embedding response did not contain vector', {
+          model: this.model,
+          url: this.baseUrl,
+        });
+        this.nextRetryAtMs = Date.now() + REQUEST_FAILURE_BACKOFF_MS;
+        return null;
+      }
+
+      if (parsed.length !== EMBEDDING_DIMENSIONS) {
+        warn('Ollama embedding dimensions mismatch with configured engine expectation', {
+          actual: parsed.length,
+          expected: EMBEDDING_DIMENSIONS,
+          model: this.model,
+        });
+      }
+      this.nextRetryAtMs = 0;
+      return parsed;
+    } catch (error) {
+      warn('Ollama embedding request failed', {
+        error: error instanceof Error ? error.message : String(error),
+        model: this.model,
+        timeout_ms: OLLAMA_EMBED_TIMEOUT_MS,
+        url: this.baseUrl,
       });
+      this.nextRetryAtMs = Date.now() + REQUEST_FAILURE_BACKOFF_MS;
       return null;
+    } finally {
+      clearTimeout(timeout);
     }
-    return parsed;
   }
 
   private parseEmbedding(payload: unknown): number[] | null {
@@ -90,11 +102,9 @@ export class EmbeddingClient {
       return null;
     }
     const value = payload as {
-      predictions?: Array<{
-        embeddings?: { values?: number[] };
-      }>;
+      embeddings?: number[][];
     };
-    const values = value.predictions?.[0]?.embeddings?.values;
+    const values = value.embeddings?.[0];
     if (!Array.isArray(values)) {
       return null;
     }
@@ -102,82 +112,5 @@ export class EmbeddingClient {
       return null;
     }
     return values;
-  }
-
-  private async getAccessToken(): Promise<string | null> {
-    const cached = this.tokenCache;
-    if (cached && cached.expiresAtMs > Date.now()) {
-      return cached.token;
-    }
-    if (this.nextTokenRetryAtMs > Date.now()) {
-      return null;
-    }
-
-    const adcToken = await this.getAccessTokenFromGoogleAuth();
-    if (adcToken) {
-      this.tokenCache = {
-        token: adcToken,
-        expiresAtMs: Date.now() + TOKEN_CACHE_TTL_MS,
-      };
-      this.nextTokenRetryAtMs = 0;
-      return adcToken;
-    }
-
-    const gcloudAdcToken = await this.getAccessTokenFromGcloud([
-      'auth',
-      'application-default',
-      'print-access-token',
-    ]);
-    if (gcloudAdcToken) {
-      this.tokenCache = {
-        token: gcloudAdcToken,
-        expiresAtMs: Date.now() + TOKEN_CACHE_TTL_MS,
-      };
-      this.nextTokenRetryAtMs = 0;
-      return gcloudAdcToken;
-    }
-
-    const gcloudUserToken = await this.getAccessTokenFromGcloud(['auth', 'print-access-token']);
-    if (gcloudUserToken) {
-      this.tokenCache = {
-        token: gcloudUserToken,
-        expiresAtMs: Date.now() + TOKEN_CACHE_TTL_MS,
-      };
-      this.nextTokenRetryAtMs = 0;
-      return gcloudUserToken;
-    }
-
-    this.nextTokenRetryAtMs = Date.now() + TOKEN_FAILURE_BACKOFF_MS;
-    return null;
-  }
-
-  private async getAccessTokenFromGoogleAuth(): Promise<string | null> {
-    try {
-      const client = await this.auth.getClient();
-      const accessToken = await client.getAccessToken();
-      const token = accessToken.token ?? null;
-      if (!token) {
-        return null;
-      }
-      const trimmed = token.trim();
-      return trimmed.length > 0 ? trimmed : null;
-    } catch (error) {
-      warn('GoogleAuth access token acquisition failed', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    }
-  }
-
-  private async getAccessTokenFromGcloud(args: string[]): Promise<string | null> {
-    try {
-      const result = await execFileAsync('gcloud', args, {
-        timeout: 2000,
-      });
-      const token = result.stdout.trim();
-      return token.length > 0 ? token : null;
-    } catch {
-      return null;
-    }
   }
 }

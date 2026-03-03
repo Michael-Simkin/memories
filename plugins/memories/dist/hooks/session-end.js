@@ -137,6 +137,48 @@ var ENGINE_LOCK_FILE = "engine.lock.json";
 var MEMORY_DB_FILE = "ai_memory.db";
 var OPERATION_LOG_FILE = "ai_memory_operations.log";
 var HOOK_LOG_FILE = "ai_memory_hook_events.log";
+function parsePositiveInt(rawValue, fallback) {
+  if (!rawValue) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+function parseEmbeddingProfile(rawValue) {
+  const value = (rawValue ?? "").trim().toLowerCase();
+  if (value === "bge" || value === "bge-m3") {
+    return "bge";
+  }
+  if (value === "nomic" || value === "nomic-embed-text") {
+    return "nomic";
+  }
+  return null;
+}
+function inferEmbeddingDimensionsFromModel(model) {
+  const normalized = model.trim().toLowerCase();
+  if (normalized === "bge-m3" || normalized.startsWith("bge-m3:")) {
+    return 1024;
+  }
+  if (normalized === "nomic-embed-text" || normalized.startsWith("nomic-embed-text:")) {
+    return 768;
+  }
+  return null;
+}
+var OLLAMA_URL = process.env.MEMORIES_OLLAMA_URL?.trim() || "http://127.0.0.1:11434";
+var selectedProfile = parseEmbeddingProfile(process.env.MEMORIES_OLLAMA_PROFILE);
+var OLLAMA_EMBED_PROFILE = selectedProfile ?? "bge";
+var defaultModelByProfile = OLLAMA_EMBED_PROFILE === "nomic" ? "nomic-embed-text" : "bge-m3";
+var defaultDimensionsByProfile = OLLAMA_EMBED_PROFILE === "nomic" ? 768 : 1024;
+var OLLAMA_EMBED_MODEL = process.env.MEMORIES_OLLAMA_MODEL?.trim() || defaultModelByProfile;
+var OLLAMA_EMBED_TIMEOUT_MS = parsePositiveInt(process.env.MEMORIES_OLLAMA_TIMEOUT_MS, 1e4);
+var inferredDimensions = inferEmbeddingDimensionsFromModel(OLLAMA_EMBED_MODEL);
+var EMBEDDING_DIMENSIONS = parsePositiveInt(
+  process.env.MEMORIES_EMBEDDING_DIMENSIONS,
+  inferredDimensions ?? defaultDimensionsByProfile
+);
 
 // src/shared/paths.ts
 function resolveProjectRoot(explicitProjectRoot) {

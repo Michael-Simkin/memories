@@ -130,6 +130,7 @@ export class RetrievalService {
 
     const rows = this.store.listEmbeddings(options.memoryTypes, options.includePinned);
     return rows
+      .filter((row) => row.vector.length === queryVector.length)
       .map((row) => ({
         id: row.id,
         memory_type: row.memory_type,

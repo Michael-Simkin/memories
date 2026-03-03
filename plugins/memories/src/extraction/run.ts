@@ -439,9 +439,13 @@ function tightenActionPathMatchers(
   }
 
   const relatedPathSet = new Set(relatedPaths);
-  const explicitPaths = extractActionPathHints(action, projectRoot, relatedPaths)
-    .map((pathHint) => resolveHintToRelatedPath(pathHint, relatedPaths))
-    .filter((pathHint) => relatedPathSet.has(pathHint) || isExistingProjectPath(pathHint, projectRoot));
+  const explicitPaths = [
+    ...new Set(
+      extractActionPathHints(action, projectRoot, relatedPaths)
+        .map((pathHint) => resolveHintToRelatedPath(pathHint, relatedPaths))
+        .filter((pathHint) => relatedPathSet.has(pathHint) || isExistingProjectPath(pathHint, projectRoot)),
+    ),
+  ];
   if (explicitPaths.length > 0) {
     const explicitMatchers: MemoryAction['path_matchers'] = explicitPaths.map((pathHint) => ({
       path_matcher: pathHint,
