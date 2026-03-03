@@ -16,7 +16,6 @@ export default defineConfig({
     js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
   },
   format: ['esm'],
-  noExternal: [/^(?!node:)/],
   outDir: 'dist',
   platform: 'node',
   sourcemap: true,

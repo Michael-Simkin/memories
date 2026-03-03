@@ -33,7 +33,13 @@ function vecExtSuffix(): string {
 }
 
 function vecBinaryPath(pluginRoot: string): string {
-  return path.join(pluginRoot, 'native', 'node_modules', vecPlatformPackage(), `vec0${vecExtSuffix()}`);
+  return path.join(
+    pluginRoot,
+    'native',
+    'node_modules',
+    vecPlatformPackage(),
+    `vec0${vecExtSuffix()}`,
+  );
 }
 
 function vecExtensionPath(pluginRoot: string): string {

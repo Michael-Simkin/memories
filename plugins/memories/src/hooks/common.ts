@@ -25,7 +25,7 @@ export async function resolveEndpointFromLock(projectRoot: string): Promise<{
   const paths = getProjectPaths(projectRoot);
   const lock = await readLockMetadata(paths.lockPath);
   if (!lock) {
-    throw new Error('Engine lock metadata not found');
+    throw new Error('ENGINE_UNAVAILABLE: lock metadata not found');
   }
   if (lock.host !== ENGINE_HOST && lock.host !== 'localhost' && lock.host !== '::1') {
     throw new Error(`Lock host is not loopback: ${lock.host}`);
@@ -38,7 +38,15 @@ export async function resolveEndpointFromLock(projectRoot: string): Promise<{
 }
 
 export function isEngineUnavailableError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes('Engine lock metadata not found');
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message;
+  return (
+    message.includes('ENGINE_UNAVAILABLE:') ||
+    message.includes('Engine lock metadata not found') ||
+    message.includes('Engine failed to become healthy in time')
+  );
 }
 
 export function isInternalClaudeRun(): boolean {

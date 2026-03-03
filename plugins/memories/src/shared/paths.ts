@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   ENGINE_LOCK_FILE,
@@ -33,7 +34,9 @@ export function resolvePluginRoot(): string {
   if (pluginRoot && path.isAbsolute(pluginRoot)) {
     return pluginRoot;
   }
-  return process.cwd();
+  const currentFilePath = fileURLToPath(import.meta.url);
+  const moduleDir = path.dirname(currentFilePath);
+  return path.resolve(moduleDir, '..', '..');
 }
 
 export function getProjectPaths(projectRoot: string): ProjectPaths {
