@@ -6,8 +6,10 @@ var __export = (target, all) => {
 };
 
 // src/engine/ensure-engine.ts
-import { spawn } from "child_process";
-import { existsSync } from "fs";
+import { execFile, spawn } from "child_process";
+import { existsSync, readdirSync } from "fs";
+import os from "os";
+import path3 from "path";
 import { setTimeout as wait } from "timers/promises";
 
 // src/shared/fs-utils.ts
@@ -816,10 +818,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path4) {
-  if (!path4)
+function getElementAtPath(obj, path5) {
+  if (!path5)
     return obj;
-  return path4.reduce((acc, key) => acc?.[key], obj);
+  return path5.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -1202,11 +1204,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path4, issues) {
+function prefixIssues(path5, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path4);
+    iss.path.unshift(path5);
     return iss;
   });
 }
@@ -1389,7 +1391,7 @@ function formatError(error49, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error49, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error50, path4 = []) => {
+  const processError = (error50, path5 = []) => {
     var _a2, _b;
     for (const issue2 of error50.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1399,7 +1401,7 @@ function treeifyError(error49, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path4, ...issue2.path];
+        const fullpath = [...path5, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1431,8 +1433,8 @@ function treeifyError(error49, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path4 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path4) {
+  const path5 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path5) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13409,13 +13411,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path4 = ref.slice(1).split("/").filter(Boolean);
-  if (path4.length === 0) {
+  const path5 = ref.slice(1).split("/").filter(Boolean);
+  if (path5.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path4[0] === defsKey) {
-    const key = path4[1];
+  if (path5[0] === defsKey) {
+    const key = path5[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -13934,9 +13936,11 @@ async function ensureProjectDirectories(projectRoot) {
 
 // src/engine/ensure-engine.ts
 var ENGINE_UNAVAILABLE_PREFIX = "ENGINE_UNAVAILABLE";
+var REQUIRED_NODE_MAJOR = 24;
 var DEFAULT_HEALTH_TIMEOUT_MS = 1e3;
 var DEFAULT_BOOT_TIMEOUT_MS = 45e3;
 var DEFAULT_BOOT_POLL_MS = 120;
+var NODE_PROBE_TIMEOUT_MS = 1500;
 function parseTimeoutMs(envName, fallback) {
   const raw = process.env[envName];
   if (!raw) {
@@ -13950,6 +13954,101 @@ function parseTimeoutMs(envName, fallback) {
 }
 function engineUnavailable(detail) {
   return new Error(`${ENGINE_UNAVAILABLE_PREFIX}: ${detail}`);
+}
+function parseNodeMajor(version2) {
+  const majorText = version2.trim().split(".")[0] ?? "";
+  const major = Number.parseInt(majorText, 10);
+  return Number.isFinite(major) ? major : Number.NaN;
+}
+function dedupeCandidates(values) {
+  const seen = /* @__PURE__ */ new Set();
+  const ordered = [];
+  for (const rawValue of values) {
+    const value = rawValue.trim();
+    if (!value) {
+      continue;
+    }
+    const key = path3.resolve(value);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    ordered.push(key);
+  }
+  return ordered;
+}
+function listVersionedNodeBins(rootDir) {
+  if (!existsSync(rootDir)) {
+    return [];
+  }
+  const versions = readdirSync(rootDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).map((name) => ({
+    name,
+    parts: name.replace(/^v/i, "").split(".").map((part) => Number.parseInt(part, 10))
+  })).filter((entry) => entry.parts.length === 3 && entry.parts.every((part) => Number.isFinite(part))).sort((left, right) => {
+    const [la, lb, lc] = left.parts;
+    const [ra, rb, rc] = right.parts;
+    return (ra ?? 0) - (la ?? 0) || (rb ?? 0) - (lb ?? 0) || (rc ?? 0) - (lc ?? 0);
+  }).map((entry) => entry.name);
+  return versions.map((version2) => path3.join(rootDir, version2, "bin", "node"));
+}
+function candidateNodeExecutables() {
+  const homeDir = os.homedir();
+  const nvmDir = process.env.NVM_DIR || path3.join(homeDir, ".nvm");
+  return dedupeCandidates([
+    process.env.MEMORIES_NODE_BIN ?? "",
+    process.execPath,
+    process.env.NVM_BIN ? path3.join(process.env.NVM_BIN, "node") : "",
+    ...listVersionedNodeBins(path3.join(nvmDir, "versions", "node")),
+    ...listVersionedNodeBins(path3.join(homeDir, ".asdf", "installs", "nodejs")),
+    ...listVersionedNodeBins(path3.join(homeDir, ".volta", "tools", "image", "node")),
+    "/opt/homebrew/opt/node@24/bin/node",
+    "/usr/local/opt/node@24/bin/node",
+    "/opt/homebrew/bin/node",
+    "/usr/local/bin/node"
+  ]);
+}
+async function probeNodeVersion(executable) {
+  if (!existsSync(executable)) {
+    return null;
+  }
+  return new Promise((resolve) => {
+    execFile(
+      executable,
+      ["-p", "process.versions.node"],
+      { timeout: NODE_PROBE_TIMEOUT_MS },
+      (probeError, stdout) => {
+        if (probeError) {
+          resolve(null);
+          return;
+        }
+        const version2 = stdout.trim();
+        resolve(version2 || null);
+      }
+    );
+  });
+}
+async function resolveEngineNodeExecutable() {
+  let highestFound = null;
+  for (const executable of candidateNodeExecutables()) {
+    const version2 = await probeNodeVersion(executable);
+    if (!version2) {
+      continue;
+    }
+    const major = parseNodeMajor(version2);
+    if (!Number.isFinite(major)) {
+      continue;
+    }
+    if (!highestFound || major > highestFound.major) {
+      highestFound = { executable, major, version: version2 };
+    }
+    if (major >= REQUIRED_NODE_MAJOR) {
+      return executable;
+    }
+  }
+  const highestDetail = highestFound ? `highest discovered runtime is v${highestFound.version} at ${highestFound.executable}` : "no candidate node runtime was discovered";
+  throw engineUnavailable(
+    `Node.js >=${REQUIRED_NODE_MAJOR} is required for engine startup (${highestDetail}). Set MEMORIES_NODE_BIN to an absolute Node 24+ binary path.`
+  );
 }
 async function isEngineHealthy(endpoint) {
   const timeoutMs = parseTimeoutMs("MEMORIES_ENGINE_HEALTH_TIMEOUT_MS", DEFAULT_HEALTH_TIMEOUT_MS);
@@ -13984,7 +14083,7 @@ async function ensureEngine(projectRoot) {
   if (!existsSync(engineEntrypoint)) {
     throw engineUnavailable(`engine entrypoint missing at ${engineEntrypoint}`);
   }
-  const nodeExecutable = process.execPath || "node";
+  const nodeExecutable = await resolveEngineNodeExecutable();
   const spawnState = { failure: null };
   const child = spawn(nodeExecutable, [engineEntrypoint], {
     detached: true,
@@ -14087,8 +14186,8 @@ function redactUnknown(value) {
   }
   return value;
 }
-async function hookLog(path4, payload) {
-  await appendJsonLine(path4, redactUnknown(payload));
+async function hookLog(path5, payload) {
+  await appendJsonLine(path5, redactUnknown(payload));
 }
 
 // src/shared/markdown.ts
@@ -14151,12 +14250,12 @@ function formatMemoryRecallMarkdown(input) {
 }
 
 // src/hooks/common.ts
-import path3 from "path";
+import path4 from "path";
 function resolveHookProjectRoot(payload) {
-  if (payload.project_root && path3.isAbsolute(payload.project_root)) {
+  if (payload.project_root && path4.isAbsolute(payload.project_root)) {
     return payload.project_root;
   }
-  if (payload.cwd && path3.isAbsolute(payload.cwd)) {
+  if (payload.cwd && path4.isAbsolute(payload.cwd)) {
     return payload.cwd;
   }
   return resolveProjectRoot();
@@ -14264,6 +14363,7 @@ ${markdown}`
   } catch (runError) {
     if (isEngineUnavailableError(runError)) {
       const detail = runError instanceof Error ? runError.message : String(runError);
+      const systemMessage = detail.includes("Node.js >=") ? "Memory engine unavailable: Node 24+ runtime not found. Set MEMORIES_NODE_BIN or make nvm Node 24 available to non-interactive shells." : "Memory engine unavailable; continuing without memory context.";
       await hookLog(paths.hookLogPath, {
         at: (/* @__PURE__ */ new Date()).toISOString(),
         event: "SessionStart",
@@ -14272,7 +14372,7 @@ ${markdown}`
       });
       writeHookOutput({
         continue: true,
-        systemMessage: "Memory engine unavailable; continuing without memory context."
+        systemMessage
       });
       return;
     }

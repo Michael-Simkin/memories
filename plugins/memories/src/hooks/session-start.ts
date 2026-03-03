@@ -69,6 +69,9 @@ async function run(): Promise<void> {
   } catch (runError: unknown) {
     if (isEngineUnavailableError(runError)) {
       const detail = runError instanceof Error ? runError.message : String(runError);
+      const systemMessage = detail.includes('Node.js >=')
+        ? 'Memory engine unavailable: Node 24+ runtime not found. Set MEMORIES_NODE_BIN or make nvm Node 24 available to non-interactive shells.'
+        : 'Memory engine unavailable; continuing without memory context.';
       await hookLog(paths.hookLogPath, {
         at: new Date().toISOString(),
         event: 'SessionStart',
@@ -77,7 +80,7 @@ async function run(): Promise<void> {
       });
       writeHookOutput({
         continue: true,
-        systemMessage: 'Memory engine unavailable; continuing without memory context.',
+        systemMessage,
       });
       return;
     }
