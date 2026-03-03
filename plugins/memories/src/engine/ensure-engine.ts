@@ -70,7 +70,9 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
   if (!existsSync(engineEntrypoint)) {
     throw engineUnavailable(`engine entrypoint missing at ${engineEntrypoint}`);
   }
-  const child = spawn('node', [engineEntrypoint], {
+  const nodeExecutable = process.execPath || 'node';
+  const spawnState: { failure: Error | null } = { failure: null };
+  const child = spawn(nodeExecutable, [engineEntrypoint], {
     detached: true,
     env: {
       ...process.env,
@@ -79,6 +81,9 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
     },
     stdio: 'ignore',
   });
+  child.once('error', (spawnError) => {
+    spawnState.failure = spawnError;
+  });
   child.unref();
 
   const startedAt = Date.now();
@@ -86,6 +91,11 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
   const pollMs = parseTimeoutMs('MEMORIES_ENGINE_BOOT_POLL_MS', DEFAULT_BOOT_POLL_MS);
 
   while (Date.now() - startedAt < maxWaitMs) {
+    if (spawnState.failure) {
+      throw engineUnavailable(
+        `failed to spawn engine process via ${nodeExecutable}: ${spawnState.failure.message}`,
+      );
+    }
     const next = await readLockMetadata(paths.lockPath);
     if (next && isPidAlive(next.pid)) {
       const endpoint = { host: next.host, port: next.port };
@@ -97,6 +107,11 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
     await wait(pollMs);
   }
 
+  if (spawnState.failure) {
+    throw engineUnavailable(
+      `failed to spawn engine process via ${nodeExecutable}: ${spawnState.failure.message}`,
+    );
+  }
   warn('Engine readiness exceeded budget', { maxWaitMs, projectRoot });
   throw engineUnavailable('failed to become healthy in time');
 }

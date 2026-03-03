@@ -68,13 +68,17 @@ async function run(): Promise<void> {
     });
   } catch (runError: unknown) {
     if (isEngineUnavailableError(runError)) {
+      const detail = runError instanceof Error ? runError.message : String(runError);
       await hookLog(paths.hookLogPath, {
         at: new Date().toISOString(),
         event: 'SessionStart',
         status: 'skipped',
-        detail: 'engine not running; skipping memory injection',
+        detail: `engine unavailable; skipping memory injection (${detail})`,
       });
-      writeHookOutput({ continue: true });
+      writeHookOutput({
+        continue: true,
+        systemMessage: 'Memory engine unavailable; continuing without memory context.',
+      });
       return;
     }
     await hookLog(paths.hookLogPath, {

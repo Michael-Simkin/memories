@@ -14047,7 +14047,8 @@ function spawnWorker(payload) {
   const pluginRoot = resolvePluginRoot();
   const workerEntrypoint = `${pluginRoot}/dist/extraction/run.js`;
   const handoff = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
-  const child = spawn("node", [workerEntrypoint, "--handoff", handoff], {
+  const nodeExecutable = process.execPath || "node";
+  const child = spawn(nodeExecutable, [workerEntrypoint, "--handoff", handoff], {
     detached: true,
     env: {
       ...process.env,
@@ -14055,6 +14056,13 @@ function spawnWorker(payload) {
       PROJECT_ROOT: payload.project_root
     },
     stdio: "ignore"
+  });
+  child.once("error", (spawnError) => {
+    error("Stop worker spawn failed", {
+      error: spawnError.message,
+      nodeExecutable,
+      workerEntrypoint
+    });
   });
   child.unref();
 }

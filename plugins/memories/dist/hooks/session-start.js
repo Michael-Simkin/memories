@@ -13984,7 +13984,9 @@ async function ensureEngine(projectRoot) {
   if (!existsSync(engineEntrypoint)) {
     throw engineUnavailable(`engine entrypoint missing at ${engineEntrypoint}`);
   }
-  const child = spawn("node", [engineEntrypoint], {
+  const nodeExecutable = process.execPath || "node";
+  const spawnState = { failure: null };
+  const child = spawn(nodeExecutable, [engineEntrypoint], {
     detached: true,
     env: {
       ...process.env,
@@ -13993,11 +13995,19 @@ async function ensureEngine(projectRoot) {
     },
     stdio: "ignore"
   });
+  child.once("error", (spawnError) => {
+    spawnState.failure = spawnError;
+  });
   child.unref();
   const startedAt = Date.now();
   const maxWaitMs = parseTimeoutMs("MEMORIES_ENGINE_BOOT_TIMEOUT_MS", DEFAULT_BOOT_TIMEOUT_MS);
   const pollMs = parseTimeoutMs("MEMORIES_ENGINE_BOOT_POLL_MS", DEFAULT_BOOT_POLL_MS);
   while (Date.now() - startedAt < maxWaitMs) {
+    if (spawnState.failure) {
+      throw engineUnavailable(
+        `failed to spawn engine process via ${nodeExecutable}: ${spawnState.failure.message}`
+      );
+    }
     const next = await readLockMetadata(paths.lockPath);
     if (next && isPidAlive(next.pid)) {
       const endpoint = { host: next.host, port: next.port };
@@ -14007,6 +14017,11 @@ async function ensureEngine(projectRoot) {
       }
     }
     await wait(pollMs);
+  }
+  if (spawnState.failure) {
+    throw engineUnavailable(
+      `failed to spawn engine process via ${nodeExecutable}: ${spawnState.failure.message}`
+    );
   }
   warn("Engine readiness exceeded budget", { maxWaitMs, projectRoot });
   throw engineUnavailable("failed to become healthy in time");
@@ -14248,13 +14263,17 @@ ${markdown}`
     });
   } catch (runError) {
     if (isEngineUnavailableError(runError)) {
+      const detail = runError instanceof Error ? runError.message : String(runError);
       await hookLog(paths.hookLogPath, {
         at: (/* @__PURE__ */ new Date()).toISOString(),
         event: "SessionStart",
         status: "skipped",
-        detail: "engine not running; skipping memory injection"
+        detail: `engine unavailable; skipping memory injection (${detail})`
       });
-      writeHookOutput({ continue: true });
+      writeHookOutput({
+        continue: true,
+        systemMessage: "Memory engine unavailable; continuing without memory context."
+      });
       return;
     }
     await hookLog(paths.hookLogPath, {
