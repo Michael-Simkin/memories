@@ -26,6 +26,7 @@ function createDependencies(options: {
 }): {
   appendEventLogFn: ReturnType<typeof vi.fn>;
   dependencies: Parameters<typeof executeWorker>[1];
+  runClaudeFn: ReturnType<typeof vi.fn>;
 } {
   const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
   const applyActionFn =
@@ -33,6 +34,11 @@ function createDependencies(options: {
     vi.fn().mockResolvedValue({
       ok: true,
     });
+  const runClaudeFn = vi.fn().mockResolvedValue({
+    code: 0,
+    stderr: '',
+    stdout: options.runClaudeStdout,
+  });
 
   const dependencies = {
     appendEventLogFn,
@@ -41,11 +47,7 @@ function createDependencies(options: {
       transcriptSnippet: 'snippet',
       relatedPaths: ['src/app.ts'],
     }),
-    runClaudeFn: vi.fn().mockResolvedValue({
-      code: 0,
-      stderr: '',
-      stdout: options.runClaudeStdout,
-    }),
+    runClaudeFn,
     searchCandidatesFn: vi.fn().mockResolvedValue({
       meta: {
         duration_ms: 2,
@@ -60,6 +62,7 @@ function createDependencies(options: {
   return {
     appendEventLogFn,
     dependencies,
+    runClaudeFn,
   };
 }
 
@@ -193,5 +196,25 @@ describe('extraction worker', () => {
   it('injects CLAUDE_CODE_SIMPLE into Claude subprocess env', () => {
     const env = buildClaudeProcessEnv({ PATH: '/usr/bin' });
     expect(env.CLAUDE_CODE_SIMPLE).toBe('1');
+  });
+
+  it('instructs Claude to pin only durable project-wide memories', async () => {
+    const payload = createPayload();
+    const { dependencies, runClaudeFn } = createDependencies({
+      runClaudeStdout: JSON.stringify({
+        actions: [{ action: 'skip', confidence: 1, reason: 'nothing durable to store' }],
+      }),
+    });
+
+    await executeWorker(payload, dependencies);
+
+    const prompt = runClaudeFn.mock.calls[0]?.[0];
+    expect(typeof prompt).toBe('string');
+    expect(prompt).toContain('Pinning rules:');
+    expect(prompt).toContain('set is_pinned=true only when the memory should be injected at SessionStart');
+    expect(prompt).toContain('prefer pinning stable rules, architectural decisions');
+    expect(prompt).toContain('keep is_pinned=false for transient facts, narrow file-specific context');
+    expect(prompt).toContain('if uncertain, default to is_pinned=false');
+    expect(prompt).toContain("only change an existing memory's is_pinned state");
   });
 });
