@@ -37,7 +37,8 @@ main {
   background: #171c30;
   border: 1px solid #2d344c;
   border-radius: 10px;
-  margin-bottom: 16px;
+  max-height: 65vh;
+  overflow-y: auto;
   padding: 12px;
 }
 

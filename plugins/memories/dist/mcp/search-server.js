@@ -36210,7 +36210,7 @@ async function runRecall(rawInput) {
 function createRecallMcpServer() {
   const server = new McpServer({
     name: "memories",
-    version: "0.2.17"
+    version: "0.2.18"
   });
   server.registerTool(
     "recall",

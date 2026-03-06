@@ -20,7 +20,7 @@ import type {
   SearchMatchSource,
 } from './types.js';
 
-type Tab = 'memories' | 'logs';
+type Tab = 'memories' | 'hooks' | 'logs';
 const MIN_SEARCH_QUERY_LENGTH = 2;
 
 interface MemoryDraft {
@@ -308,7 +308,8 @@ export function App() {
   const backgroundHooksQuery = useQuery({
     queryKey: ['background-hooks'],
     queryFn: fetchBackgroundHooks,
-    refetchInterval: 1000,
+    enabled: activeTab === 'hooks',
+    refetchInterval: activeTab === 'hooks' ? 1000 : false,
   });
 
   const memoriesQuery = useQuery({
@@ -416,51 +417,6 @@ export function App() {
         </span>
       </header>
 
-      <section className="background-hooks-panel">
-        <div className="section-header">
-          <h2>Background Hooks</h2>
-          <small>Polling every 1s.</small>
-        </div>
-        {backgroundHooksQuery.isLoading ? <p>Loading background hooks…</p> : null}
-        {backgroundHooksQuery.error ? (
-          <p className="error-text">{String(backgroundHooksQuery.error)}</p>
-        ) : null}
-        {backgroundHooks.length === 0 ? (
-          <p className="background-hooks-empty">No background hooks running.</p>
-        ) : (
-          <ul className="background-hook-list">
-            {backgroundHooks.map((hook: BackgroundHook) => {
-              const runningForMs = backgroundHooksNowMs - Date.parse(hook.started_at);
-              const heartbeatAgeMs = backgroundHooksNowMs - Date.parse(hook.last_heartbeat_at);
-              const staleInMs = Date.parse(hook.stale_at) - backgroundHooksNowMs;
-              const hardTimeoutInMs = Date.parse(hook.hard_timeout_at) - backgroundHooksNowMs;
-              return (
-                <li key={hook.id} className="background-hook-card">
-                  <div className="background-hook-header">
-                    <strong>{hook.hook_name}</strong>
-                    <span className="memory-pill effect-must">{hook.state}</span>
-                  </div>
-                  <p className="background-hook-metrics">
-                    running for {formatDurationMs(runningForMs)} • last heartbeat{' '}
-                    {formatDurationMs(heartbeatAgeMs)} ago
-                  </p>
-                  <p className="background-hook-metrics">
-                    stale in {formatDurationMs(staleInMs)} • hard timeout in{' '}
-                    {formatDurationMs(hardTimeoutInMs)}
-                  </p>
-                  <p className="background-hook-meta">
-                    id: <code>{hook.id}</code>
-                    {hook.session_id ? ` • session: ${hook.session_id}` : ''}
-                    {typeof hook.pid === 'number' ? ` • pid: ${hook.pid}` : ''}
-                  </p>
-                  {hook.detail ? <p className="background-hook-detail">{hook.detail}</p> : null}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
       <nav className="tabs">
         <button
           type="button"
@@ -468,6 +424,13 @@ export function App() {
           onClick={() => setActiveTab('memories')}
         >
           Memories
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'hooks' ? 'active' : ''}
+          onClick={() => setActiveTab('hooks')}
+        >
+          Hooks
         </button>
         <button
           type="button"
@@ -578,6 +541,53 @@ export function App() {
               );
             })}
           </ul>
+        </section>
+      ) : activeTab === 'hooks' ? (
+        <section>
+          <div className="section-header">
+            <h2>Background Hooks</h2>
+            <small>Polling every 1s while this tab is active.</small>
+          </div>
+          <div className="background-hooks-panel">
+            {backgroundHooksQuery.isLoading ? <p>Loading background hooks…</p> : null}
+            {backgroundHooksQuery.error ? (
+              <p className="error-text">{String(backgroundHooksQuery.error)}</p>
+            ) : null}
+            {backgroundHooks.length === 0 ? (
+              <p className="background-hooks-empty">No background hooks running.</p>
+            ) : (
+              <ul className="background-hook-list">
+                {backgroundHooks.map((hook: BackgroundHook) => {
+                  const runningForMs = backgroundHooksNowMs - Date.parse(hook.started_at);
+                  const heartbeatAgeMs = backgroundHooksNowMs - Date.parse(hook.last_heartbeat_at);
+                  const staleInMs = Date.parse(hook.stale_at) - backgroundHooksNowMs;
+                  const hardTimeoutInMs = Date.parse(hook.hard_timeout_at) - backgroundHooksNowMs;
+                  return (
+                    <li key={hook.id} className="background-hook-card">
+                      <div className="background-hook-header">
+                        <strong>{hook.hook_name}</strong>
+                        <span className="memory-pill effect-must">{hook.state}</span>
+                      </div>
+                      <p className="background-hook-metrics">
+                        running for {formatDurationMs(runningForMs)} • last heartbeat{' '}
+                        {formatDurationMs(heartbeatAgeMs)} ago
+                      </p>
+                      <p className="background-hook-metrics">
+                        stale in {formatDurationMs(staleInMs)} • hard timeout in{' '}
+                        {formatDurationMs(hardTimeoutInMs)}
+                      </p>
+                      <p className="background-hook-meta">
+                        id: <code>{hook.id}</code>
+                        {hook.session_id ? ` • session: ${hook.session_id}` : ''}
+                        {typeof hook.pid === 'number' ? ` • pid: ${hook.pid}` : ''}
+                      </p>
+                      {hook.detail ? <p className="background-hook-detail">{hook.detail}</p> : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </section>
       ) : (
         <section>
