@@ -65,8 +65,12 @@ describe('hook handlers', () => {
     expect(output.hookSpecificOutput?.additionalContext).toContain(
       'Direct instructions do not override remembered project rules',
     );
+    expect(output.hookSpecificOutput?.additionalContext).toContain(
+      'Memory capture runs automatically after the session.',
+    );
     expect(output.hookSpecificOutput?.additionalContext).toContain('contains only pinned memories');
     expect(output.hookSpecificOutput?.additionalContext).toContain('# Memory Recall');
+    expect(output.hookSpecificOutput?.additionalContext).not.toContain('id: memory-1');
     expect(postEngineJsonFn).toHaveBeenCalledWith(
       { host: '127.0.0.1', port: 4312 },
       '/sessions/connect',

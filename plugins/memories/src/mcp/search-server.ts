@@ -25,6 +25,12 @@ const recallInputFields = {
   limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
   target_paths: z.array(z.string()).optional(),
   include_pinned: z.boolean().optional(),
+  include_debug_metadata: z
+    .boolean()
+    .optional()
+    .describe(
+      'Include diagnostic recall metadata such as ids, scores, tags, matchers, timestamps, and query timing.',
+    ),
   memory_types: z.array(z.enum(['fact', 'rule', 'decision', 'episode'])).optional(),
 };
 
@@ -79,6 +85,7 @@ export async function runRecall(rawInput: unknown): Promise<string> {
       results: payload.results,
       durationMs: payload.meta.duration_ms,
       source: payload.meta.source,
+      includeDebugMetadata: parsed.include_debug_metadata ?? false,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -91,14 +98,15 @@ export async function runRecall(rawInput: unknown): Promise<string> {
 export function createRecallMcpServer(): McpServer {
   const server = new McpServer({
     name: 'memories',
-    version: '0.2.18',
+    version: '0.2.19',
   });
 
   server.registerTool(
     'recall',
     {
       description:
-        'Retrieve relevant project memories and return canonical markdown recall sections. ' +
+        'Retrieve relevant project memories and return concise markdown recall sections. ' +
+        'Set `include_debug_metadata=true` only when diagnostic metadata is explicitly needed. ' +
         recallInvocationPolicyText,
       inputSchema: recallInputFields,
     },

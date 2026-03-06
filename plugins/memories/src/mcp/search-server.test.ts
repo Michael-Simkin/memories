@@ -90,7 +90,7 @@ async function startEngineServer(): Promise<{ close: () => Promise<void>; port: 
 }
 
 describe('MCP recall server', () => {
-  it('returns canonical markdown for valid recall request', async () => {
+  it('returns concise markdown for valid recall request by default', async () => {
     const engineServer = await startEngineServer();
     const projectRoot = await createProjectRootWithLock(engineServer.port);
 
@@ -101,6 +101,23 @@ describe('MCP recall server', () => {
 
     expect(markdown).toContain('# Memory Recall');
     expect(markdown).toContain('Use Node 20+');
+    expect(markdown).not.toContain('id: mem-1');
+    expect(markdown).not.toContain('- Query: runtime');
+    await engineServer.close();
+  });
+
+  it('includes diagnostic metadata only when explicitly requested', async () => {
+    const engineServer = await startEngineServer();
+    const projectRoot = await createProjectRootWithLock(engineServer.port);
+
+    const markdown = await runRecall({
+      query: 'runtime',
+      project_root: projectRoot,
+      include_debug_metadata: true,
+    });
+
+    expect(markdown).toContain('id: mem-1');
+    expect(markdown).toContain('- Query: runtime');
     await engineServer.close();
   });
 

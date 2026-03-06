@@ -14294,25 +14294,32 @@ function sectionTitle(memoryType) {
       return "Episodes";
   }
 }
-function formatResultLine(result) {
+function formatResultLine(result, includeDebugMetadata) {
+  const lines = [`- ${result.content}`];
+  if (!includeDebugMetadata) {
+    return lines;
+  }
   const tags = result.tags.length > 0 ? result.tags.join(", ") : "none";
   const matchers = result.path_matchers.length > 0 ? result.path_matchers.join(", ") : "none";
   return [
-    `- ${result.content}`,
+    ...lines,
     `  - id: ${result.id}; source: ${result.source}; score: ${result.score.toFixed(4)}; pinned: ${result.is_pinned}; tags: ${tags}; matchers: ${matchers}; updated_at: ${result.updated_at}`
   ];
 }
 function formatMemoryRecallMarkdown(input) {
   const deduped = dedupeByMemoryId(input.results);
   const grouped = groupByMemoryType(deduped);
-  const lines = [
-    "# Memory Recall",
-    `- Query: ${input.query}`,
-    `- Returned: ${deduped.length}`,
-    `- Duration: ${input.durationMs}ms`,
-    `- Source: ${input.source}`,
-    ""
-  ];
+  const includeDebugMetadata = input.includeDebugMetadata ?? false;
+  const lines = ["# Memory Recall", ""];
+  if (includeDebugMetadata) {
+    lines.push(
+      `- Query: ${input.query}`,
+      `- Returned: ${deduped.length}`,
+      `- Duration: ${input.durationMs}ms`,
+      `- Source: ${input.source}`,
+      ""
+    );
+  }
   for (const memoryType of MEMORY_SECTION_ORDER) {
     lines.push(`## ${sectionTitle(memoryType)}`);
     const values = grouped.get(memoryType) ?? [];
@@ -14320,7 +14327,7 @@ function formatMemoryRecallMarkdown(input) {
       lines.push("- None");
     } else {
       for (const value of values) {
-        lines.push(...formatResultLine(value));
+        lines.push(...formatResultLine(value, includeDebugMetadata));
       }
     }
     lines.push("");
@@ -14431,6 +14438,7 @@ function renderStartupMemoryContext(markdown) {
     "    Before commands, edits, updates, creations, deletions, or final recommendations, run `recall` to validate the intended action against remembered rules, decisions, preferences, and prior context.",
     "    If the user names a file, path, command, or requested change, treat that as a cue to check memory first. Direct instructions do not override remembered project rules.",
     "    If memory conflicts with the requested action, stop, explain the conflict, and ask or propose a compliant alternative.",
+    "    Memory capture runs automatically after the session. No separate memory-write tool is available or needed; use `recall` only when you need stored context.",
     "    This startup block contains only pinned memories, not the full memory set. Run `recall` whenever broader context or constraints may matter.",
     "  </guidance>",
     "  <pinned_memories>",

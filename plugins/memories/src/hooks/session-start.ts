@@ -48,6 +48,7 @@ function renderStartupMemoryContext(markdown: string): string {
     '    Before commands, edits, updates, creations, deletions, or final recommendations, run `recall` to validate the intended action against remembered rules, decisions, preferences, and prior context.',
     '    If the user names a file, path, command, or requested change, treat that as a cue to check memory first. Direct instructions do not override remembered project rules.',
     '    If memory conflicts with the requested action, stop, explain the conflict, and ask or propose a compliant alternative.',
+    '    Memory capture runs automatically after the session. No separate memory-write tool is available or needed; use `recall` only when you need stored context.',
     '    This startup block contains only pinned memories, not the full memory set. Run `recall` whenever broader context or constraints may matter.',
     '  </guidance>',
     '  <pinned_memories>',

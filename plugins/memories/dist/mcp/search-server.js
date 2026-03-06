@@ -35930,25 +35930,32 @@ function sectionTitle(memoryType) {
       return "Episodes";
   }
 }
-function formatResultLine(result) {
+function formatResultLine(result, includeDebugMetadata) {
+  const lines = [`- ${result.content}`];
+  if (!includeDebugMetadata) {
+    return lines;
+  }
   const tags = result.tags.length > 0 ? result.tags.join(", ") : "none";
   const matchers = result.path_matchers.length > 0 ? result.path_matchers.join(", ") : "none";
   return [
-    `- ${result.content}`,
+    ...lines,
     `  - id: ${result.id}; source: ${result.source}; score: ${result.score.toFixed(4)}; pinned: ${result.is_pinned}; tags: ${tags}; matchers: ${matchers}; updated_at: ${result.updated_at}`
   ];
 }
 function formatMemoryRecallMarkdown(input) {
   const deduped = dedupeByMemoryId(input.results);
   const grouped = groupByMemoryType(deduped);
-  const lines = [
-    "# Memory Recall",
-    `- Query: ${input.query}`,
-    `- Returned: ${deduped.length}`,
-    `- Duration: ${input.durationMs}ms`,
-    `- Source: ${input.source}`,
-    ""
-  ];
+  const includeDebugMetadata = input.includeDebugMetadata ?? false;
+  const lines = ["# Memory Recall", ""];
+  if (includeDebugMetadata) {
+    lines.push(
+      `- Query: ${input.query}`,
+      `- Returned: ${deduped.length}`,
+      `- Duration: ${input.durationMs}ms`,
+      `- Source: ${input.source}`,
+      ""
+    );
+  }
   for (const memoryType of MEMORY_SECTION_ORDER) {
     lines.push(`## ${sectionTitle(memoryType)}`);
     const values = grouped.get(memoryType) ?? [];
@@ -35956,7 +35963,7 @@ function formatMemoryRecallMarkdown(input) {
       lines.push("- None");
     } else {
       for (const value of values) {
-        lines.push(...formatResultLine(value));
+        lines.push(...formatResultLine(value, includeDebugMetadata));
       }
     }
     lines.push("");
@@ -36152,6 +36159,9 @@ var recallInputFields = {
   limit: external_exports3.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
   target_paths: external_exports3.array(external_exports3.string()).optional(),
   include_pinned: external_exports3.boolean().optional(),
+  include_debug_metadata: external_exports3.boolean().optional().describe(
+    "Include diagnostic recall metadata such as ids, scores, tags, matchers, timestamps, and query timing."
+  ),
   memory_types: external_exports3.array(external_exports3.enum(["fact", "rule", "decision", "episode"])).optional()
 };
 var recallInputSchema = external_exports3.object(recallInputFields);
@@ -36198,7 +36208,8 @@ async function runRecall(rawInput) {
       query: payload.meta.query,
       results: payload.results,
       durationMs: payload.meta.duration_ms,
-      source: payload.meta.source
+      source: payload.meta.source,
+      includeDebugMetadata: parsed.include_debug_metadata ?? false
     });
   } catch (error48) {
     const message = error48 instanceof Error ? error48.message : String(error48);
@@ -36210,12 +36221,12 @@ async function runRecall(rawInput) {
 function createRecallMcpServer() {
   const server = new McpServer({
     name: "memories",
-    version: "0.2.18"
+    version: "0.2.19"
   });
   server.registerTool(
     "recall",
     {
-      description: "Retrieve relevant project memories and return canonical markdown recall sections. " + recallInvocationPolicyText,
+      description: "Retrieve relevant project memories and return concise markdown recall sections. Set `include_debug_metadata=true` only when diagnostic metadata is explicitly needed. " + recallInvocationPolicyText,
       inputSchema: recallInputFields
     },
     async (rawInput) => {

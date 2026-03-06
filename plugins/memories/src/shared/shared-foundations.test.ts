@@ -100,7 +100,7 @@ describe('shared foundations', () => {
     expect(loaded[0]?.event).toBe('test.log');
   });
 
-  it('renders grouped markdown sections in canonical order', () => {
+  it('renders grouped markdown sections in canonical order with concise default output', () => {
     const results: SearchResult[] = [
       {
         id: 'mem-1',
@@ -137,5 +137,17 @@ describe('shared foundations', () => {
     expect(markdown.indexOf('## Facts')).toBeLessThan(markdown.indexOf('## Rules'));
     expect(markdown.includes('Project uses Node 20.')).toBe(true);
     expect(markdown.includes('Never commit credentials.')).toBe(true);
+    expect(markdown.includes('id: mem-1')).toBe(false);
+    expect(markdown.includes('- Query: runtime and security')).toBe(false);
+
+    const verboseMarkdown = formatMemoryRecallMarkdown({
+      query: 'runtime and security',
+      results,
+      durationMs: 9,
+      source: 'hybrid',
+      includeDebugMetadata: true,
+    });
+    expect(verboseMarkdown.includes('id: mem-1')).toBe(true);
+    expect(verboseMarkdown.includes('- Query: runtime and security')).toBe(true);
   });
 });
