@@ -2,20 +2,19 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import express, { type Request, type Response } from 'express';
+import { z } from 'zod';
 
 import { EmbeddingClient } from '../retrieval/embeddings.js';
 import { RetrievalService } from '../retrieval/hybrid-retrieval.js';
-import { DEFAULT_SEARCH_LIMIT, ENGINE_HOST } from '../shared/constants.js';
+import { OLLAMA_PROFILE_CONFIG, resolveOllamaProfile } from '../shared/constants.js';
 import { updateConnectedSessions } from '../shared/lockfile.js';
-import { error, warn } from '../shared/logger.js';
-import { appendOperationLog, hookLog, readJsonLogs } from '../shared/logs.js';
-import { formatMemoryRecallMarkdown } from '../shared/markdown.js';
-import { applyTokenBudget } from '../shared/token-budget.js';
+import { logError, logWarn } from '../shared/logger.js';
+import { appendEventLog, readEventLogs } from '../shared/logs.js';
 import {
-  addMemorySchema,
-  retrievalPretoolSchema,
+  addMemoryInputSchema,
+  memoryEventLogSchema,
   searchRequestSchema,
-  updateMemorySchema,
+  updateMemoryInputSchema,
 } from '../shared/types.js';
 import { MemoryStore } from '../storage/database.js';
 import { sendError } from './errors.js';
@@ -24,34 +23,38 @@ export interface EngineAppOptions {
   pluginRoot: string;
   projectRoot: string;
   lockPath: string;
-  operationLogPath: string;
-  hookLogPath: string;
+  eventLogPath: string;
   port: number;
-  vecExtensionPath: string | null;
+  sqliteVecExtensionPath: string | null;
   onSessionDrain: () => Promise<void>;
 }
 
 export interface EngineAppRuntime {
   app: express.Express;
+  close: () => void;
   getSessionCount: () => number;
 }
 
-function parseIntQuery(value: unknown, fallback: number): number {
-  if (typeof value !== 'string') {
-    return fallback;
-  }
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
+const sessionsPayloadSchema = z.object({
+  session_id: z.string().trim().min(1),
+});
 
-function parsePathParam(value: string | string[] | undefined): string | null {
-  if (typeof value === 'string' && value.trim()) {
-    return value;
-  }
-  if (Array.isArray(value) && typeof value[0] === 'string' && value[0].trim()) {
-    return value[0];
-  }
-  return null;
+const listMemoriesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+const logsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(1000).default(200),
+  order: z.enum(['asc', 'desc']).default('desc'),
+});
+
+const memoryIdParamSchema = z.object({
+  id: z.string().trim().min(1),
+});
+
+function toEventLog(input: z.infer<typeof memoryEventLogSchema>): z.infer<typeof memoryEventLogSchema> {
+  return memoryEventLogSchema.parse(input);
 }
 
 export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
@@ -59,25 +62,39 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
   app.use(express.json({ limit: '2mb' }));
 
   const startedAtMs = Date.now();
-  const store = new MemoryStore(
-    path.join(options.projectRoot, '.memories', 'ai_memory.db'),
-    options.vecExtensionPath,
-  );
-  const embeddings = new EmbeddingClient();
-  const retrieval = new RetrievalService(store, embeddings);
+  const profile = resolveOllamaProfile(process.env.MEMORIES_OLLAMA_PROFILE);
+  const store = new MemoryStore({
+    dbPath: path.join(options.projectRoot, '.memories', 'ai_memory.db'),
+    pluginRoot: options.pluginRoot,
+    sqliteVecExtensionPath: options.sqliteVecExtensionPath,
+    embeddingDimensions: OLLAMA_PROFILE_CONFIG[profile].dimensions,
+  });
+  const embeddingClient = new EmbeddingClient();
+  const retrieval = new RetrievalService(store, embeddingClient);
   const activeSessions = new Set<string>();
+  let drainTriggered = false;
 
   const staticUiDir = path.join(options.pluginRoot, 'web', 'dist');
   if (existsSync(staticUiDir)) {
     app.use('/ui', express.static(staticUiDir));
+    app.get('/ui{*path}', (request, response, next) => {
+      if (request.path.startsWith('/ui/assets/')) {
+        next();
+        return;
+      }
+      response.sendFile(path.join(staticUiDir, 'index.html'));
+    });
   }
 
-  app.get('/health', (_req: Request, res: Response) => {
-    res.json({ host: ENGINE_HOST, ok: true, port: options.port });
+  app.get('/health', (_request: Request, response: Response) => {
+    response.json({
+      ok: true,
+      port: options.port,
+    });
   });
 
-  app.get('/stats', async (_req: Request, res: Response) => {
-    return res.json({
+  app.get('/stats', (_request: Request, response: Response) => {
+    response.json({
       active_sessions: activeSessions.size,
       memory_count: store.memoryCount(),
       online: true,
@@ -85,243 +102,242 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
     });
   });
 
-  app.post('/sessions/connect', async (req: Request, res: Response) => {
-    const sessionId = typeof req.body?.session_id === 'string' ? req.body.session_id.trim() : '';
-    if (!sessionId) {
-      return sendError(res, 400, 'INVALID_SESSION_ID', 'session_id is required');
+  app.post('/sessions/connect', async (request: Request, response: Response) => {
+    const parsed = sessionsPayloadSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendError(response, 400, 'INVALID_SESSION_ID', parsed.error.message);
     }
 
+    const sessionId = parsed.data.session_id;
     activeSessions.add(sessionId);
-    await updateConnectedSessions(options.lockPath, (current) => [...current, sessionId]);
-    await hookLog(options.hookLogPath, {
-      at: new Date().toISOString(),
-      event: 'sessions/connect',
-      status: 'ok',
-      session_id: sessionId,
-    });
-    return res.json({ connected_session_ids: [...activeSessions] });
+    drainTriggered = false;
+    await updateConnectedSessions(options.lockPath, (currentSessions) => [...currentSessions, sessionId]);
+
+    await appendEventLog(
+      options.eventLogPath,
+      toEventLog({
+        at: new Date().toISOString(),
+        event: 'sessions/connect',
+        kind: 'hook',
+        status: 'ok',
+        session_id: sessionId,
+      }),
+    );
+
+    return response.json({ active_sessions: activeSessions.size, ok: true });
   });
 
-  app.post('/sessions/disconnect', async (req: Request, res: Response) => {
-    const sessionId = typeof req.body?.session_id === 'string' ? req.body.session_id.trim() : '';
-    if (!sessionId) {
-      return sendError(res, 400, 'INVALID_SESSION_ID', 'session_id is required');
+  app.post('/sessions/disconnect', async (request: Request, response: Response) => {
+    const parsed = sessionsPayloadSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendError(response, 400, 'INVALID_SESSION_ID', parsed.error.message);
     }
 
+    const sessionId = parsed.data.session_id;
     activeSessions.delete(sessionId);
-    await updateConnectedSessions(options.lockPath, (current) =>
-      current.filter((value) => value !== sessionId),
+    await updateConnectedSessions(options.lockPath, (currentSessions) =>
+      currentSessions.filter((value) => value !== sessionId),
     );
-    await hookLog(options.hookLogPath, {
-      at: new Date().toISOString(),
-      event: 'sessions/disconnect',
-      status: 'ok',
-      session_id: sessionId,
-    });
 
-    if (activeSessions.size === 0) {
-      void options.onSessionDrain().catch((drainError: unknown) => {
-        error('onSessionDrain failed', {
-          error: drainError instanceof Error ? drainError.message : String(drainError),
+    await appendEventLog(
+      options.eventLogPath,
+      toEventLog({
+        at: new Date().toISOString(),
+        event: 'sessions/disconnect',
+        kind: 'hook',
+        status: 'ok',
+        session_id: sessionId,
+      }),
+    );
+
+    if (activeSessions.size === 0 && !drainTriggered) {
+      drainTriggered = true;
+      void options.onSessionDrain().catch((error) => {
+        logError('Session drain callback failed', {
+          error: error instanceof Error ? error.message : String(error),
         });
       });
     }
 
-    return res.json({ connected_session_ids: [...activeSessions] });
+    return response.json({ active_sessions: activeSessions.size, ok: true });
   });
 
-  app.get('/memories/pinned', (_req: Request, res: Response) => {
-    const started = Date.now();
+  app.get('/memories/pinned', (_request: Request, response: Response) => {
+    const startedAt = Date.now();
     const results = store.getPinnedMemories();
-    return res.json({
+    return response.json({
       meta: {
-        duration_ms: Date.now() - started,
-        query: 'session-start:pinned',
+        duration_ms: Date.now() - startedAt,
+        query: 'pinned',
         returned: results.length,
-        source: 'engine:/memories/pinned',
+        source: 'hybrid',
       },
       results,
     });
   });
 
-  app.post('/retrieval/pretool', async (req: Request, res: Response) => {
-    const parsed = retrievalPretoolSchema.safeParse(req.body);
+  app.post('/memories/search', async (request: Request, response: Response) => {
+    const parsed = searchRequestSchema.safeParse(request.body);
     if (!parsed.success) {
-      return sendError(res, 400, 'INVALID_PAYLOAD', parsed.error.message);
+      return sendError(response, 400, 'INVALID_PAYLOAD', parsed.error.message);
     }
 
-    const started = Date.now();
-    const results = await retrieval.searchForPretool({
-      query: parsed.data.query,
-      targetPaths: parsed.data.target_paths,
-      limit: DEFAULT_SEARCH_LIMIT,
-      includePinned: true,
-      lexicalK: 30,
-      semanticK: 30,
-    });
-    const bounded = applyTokenBudget(results, parsed.data.max_tokens);
-    const durationMs = Date.now() - started;
-    const markdown = formatMemoryRecallMarkdown({
-      query: parsed.data.query || `paths:${parsed.data.target_paths.join(',') || 'none'}`,
-      results: bounded,
-      durationMs,
-      source: 'engine:/retrieval/pretool',
-    });
-    return res.json({
-      markdown,
-      meta: {
-        duration_ms: durationMs,
-        query: parsed.data.query,
-        returned: bounded.length,
-        source: 'engine:/retrieval/pretool',
-      },
-      results: bounded,
-    });
-  });
-
-  app.post('/memories/search', async (req: Request, res: Response) => {
-    const parsed = searchRequestSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return sendError(res, 400, 'INVALID_PAYLOAD', parsed.error.message);
-    }
-
-    const started = Date.now();
+    const startedAt = Date.now();
     const results = await retrieval.search({
       query: parsed.data.query,
       limit: parsed.data.limit,
       includePinned: parsed.data.include_pinned,
-      lexicalK: 30,
-      semanticK: 30,
-      ...(parsed.data.memory_types ? { memoryTypes: parsed.data.memory_types } : {}),
+      targetPaths: parsed.data.target_paths,
+      memoryTypes: parsed.data.memory_types,
+      lexicalK: parsed.data.lexical_k,
+      semanticK: parsed.data.semantic_k,
+      responseTokenBudget: parsed.data.response_token_budget,
     });
 
-    return res.json({
+    await appendEventLog(
+      options.eventLogPath,
+      toEventLog({
+        at: new Date().toISOString(),
+        event: 'memory/search',
+        kind: 'operation',
+        status: 'ok',
+        detail: `returned=${results.length}`,
+      }),
+    );
+
+    return response.json({
       meta: {
-        duration_ms: Date.now() - started,
+        duration_ms: Date.now() - startedAt,
         query: parsed.data.query,
         returned: results.length,
-        source: 'engine:/memories/search',
+        source: 'hybrid',
       },
       results,
     });
   });
 
-  app.post('/memories/add', async (req: Request, res: Response) => {
-    const parsed = addMemorySchema.safeParse(req.body);
+  app.post('/memories/add', async (request: Request, response: Response) => {
+    const parsed = addMemoryInputSchema.safeParse(request.body);
     if (!parsed.success) {
-      return sendError(res, 400, 'INVALID_PAYLOAD', parsed.error.message);
+      return sendError(response, 400, 'INVALID_PAYLOAD', parsed.error.message);
     }
 
-    const memory = store.createMemory(parsed.data);
-    if (embeddings.isConfigured()) {
-      const vector = await embeddings.embed(memory.content);
-      if (vector) {
-        store.upsertEmbedding(memory.id, vector);
-      } else {
-        warn('Semantic embedding skipped for memory', { memoryId: memory.id });
-      }
+    let vector: number[] | null = null;
+    if (embeddingClient.isConfigured()) {
+      vector = await embeddingClient.embed(parsed.data.content);
     }
-    await appendOperationLog(options.operationLogPath, {
-      at: new Date().toISOString(),
-      op: 'memory/create',
-      status: 'ok',
-      memory_id: memory.id,
-      data: { memory_type: memory.memory_type, is_pinned: memory.is_pinned },
-    });
-    return res.status(201).json({ memory });
+
+    const created = store.createMemory(parsed.data, vector);
+    await appendEventLog(
+      options.eventLogPath,
+      toEventLog({
+        at: new Date().toISOString(),
+        event: 'memory/create',
+        kind: 'operation',
+        status: 'ok',
+        memory_id: created.id,
+      }),
+    );
+
+    return response.status(201).json({ memory: created });
   });
 
-  app.get('/memories', (req: Request, res: Response) => {
-    const limit = parseIntQuery(req.query.limit, 50);
-    const offset = parseIntQuery(req.query.offset, 0);
-    const records = store.listMemories(limit, offset);
-    return res.json({
-      items: records,
+  app.get('/memories', (request: Request, response: Response) => {
+    const parsed = listMemoriesQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return sendError(response, 400, 'INVALID_QUERY', parsed.error.message);
+    }
+
+    const items = store.listMemories(parsed.data.limit, parsed.data.offset);
+    return response.json({
+      items,
       total: store.memoryCount(),
     });
   });
 
-  app.patch('/memories/:id', async (req: Request, res: Response) => {
-    const id = parsePathParam(req.params.id);
-    if (!id) {
-      return sendError(res, 400, 'INVALID_MEMORY_ID', 'Memory id path param is required');
+  app.patch('/memories/:id', async (request: Request, response: Response) => {
+    const parsedId = memoryIdParamSchema.safeParse(request.params);
+    if (!parsedId.success) {
+      return sendError(response, 400, 'INVALID_MEMORY_ID', parsedId.error.message);
     }
-    const parsed = updateMemorySchema.safeParse(req.body);
-    if (!parsed.success) {
-      return sendError(res, 400, 'INVALID_PAYLOAD', parsed.error.message);
+    const parsedBody = updateMemoryInputSchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      return sendError(response, 400, 'INVALID_PAYLOAD', parsedBody.error.message);
     }
 
-    const updated = store.updateMemory(id, parsed.data);
+    let vector: number[] | null | undefined = undefined;
+    if (typeof parsedBody.data.content === 'string' && embeddingClient.isConfigured()) {
+      vector = await embeddingClient.embed(parsedBody.data.content);
+      if (!vector) {
+        logWarn('Embedding update skipped due failed embedding request', {
+          memoryId: parsedId.data.id,
+        });
+      }
+    }
+
+    const updated = store.updateMemory(parsedId.data.id, parsedBody.data, vector);
     if (!updated) {
-      return sendError(res, 404, 'NOT_FOUND', `Memory ${id} was not found`);
+      return sendError(response, 404, 'NOT_FOUND', `Memory ${parsedId.data.id} was not found`);
     }
 
-    if (parsed.data.content && embeddings.isConfigured()) {
-      const vector = await embeddings.embed(parsed.data.content);
-      if (vector) {
-        store.upsertEmbedding(updated.id, vector);
-      }
-    }
-    await appendOperationLog(options.operationLogPath, {
-      at: new Date().toISOString(),
-      op: 'memory/update',
-      status: 'ok',
-      memory_id: updated.id,
-    });
-    return res.json({ memory: updated });
+    await appendEventLog(
+      options.eventLogPath,
+      toEventLog({
+        at: new Date().toISOString(),
+        event: 'memory/update',
+        kind: 'operation',
+        status: 'ok',
+        memory_id: updated.id,
+      }),
+    );
+
+    return response.json({ memory: updated });
   });
 
-  app.delete('/memories/:id', async (req: Request, res: Response) => {
-    const id = parsePathParam(req.params.id);
-    if (!id) {
-      return sendError(res, 400, 'INVALID_MEMORY_ID', 'Memory id path param is required');
+  app.delete('/memories/:id', async (request: Request, response: Response) => {
+    const parsedId = memoryIdParamSchema.safeParse(request.params);
+    if (!parsedId.success) {
+      return sendError(response, 400, 'INVALID_MEMORY_ID', parsedId.error.message);
     }
-    const deleted = store.deleteMemory(id);
+
+    const deleted = store.deleteMemory(parsedId.data.id);
     if (!deleted) {
-      return sendError(res, 404, 'NOT_FOUND', `Memory ${id} was not found`);
+      return sendError(response, 404, 'NOT_FOUND', `Memory ${parsedId.data.id} was not found`);
     }
-    await appendOperationLog(options.operationLogPath, {
-      at: new Date().toISOString(),
-      op: 'memory/delete',
-      status: 'ok',
-      memory_id: id,
-    });
-    return res.json({ deleted: true, id });
+
+    await appendEventLog(
+      options.eventLogPath,
+      toEventLog({
+        at: new Date().toISOString(),
+        event: 'memory/delete',
+        kind: 'operation',
+        status: 'ok',
+        memory_id: parsedId.data.id,
+      }),
+    );
+
+    return response.json({ deleted: true, id: parsedId.data.id });
   });
 
-  app.get('/logs/operations', async (req: Request, res: Response) => {
-    const limit = parseIntQuery(req.query.limit, 200);
-    const logs = await readJsonLogs(options.operationLogPath, limit);
-    return res.json({ items: logs });
+  app.get('/logs', async (request: Request, response: Response) => {
+    const parsed = logsQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return sendError(response, 400, 'INVALID_QUERY', parsed.error.message);
+    }
+
+    const entries = await readEventLogs(options.eventLogPath, parsed.data.limit);
+    const items = parsed.data.order === 'desc' ? [...entries].reverse() : entries;
+    return response.json({ items });
   });
 
-  app.get('/logs/hooks', async (req: Request, res: Response) => {
-    const limit = parseIntQuery(req.query.limit, 200);
-    const logs = await readJsonLogs(options.hookLogPath, limit);
-    return res.json({ items: logs });
-  });
-
-  if (existsSync(staticUiDir)) {
-    app.get('{*path}', (req: Request, res: Response, next) => {
-      if (
-        req.path.startsWith('/api/') ||
-        req.path.startsWith('/memories') ||
-        req.path.startsWith('/logs')
-      ) {
-        return next();
-      }
-      const indexPath = path.join(staticUiDir, 'index.html');
-      return res.sendFile(indexPath);
-    });
-  }
-
-  app.use((err: unknown, _req: Request, res: Response, _next: express.NextFunction) => {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return sendError(res, 500, 'INTERNAL_ERROR', message);
+  app.use((error: unknown, _request: Request, response: Response, _next: express.NextFunction) => {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return sendError(response, 500, 'INTERNAL_ERROR', message);
   });
 
   return {
     app,
+    close: () => store.close(),
     getSessionCount: () => activeSessions.size,
   };
 }

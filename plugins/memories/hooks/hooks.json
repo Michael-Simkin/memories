@@ -5,18 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "LOG_LEVEL=silent node ${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-start.js"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash|Read|Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "LOG_LEVEL=silent node ${CLAUDE_PLUGIN_ROOT}/dist/hooks/pretool-use.js"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-start.js"
           }
         ]
       }
@@ -26,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "LOG_LEVEL=silent node ${CLAUDE_PLUGIN_ROOT}/dist/hooks/stop.js"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/hooks/stop.js"
           }
         ]
       }
@@ -36,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "LOG_LEVEL=silent node ${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-end.js"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-end.js"
           }
         ]
       }

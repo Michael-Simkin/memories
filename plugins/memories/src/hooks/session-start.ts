@@ -1,47 +1,54 @@
 import { ensureEngine } from '../engine/ensure-engine.js';
-import { readJsonFromStdin, writeFailOpenOutput, writeHookOutput } from '../shared/hook-io.js';
-import { error } from '../shared/logger.js';
-import { hookLog } from '../shared/logs.js';
+import {
+  type HookResult,
+  readJsonFromStdin,
+  writeFailOpenOutput,
+  writeHookOutput,
+} from '../shared/hook-io.js';
+import { logError } from '../shared/logger.js';
+import { appendEventLog } from '../shared/logs.js';
 import { formatMemoryRecallMarkdown } from '../shared/markdown.js';
 import { ensureProjectDirectories } from '../shared/paths.js';
 import type { SearchResponse } from '../shared/types.js';
 import {
+  getEngineJson,
   isEngineUnavailableError,
-  isInternalClaudeRun,
   postEngineJson,
   resolveHookProjectRoot,
 } from './common.js';
-import { sessionStartPayloadSchema } from './schemas.js';
+import { type SessionStartPayload,sessionStartPayloadSchema } from './schemas.js';
 
-async function run(): Promise<void> {
-  const payload = (await readJsonFromStdin(sessionStartPayloadSchema)) ?? {};
+interface SessionStartDependencies {
+  appendEventLogFn: typeof appendEventLog;
+  ensureEngineFn: typeof ensureEngine;
+  ensureProjectDirectoriesFn: typeof ensureProjectDirectories;
+  getEngineJsonFn: typeof getEngineJson;
+  postEngineJsonFn: typeof postEngineJson;
+}
+
+const defaultDependencies: SessionStartDependencies = {
+  appendEventLogFn: appendEventLog,
+  ensureEngineFn: ensureEngine,
+  ensureProjectDirectoriesFn: ensureProjectDirectories,
+  getEngineJsonFn: getEngineJson,
+  postEngineJsonFn: postEngineJson,
+};
+
+export async function handleSessionStart(
+  payload: SessionStartPayload,
+  dependencies: SessionStartDependencies = defaultDependencies,
+): Promise<HookResult> {
   const projectRoot = resolveHookProjectRoot(payload);
-  const paths = await ensureProjectDirectories(projectRoot);
-
-  if (isInternalClaudeRun()) {
-    await hookLog(paths.hookLogPath, {
-      at: new Date().toISOString(),
-      event: 'SessionStart',
-      status: 'skipped',
-      detail: 'internal Claude run; skipping memory hooks',
-    });
-    writeHookOutput({ continue: true });
-    return;
-  }
+  const paths = await dependencies.ensureProjectDirectoriesFn(projectRoot);
 
   try {
-    const endpoint = await ensureEngine(projectRoot);
+    const endpoint = await dependencies.ensureEngineFn(projectRoot);
     const sessionId = payload.session_id?.trim();
     if (sessionId) {
-      await postEngineJson(endpoint, '/sessions/connect', { session_id: sessionId });
+      await dependencies.postEngineJsonFn(endpoint, '/sessions/connect', { session_id: sessionId });
     }
 
-    const pinnedResponse = await fetch(`http://${endpoint.host}:${endpoint.port}/memories/pinned`);
-    if (!pinnedResponse.ok) {
-      throw new Error(`Pinned memory fetch failed: ${pinnedResponse.status} ${pinnedResponse.statusText}`);
-    }
-    const pinned = (await pinnedResponse.json()) as SearchResponse;
-
+    const pinned = await dependencies.getEngineJsonFn<SearchResponse>(endpoint, '/memories/pinned');
     const markdown = formatMemoryRecallMarkdown({
       query: 'session-start:pinned',
       results: pinned.results,
@@ -50,51 +57,60 @@ async function run(): Promise<void> {
     });
     const memoryUiUrl = `http://${endpoint.host}:${endpoint.port}/ui`;
 
-    await hookLog(paths.hookLogPath, {
+    await dependencies.appendEventLogFn(paths.eventLogPath, {
       at: new Date().toISOString(),
       event: 'SessionStart',
+      kind: 'hook',
       status: 'ok',
       ...(sessionId ? { session_id: sessionId } : {}),
-      data: { endpoint: `${endpoint.host}:${endpoint.port}` },
+      detail: `ui=${memoryUiUrl}`,
     });
 
-    writeHookOutput({
+    return {
       continue: true,
       systemMessage: `Memory UI: ${memoryUiUrl}`,
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        additionalContext: `Memory UI: ${memoryUiUrl}\n\n${markdown}`,
+        additionalContext: markdown,
       },
-    });
-  } catch (runError: unknown) {
-    if (isEngineUnavailableError(runError)) {
-      const detail = runError instanceof Error ? runError.message : String(runError);
-      const systemMessage = detail.includes('Node.js >=')
-        ? 'Memory engine unavailable: Node 24+ runtime not found. Set MEMORIES_NODE_BIN or make nvm Node 24 available to non-interactive shells.'
-        : 'Memory engine unavailable; continuing without memory context.';
-      await hookLog(paths.hookLogPath, {
+    };
+  } catch (error) {
+    if (isEngineUnavailableError(error)) {
+      await dependencies.appendEventLogFn(paths.eventLogPath, {
         at: new Date().toISOString(),
         event: 'SessionStart',
+        kind: 'hook',
         status: 'skipped',
-        detail: `engine unavailable; skipping memory injection (${detail})`,
+        detail: error instanceof Error ? error.message : String(error),
       });
-      writeHookOutput({
+      return {
         continue: true,
-        systemMessage,
-      });
-      return;
+        systemMessage: 'Memory engine unavailable; continuing without memory context.',
+      };
     }
-    await hookLog(paths.hookLogPath, {
+
+    await dependencies.appendEventLogFn(paths.eventLogPath, {
       at: new Date().toISOString(),
       event: 'SessionStart',
+      kind: 'hook',
       status: 'error',
-      detail: runError instanceof Error ? runError.message : String(runError),
+      detail: error instanceof Error ? error.message : String(error),
     });
-    error('SessionStart hook failed', {
-      error: runError instanceof Error ? runError.message : String(runError),
+    logError('SessionStart hook failed', {
+      error: error instanceof Error ? error.message : String(error),
     });
-    writeFailOpenOutput();
+    return { continue: true };
   }
+}
+
+async function run(): Promise<void> {
+  const payload = await readJsonFromStdin(sessionStartPayloadSchema);
+  if (!payload) {
+    writeFailOpenOutput();
+    return;
+  }
+  const output = await handleSessionStart(payload);
+  writeHookOutput(output);
 }
 
 void run();

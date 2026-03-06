@@ -1,51 +1,138 @@
 import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 
-import { readJsonFromStdin, writeFailOpenOutput, writeHookOutput } from '../shared/hook-io.js';
-import { error } from '../shared/logger.js';
-import { hookLog } from '../shared/logs.js';
-import { ensureProjectDirectories, resolvePluginRoot } from '../shared/paths.js';
 import {
-  isEngineUnavailableError,
-  isInternalClaudeRun,
-  resolveEndpointFromLock,
-  resolveHookProjectRoot,
-} from './common.js';
-import { stopPayloadSchema } from './schemas.js';
+  type HookResult,
+  readJsonFromStdin,
+  writeFailOpenOutput,
+  writeHookOutput,
+} from '../shared/hook-io.js';
+import { logError } from '../shared/logger.js';
+import { appendEventLog } from '../shared/logs.js';
+import { ensureProjectDirectories, resolvePluginRoot } from '../shared/paths.js';
+import { isEngineUnavailableError, resolveEndpointFromLock, resolveHookProjectRoot } from './common.js';
+import { type StopPayload,stopPayloadSchema } from './schemas.js';
 
-interface StopWorkerPayload {
+interface StopWorkerHandoff {
   endpoint: {
     host: string;
     port: number;
   };
-  last_assistant_message?: string;
   project_root: string;
-  session_id?: string;
   transcript_path: string;
+  last_assistant_message?: string;
+  session_id?: string;
 }
 
-function spawnWorker(payload: StopWorkerPayload): void {
+function spawnStopWorker(handoff: StopWorkerHandoff): void {
   const pluginRoot = resolvePluginRoot();
   const workerEntrypoint = `${pluginRoot}/dist/extraction/run.js`;
-  const handoff = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
-  const nodeExecutable = process.execPath || 'node';
-  const child = spawn(nodeExecutable, [workerEntrypoint, '--handoff', handoff], {
+  const handoffPayload = Buffer.from(JSON.stringify(handoff), 'utf8').toString('base64');
+
+  const child = spawn(process.execPath, [workerEntrypoint, '--handoff', handoffPayload], {
     detached: true,
     env: {
       ...process.env,
       CLAUDE_PLUGIN_ROOT: pluginRoot,
-      PROJECT_ROOT: payload.project_root,
+      PROJECT_ROOT: handoff.project_root,
     },
     stdio: 'ignore',
   });
-  child.once('error', (spawnError) => {
-    error('Stop worker spawn failed', {
-      error: spawnError.message,
-      nodeExecutable,
+  child.once('error', (error) => {
+    logError('Failed to spawn stop extraction worker', {
+      error: error.message,
       workerEntrypoint,
     });
   });
   child.unref();
+}
+
+interface StopHookDependencies {
+  accessFn: typeof access;
+  appendEventLogFn: typeof appendEventLog;
+  ensureProjectDirectoriesFn: typeof ensureProjectDirectories;
+  resolveEndpointFromLockFn: typeof resolveEndpointFromLock;
+  spawnStopWorkerFn: typeof spawnStopWorker;
+}
+
+const defaultDependencies: StopHookDependencies = {
+  accessFn: access,
+  appendEventLogFn: appendEventLog,
+  ensureProjectDirectoriesFn: ensureProjectDirectories,
+  resolveEndpointFromLockFn: resolveEndpointFromLock,
+  spawnStopWorkerFn: spawnStopWorker,
+};
+
+export async function handleStopHook(
+  payload: StopPayload,
+  dependencies: StopHookDependencies = defaultDependencies,
+): Promise<HookResult> {
+  const projectRoot = resolveHookProjectRoot(payload);
+  const paths = await dependencies.ensureProjectDirectoriesFn(projectRoot);
+
+  if (payload.stop_hook_active === true) {
+    await dependencies.appendEventLogFn(paths.eventLogPath, {
+      at: new Date().toISOString(),
+      event: 'Stop',
+      kind: 'hook',
+      status: 'skipped',
+      ...(payload.session_id ? { session_id: payload.session_id } : {}),
+      detail: 'stop_hook_active=true',
+    });
+    return { continue: true };
+  }
+
+  try {
+    await dependencies.accessFn(payload.transcript_path);
+    const endpoint = await dependencies.resolveEndpointFromLockFn(projectRoot);
+    dependencies.spawnStopWorkerFn({
+      endpoint: {
+        host: endpoint.host,
+        port: endpoint.port,
+      },
+      project_root: projectRoot,
+      transcript_path: payload.transcript_path,
+      ...(payload.last_assistant_message
+        ? { last_assistant_message: payload.last_assistant_message }
+        : {}),
+      ...(payload.session_id ? { session_id: payload.session_id } : {}),
+    });
+
+    await dependencies.appendEventLogFn(paths.eventLogPath, {
+      at: new Date().toISOString(),
+      event: 'Stop',
+      kind: 'hook',
+      status: 'ok',
+      ...(payload.session_id ? { session_id: payload.session_id } : {}),
+      detail: `handoff=${payload.transcript_path}`,
+    });
+    return { continue: true };
+  } catch (error) {
+    if (isEngineUnavailableError(error)) {
+      await dependencies.appendEventLogFn(paths.eventLogPath, {
+        at: new Date().toISOString(),
+        event: 'Stop',
+        kind: 'hook',
+        status: 'skipped',
+        ...(payload.session_id ? { session_id: payload.session_id } : {}),
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      return { continue: true };
+    }
+
+    await dependencies.appendEventLogFn(paths.eventLogPath, {
+      at: new Date().toISOString(),
+      event: 'Stop',
+      kind: 'hook',
+      status: 'error',
+      ...(payload.session_id ? { session_id: payload.session_id } : {}),
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    logError('Stop hook failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { continue: true };
+  }
 }
 
 async function run(): Promise<void> {
@@ -54,81 +141,8 @@ async function run(): Promise<void> {
     writeFailOpenOutput();
     return;
   }
-
-  const projectRoot = resolveHookProjectRoot(payload);
-  const { hookLogPath } = await ensureProjectDirectories(projectRoot);
-
-  if (isInternalClaudeRun()) {
-    await hookLog(hookLogPath, {
-      at: new Date().toISOString(),
-      event: 'Stop',
-      status: 'skipped',
-      session_id: payload.session_id,
-      detail: 'internal Claude run; skipping memory hooks',
-    });
-    writeHookOutput({ continue: true });
-    return;
-  }
-
-  try {
-    if (payload.stop_hook_active) {
-      await hookLog(hookLogPath, {
-        at: new Date().toISOString(),
-        event: 'Stop',
-        status: 'skipped',
-        session_id: payload.session_id,
-        detail: 'stop_hook_active=true',
-      });
-      writeHookOutput({ continue: true });
-      return;
-    }
-
-    await access(payload.transcript_path);
-    const endpoint = await resolveEndpointFromLock(projectRoot);
-
-    const workerPayload: StopWorkerPayload = {
-      endpoint: { host: endpoint.host, port: endpoint.port },
-      project_root: projectRoot,
-      transcript_path: payload.transcript_path,
-      ...(payload.last_assistant_message
-        ? { last_assistant_message: payload.last_assistant_message }
-        : {}),
-      ...(payload.session_id ? { session_id: payload.session_id } : {}),
-    };
-    spawnWorker(workerPayload);
-
-    await hookLog(hookLogPath, {
-      at: new Date().toISOString(),
-      event: 'Stop',
-      status: 'ok',
-      session_id: payload.session_id,
-      data: { transcript_path: payload.transcript_path },
-    });
-    writeHookOutput({ continue: true });
-  } catch (runError: unknown) {
-    if (isEngineUnavailableError(runError)) {
-      await hookLog(hookLogPath, {
-        at: new Date().toISOString(),
-        event: 'Stop',
-        status: 'skipped',
-        session_id: payload.session_id,
-        detail: 'engine not running; skipping extraction handoff',
-      });
-      writeHookOutput({ continue: true });
-      return;
-    }
-    await hookLog(hookLogPath, {
-      at: new Date().toISOString(),
-      event: 'Stop',
-      status: 'error',
-      session_id: payload.session_id,
-      detail: runError instanceof Error ? runError.message : String(runError),
-    });
-    error('Stop hook failed', {
-      error: runError instanceof Error ? runError.message : String(runError),
-    });
-    writeFailOpenOutput();
-  }
+  const output = await handleStopHook(payload);
+  writeHookOutput(output);
 }
 
 void run();

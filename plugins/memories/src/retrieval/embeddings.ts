@@ -1,34 +1,59 @@
 import {
-  EMBEDDING_DIMENSIONS,
-  OLLAMA_EMBED_MODEL,
-  OLLAMA_EMBED_TIMEOUT_MS,
-  OLLAMA_URL,
+  DEFAULT_OLLAMA_TIMEOUT_MS,
+  DEFAULT_OLLAMA_URL,
+  OLLAMA_PROFILE_CONFIG,
+  type OllamaProfile,
+  parsePositiveInteger,
+  resolveOllamaProfile,
 } from '../shared/constants.js';
-import { warn } from '../shared/logger.js';
+import { logWarn } from '../shared/logger.js';
 
-const REQUEST_FAILURE_BACKOFF_MS = 15 * 1000;
+const REQUEST_FAILURE_BACKOFF_MS = 15_000;
 const DEFAULT_KEEP_ALIVE = '30m';
+
+export interface EmbeddingClientConfig {
+  baseUrl?: string;
+  profile?: OllamaProfile;
+  timeoutMs?: number;
+}
 
 export class EmbeddingClient {
   private readonly baseUrl: string;
-  private readonly model: string;
+  private readonly profile: OllamaProfile;
+  private readonly timeoutMs: number;
   private nextRetryAtMs: number;
 
-  public constructor(model = OLLAMA_EMBED_MODEL, baseUrl = OLLAMA_URL) {
-    this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.model = model;
+  public constructor(config: EmbeddingClientConfig = {}) {
+    const profile = config.profile ?? resolveOllamaProfile(process.env.MEMORIES_OLLAMA_PROFILE);
+
+    this.baseUrl = (config.baseUrl ?? process.env.MEMORIES_OLLAMA_URL ?? DEFAULT_OLLAMA_URL).replace(
+      /\/+$/,
+      '',
+    );
+    this.profile = profile;
+    this.timeoutMs =
+      config.timeoutMs ??
+      parsePositiveInteger(process.env.MEMORIES_OLLAMA_TIMEOUT_MS, DEFAULT_OLLAMA_TIMEOUT_MS);
     this.nextRetryAtMs = 0;
   }
 
+  public get model(): string {
+    return OLLAMA_PROFILE_CONFIG[this.profile].model;
+  }
+
+  public get dimensions(): number {
+    return OLLAMA_PROFILE_CONFIG[this.profile].dimensions;
+  }
+
   public isConfigured(): boolean {
-    return this.baseUrl.length > 0 && this.model.length > 0;
+    return this.baseUrl.length > 0;
   }
 
   public async embed(text: string): Promise<number[] | null> {
     if (!this.isConfigured()) {
       return null;
     }
-    if (this.nextRetryAtMs > Date.now()) {
+    if (Date.now() < this.nextRetryAtMs) {
       return null;
     }
 
@@ -38,11 +63,11 @@ export class EmbeddingClient {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), OLLAMA_EMBED_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await fetch(`${this.baseUrl}/api/embed`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
           model: this.model,
@@ -52,43 +77,43 @@ export class EmbeddingClient {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        warn('Ollama embedding call failed', {
+        const responseText = await response.text();
+        logWarn('Ollama embed request failed', {
+          model: this.model,
+          responseText,
           status: response.status,
           statusText: response.statusText,
-          errorText,
-          model: this.model,
-          url: this.baseUrl,
         });
         this.nextRetryAtMs = Date.now() + REQUEST_FAILURE_BACKOFF_MS;
         return null;
       }
 
-      const parsed = this.parseEmbedding(await response.json());
-      if (!parsed) {
-        warn('Ollama embedding response did not contain vector', {
+      const payload = (await response.json()) as unknown;
+      const vector = this.parseEmbedding(payload);
+      if (!vector) {
+        logWarn('Ollama response did not include a valid embedding vector', {
           model: this.model,
-          url: this.baseUrl,
         });
         this.nextRetryAtMs = Date.now() + REQUEST_FAILURE_BACKOFF_MS;
         return null;
       }
 
-      if (parsed.length !== EMBEDDING_DIMENSIONS) {
-        warn('Ollama embedding dimensions mismatch with configured engine expectation', {
-          actual: parsed.length,
-          expected: EMBEDDING_DIMENSIONS,
+      if (vector.length !== this.dimensions) {
+        logWarn('Embedding dimensions mismatch for profile', {
+          expected: this.dimensions,
+          actual: vector.length,
           model: this.model,
+          profile: this.profile,
         });
       }
+
       this.nextRetryAtMs = 0;
-      return parsed;
+      return vector;
     } catch (error) {
-      warn('Ollama embedding request failed', {
+      logWarn('Ollama embed request threw an error', {
         error: error instanceof Error ? error.message : String(error),
         model: this.model,
-        timeout_ms: OLLAMA_EMBED_TIMEOUT_MS,
-        url: this.baseUrl,
+        timeoutMs: this.timeoutMs,
       });
       this.nextRetryAtMs = Date.now() + REQUEST_FAILURE_BACKOFF_MS;
       return null;
@@ -101,16 +126,28 @@ export class EmbeddingClient {
     if (!payload || typeof payload !== 'object') {
       return null;
     }
-    const value = payload as {
-      embeddings?: number[][];
+
+    const maybePayload = payload as {
+      embedding?: unknown;
+      embeddings?: unknown;
     };
-    const values = value.embeddings?.[0];
-    if (!Array.isArray(values)) {
-      return null;
+
+    if (Array.isArray(maybePayload.embedding) && maybePayload.embedding.every(isNumber)) {
+      return maybePayload.embedding;
     }
-    if (!values.every((entry) => typeof entry === 'number')) {
-      return null;
+
+    if (
+      Array.isArray(maybePayload.embeddings) &&
+      Array.isArray(maybePayload.embeddings[0]) &&
+      maybePayload.embeddings[0].every(isNumber)
+    ) {
+      return maybePayload.embeddings[0];
     }
-    return values;
+
+    return null;
   }
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }

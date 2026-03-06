@@ -2,8 +2,8 @@ import type { z } from 'zod';
 
 export interface HookResult {
   continue: true;
-  stopReason?: string;
   suppressOutput?: boolean;
+  stopReason?: string;
   systemMessage?: string;
   hookSpecificOutput?: {
     hookEventName: string;
@@ -20,24 +20,23 @@ export async function readStdinText(): Promise<string> {
 }
 
 export async function readJsonFromStdin<T>(schema: z.ZodType<T>): Promise<T | null> {
-  const text = await readStdinText();
-  if (!text) {
+  const rawText = await readStdinText();
+  if (!rawText) {
     return null;
   }
 
-  let parsedJson: unknown;
+  let parsed: unknown;
   try {
-    parsedJson = JSON.parse(text);
+    parsed = JSON.parse(rawText);
   } catch {
     return null;
   }
 
-  const parsed = schema.safeParse(parsedJson);
-  if (!parsed.success) {
+  const validated = schema.safeParse(parsed);
+  if (!validated.success) {
     return null;
   }
-
-  return parsed.data;
+  return validated.data;
 }
 
 export function writeHookOutput(payload: HookResult): void {

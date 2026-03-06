@@ -1,4 +1,9 @@
-.grepai
-.grepai/
 node_modules/
+.DS_Store
+plugins/memories/native/node_modules/
+plugins/memories/native/package-lock.json
+plugins/memories/.memories/
+coverage/
+
 .memories/
+implementation-stages/

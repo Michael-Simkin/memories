@@ -1,12 +1,7 @@
 :root {
   color: #dce2f0;
   background: #0f1320;
-  font-family:
-    Inter,
-    system-ui,
-    -apple-system,
-    Segoe UI,
-    sans-serif;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
 body {
@@ -21,8 +16,8 @@ main {
 
 .stats-bar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-bottom: 16px;
 }
 
@@ -212,11 +207,10 @@ main {
   align-items: center;
   color: #a8b6de;
   display: flex;
+  flex-wrap: wrap;
   font-size: 12px;
   gap: 6px;
   margin: 0 0 6px;
-  overflow-wrap: anywhere;
-  white-space: normal;
 }
 
 .memory-meta-label {
@@ -307,18 +301,15 @@ main {
   border-radius: 10px;
   font-size: 12px;
   max-height: 65vh;
-  overflow-x: hidden;
   overflow-y: auto;
   padding: 12px;
 }
 
 .log-list {
   display: grid;
-  gap: 10px;
+  gap: 4px;
   list-style: none;
   margin: 0;
-  max-width: 100%;
-  min-width: 0;
   padding: 0;
 }
 
@@ -326,26 +317,46 @@ main {
   background: #11172a;
   border: 1px solid #2a3558;
   border-radius: 8px;
-  box-sizing: border-box;
-  max-width: 100%;
-  padding: 10px;
-  width: 100%;
+  cursor: pointer;
+  padding: 6px 8px;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
-.log-item-header {
+.log-item:hover {
+  border-color: #3a4875;
+}
+
+.log-item:focus-visible {
+  outline: 2px solid #8fa1d2;
+  outline-offset: 2px;
+}
+
+.log-item-line {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  min-height: 20px;
+}
+
+.log-item.is-expanded .log-item-line {
   margin-bottom: 6px;
-  max-width: 100%;
-  min-width: 0;
+}
+
+.log-caret {
+  color: #9fb0da;
+  display: inline-flex;
+  font-size: 12px;
+  justify-content: center;
+  width: 12px;
 }
 
 .log-badge {
   border-radius: 999px;
-  font-size: 11px;
-  padding: 2px 8px;
+  font-size: 10px;
+  padding: 1px 7px;
 }
 
 .log-badge.source-hook {
@@ -356,6 +367,11 @@ main {
 .log-badge.source-operation {
   background: #2f4531;
   color: #d1f0d4;
+}
+
+.log-badge.source-system {
+  background: #53386d;
+  color: #f0ddff;
 }
 
 .log-badge.status-ok {
@@ -373,19 +389,36 @@ main {
   color: #f2e6b5;
 }
 
-.log-badge.status-unknown {
-  background: #363a4f;
-  color: #dce2f0;
-}
-
 .log-time {
   color: #99a7cf;
+  font-size: 11px;
   margin-left: auto;
 }
 
+.log-event {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.log-summary {
+  color: #d8e0fb;
+  flex: 1;
+  font-size: 11px;
+  min-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-expanded {
+  border-top: 1px solid #243052;
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+}
+
 .log-detail {
-  margin: 0 0 6px;
-  max-width: 100%;
+  margin: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -395,12 +428,7 @@ main {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin: 0 0 6px;
-  max-width: 100%;
-}
-
-.log-meta span {
-  overflow-wrap: anywhere;
+  margin: 0;
 }
 
 .log-data {
@@ -408,11 +436,15 @@ main {
   border: 1px solid #2b3657;
   border-radius: 8px;
   margin: 0;
-  max-width: 100%;
   overflow-wrap: anywhere;
   padding: 8px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.log-empty-payload {
+  color: #8f9ec8;
+  margin: 0;
 }
 
 .modal-overlay {
@@ -458,10 +490,6 @@ main {
   display: flex;
   gap: 12px;
   justify-content: space-between;
-}
-
-.pin-toggle-text {
-  line-height: 1.4;
 }
 
 .pin-toggle-control {
@@ -514,11 +542,6 @@ main {
 
 .pin-toggle-input:checked + .pin-toggle-slider::after {
   transform: translateX(22px);
-}
-
-.pin-toggle-input:focus-visible + .pin-toggle-slider {
-  outline: 2px solid #8fa1d2;
-  outline-offset: 2px;
 }
 
 .modal-actions {

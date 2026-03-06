@@ -1,12 +1,11 @@
 {
   "name": "memories",
-  "version": "0.2.11",
+  "version": "0.2.10",
   "description": "Project-scoped memory for Claude Code",
   "author": {
     "name": "Michael Simkin"
   },
   "repository": "https://github.com/Michael-Simkin/memories",
   "license": "MIT",
-  "keywords": ["memory", "retrieval", "hooks", "sqlite"],
-  "skills": "./skills"
+  "keywords": ["memory", "retrieval", "hooks", "sqlite"]
 }

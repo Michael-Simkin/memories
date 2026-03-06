@@ -8,12 +8,12 @@ export interface ApiErrorPayload {
 }
 
 export function sendError(
-  res: Response,
+  response: Response,
   status: number,
   code: string,
   message: string,
 ): Response<ApiErrorPayload> {
-  return res.status(status).json({
+  return response.status(status).json({
     error: {
       code,
       message,

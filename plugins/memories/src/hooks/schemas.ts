@@ -8,31 +8,27 @@ export const sessionStartPayloadSchema = z
   })
   .catchall(z.unknown());
 
-export const preToolUsePayloadSchema = z
-  .object({
-    cwd: z.string().optional(),
-    project_root: z.string().optional(),
-    session_id: z.string().optional(),
-    tool_name: z.string().optional(),
-    tool_input: z.record(z.string(), z.unknown()).optional(),
-  })
-  .catchall(z.unknown());
+export type SessionStartPayload = z.infer<typeof sessionStartPayloadSchema>;
 
 export const stopPayloadSchema = z
   .object({
     cwd: z.string().optional(),
     project_root: z.string().optional(),
     session_id: z.string().optional(),
-    transcript_path: z.string(),
+    transcript_path: z.string().trim().min(1),
     last_assistant_message: z.string().optional(),
     stop_hook_active: z.boolean().optional(),
   })
   .catchall(z.unknown());
 
+export type StopPayload = z.infer<typeof stopPayloadSchema>;
+
 export const sessionEndPayloadSchema = z
   .object({
     cwd: z.string().optional(),
     project_root: z.string().optional(),
-    session_id: z.string().optional(),
+    session_id: z.string().trim().min(1),
   })
   .catchall(z.unknown());
+
+export type SessionEndPayload = z.infer<typeof sessionEndPayloadSchema>;

@@ -1,105 +1,126 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import * as z from 'zod/v4';
+import { z } from 'zod';
 
-import { DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT } from '../shared/constants.js';
+import {
+  DEFAULT_MCP_ENGINE_TIMEOUT_MS,
+  DEFAULT_SEARCH_LIMIT,
+  MAX_SEARCH_LIMIT,
+} from '../shared/constants.js';
 import { isLoopback, readLockMetadata } from '../shared/lockfile.js';
-import { error } from '../shared/logger.js';
+import { logError } from '../shared/logger.js';
 import { formatMemoryRecallMarkdown } from '../shared/markdown.js';
 import { getProjectPaths, resolveProjectRoot } from '../shared/paths.js';
 import { searchResponseSchema } from '../shared/types.js';
 
-const toolInputFields = {
-  query: z.string().min(1),
+export const recallInvocationPolicyText =
+  'Use this tool by default before most non-trivial work. ' +
+  'Skip only for trivial context-free one-liners. ' +
+  'Re-run whenever task scope changes.';
+
+const recallInputFields = {
+  query: z.string().trim().min(1),
   project_root: z.string().optional(),
   limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
-  memory_types: z.array(z.enum(['fact', 'rule', 'decision', 'episode'])).optional(),
+  target_paths: z.array(z.string()).optional(),
   include_pinned: z.boolean().optional(),
+  memory_types: z.array(z.enum(['fact', 'rule', 'decision', 'episode'])).optional(),
 };
 
-const toolInputSchema = z.object(toolInputFields);
+export const recallInputSchema = z.object(recallInputFields);
 
-async function run(): Promise<void> {
+function parseTimeoutMs(rawValue: string | undefined): number {
+  const parsed = Number.parseInt(rawValue ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_MCP_ENGINE_TIMEOUT_MS;
+  }
+  return parsed;
+}
+
+export async function runRecall(rawInput: unknown): Promise<string> {
+  const parsed = recallInputSchema.parse(rawInput);
+  const projectRoot = resolveProjectRoot(parsed.project_root);
+  const lockPath = getProjectPaths(projectRoot).lockPath;
+  const lock = await readLockMetadata(lockPath);
+
+  if (!lock) {
+    throw new Error(`ENGINE_NOT_FOUND: lock metadata not found at ${lockPath}`);
+  }
+  if (!isLoopback(lock.host)) {
+    throw new Error(`ENGINE_NOT_LOOPBACK: ${lock.host}`);
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = parseTimeoutMs(process.env.MEMORIES_MCP_ENGINE_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`http://${lock.host}:${lock.port}/memories/search`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        query: parsed.query,
+        limit: parsed.limit ?? DEFAULT_SEARCH_LIMIT,
+        include_pinned: parsed.include_pinned ?? true,
+        target_paths: parsed.target_paths ?? [],
+        ...(parsed.memory_types ? { memory_types: parsed.memory_types } : {}),
+      }),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`${response.status}: ${response.statusText} ${body}`);
+    }
+
+    const payload = searchResponseSchema.parse(await response.json());
+    return formatMemoryRecallMarkdown({
+      query: payload.meta.query,
+      results: payload.results,
+      durationMs: payload.meta.duration_ms,
+      source: payload.meta.source,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`ENGINE_CALL_FAILED: ${message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export function createRecallMcpServer(): McpServer {
   const server = new McpServer({
     name: 'memories',
-    version: '0.1.0',
+    version: '0.2.10',
   });
 
   server.registerTool(
     'recall',
     {
-      description: 'Search memory engine and return markdown recall output.',
-      inputSchema: toolInputFields,
+      description:
+        'Retrieve relevant project memories and return canonical markdown recall sections. ' +
+        recallInvocationPolicyText,
+      inputSchema: recallInputFields,
     },
     async (rawInput: unknown) => {
-      const parsed = toolInputSchema.parse(rawInput);
-      const input = {
-        query: parsed.query,
-        project_root: parsed.project_root,
-        limit: parsed.limit ?? DEFAULT_SEARCH_LIMIT,
-        include_pinned: parsed.include_pinned ?? true,
-        memory_types: parsed.memory_types,
+      const markdown = await runRecall(rawInput);
+      return {
+        content: [{ type: 'text', text: markdown }],
       };
-      const projectRoot = resolveProjectRoot(input.project_root);
-      const lockPath = getProjectPaths(projectRoot).lockPath;
-      const lock = await readLockMetadata(lockPath);
-
-      if (!lock) {
-        throw new Error(`ENGINE_NOT_FOUND: lock file not found at ${lockPath}`);
-      }
-      if (!isLoopback(lock.host)) {
-        throw new Error(`INVALID_LOCK_HOST: ${lock.host}`);
-      }
-
-      const timeoutMs = Number.parseInt(process.env.MEMORIES_MCP_ENGINE_TIMEOUT_MS ?? '2500', 10);
-      const controller = new AbortController();
-      const timer = setTimeout(
-        () => controller.abort(),
-        Number.isFinite(timeoutMs) ? timeoutMs : 2500,
-      );
-
-      try {
-        const response = await fetch(`http://${lock.host}:${lock.port}/memories/search`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            include_pinned: input.include_pinned,
-            limit: input.limit,
-            query: input.query,
-            ...(input.memory_types ? { memory_types: input.memory_types } : {}),
-          }),
-        });
-        if (!response.ok) {
-          const body = await response.text();
-          throw new Error(`${response.status}: ${response.statusText} ${body}`);
-        }
-        const payload = searchResponseSchema.parse(await response.json());
-        const markdown = formatMemoryRecallMarkdown({
-          query: payload.meta.query,
-          results: payload.results,
-          durationMs: payload.meta.duration_ms,
-          source: payload.meta.source,
-        });
-        return {
-          content: [{ type: 'text', text: markdown }],
-        };
-      } catch (callError: unknown) {
-        const message = callError instanceof Error ? callError.message : String(callError);
-        throw new Error(`ENGINE_CALL_FAILED: ${message}`);
-      } finally {
-        clearTimeout(timer);
-      }
     },
   );
 
+  return server;
+}
+
+async function run(): Promise<void> {
+  const server = createRecallMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
-void run().catch((runError: unknown) => {
-  error('MCP server startup failed', {
-    error: runError instanceof Error ? runError.message : String(runError),
+void run().catch((error) => {
+  logError('MCP recall server failed to start', {
+    error: error instanceof Error ? error.message : String(error),
   });
   process.exit(1);
 });

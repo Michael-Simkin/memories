@@ -2,6 +2,7 @@ import picomatch from 'picomatch';
 
 import { DEFAULT_LEXICAL_K, DEFAULT_SEMANTIC_K } from '../shared/constants.js';
 import { normalizePathForMatch } from '../shared/fs-utils.js';
+import { applyTokenBudget } from '../shared/token-budget.js';
 import type { MemoryType, SearchResult } from '../shared/types.js';
 import type { MemoryStore } from '../storage/database.js';
 import type { EmbeddingClient } from './embeddings.js';
@@ -16,39 +17,53 @@ interface MatcherSpecificity {
   wildcardSegmentCount: number;
 }
 
+interface QueryOptions {
+  query: string;
+  limit: number;
+  targetPaths?: string[] | undefined;
+  memoryTypes?: MemoryType[] | undefined;
+  includePinned: boolean;
+  semanticK?: number | undefined;
+  lexicalK?: number | undefined;
+  responseTokenBudget?: number | undefined;
+}
+
 interface RankedPathMatch {
   effectRank: number;
   memory: SearchResult;
   specificity: MatcherSpecificity;
 }
 
+interface EmbeddingRow {
+  id: string;
+  memory_type: MemoryType;
+  content: string;
+  tags: string[];
+  is_pinned: boolean;
+  updated_at: string;
+  vector: number[];
+}
+
 function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length === 0 || b.length === 0 || a.length !== b.length) {
     return 0;
   }
+
   let dot = 0;
   let normA = 0;
   let normB = 0;
   for (let index = 0; index < a.length; index += 1) {
-    const ai = a[index] ?? 0;
-    const bi = b[index] ?? 0;
-    dot += ai * bi;
-    normA += ai * ai;
-    normB += bi * bi;
+    const left = a[index] ?? 0;
+    const right = b[index] ?? 0;
+    dot += left * right;
+    normA += left * left;
+    normB += right * right;
   }
+
   if (normA === 0 || normB === 0) {
     return 0;
   }
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-interface QueryOptions {
-  query: string;
-  limit: number;
-  memoryTypes?: MemoryType[] | undefined;
-  includePinned: boolean;
-  semanticK?: number | undefined;
-  lexicalK?: number | undefined;
 }
 
 export class RetrievalService {
@@ -61,87 +76,99 @@ export class RetrievalService {
   }
 
   public async search(options: QueryOptions): Promise<SearchResult[]> {
+    const pathMatches = this.findPathMatches(
+      options.targetPaths ?? [],
+      options.memoryTypes,
+      options.includePinned,
+    );
+
     const lexical = this.store.lexicalSearch({
       query: options.query,
       limit: options.lexicalK ?? DEFAULT_LEXICAL_K,
       includePinned: options.includePinned,
       ...(options.memoryTypes ? { memoryTypes: options.memoryTypes } : {}),
     });
-    const semantic = await this.semanticSearch(options);
-    return this.mergeHybrid({
+    const semantic = await this.semanticSearch({
+      query: options.query,
+      semanticK: options.semanticK ?? DEFAULT_SEMANTIC_K,
+      includePinned: options.includePinned,
+      ...(options.memoryTypes ? { memoryTypes: options.memoryTypes } : {}),
+    });
+    const hybrid = this.mergeHybrid({
       lexical,
       semantic,
       limit: options.limit,
     });
-  }
-
-  public async searchForPretool(input: {
-    query: string;
-    targetPaths: string[];
-    limit: number;
-    memoryTypes?: MemoryType[] | undefined;
-    includePinned: boolean;
-    semanticK?: number | undefined;
-    lexicalK?: number | undefined;
-  }): Promise<SearchResult[]> {
-    const pathMatches = this.findPathMatches(
-      input.targetPaths,
-      input.memoryTypes,
-      input.includePinned,
-    );
-    const hybrid = await this.search({
-      query: input.query,
-      limit: input.limit,
-      includePinned: input.includePinned,
-      ...(input.memoryTypes ? { memoryTypes: input.memoryTypes } : {}),
-      ...(typeof input.semanticK === 'number' ? { semanticK: input.semanticK } : {}),
-      ...(typeof input.lexicalK === 'number' ? { lexicalK: input.lexicalK } : {}),
-    });
 
     const merged: SearchResult[] = [];
-    const seen = new Set<string>();
+    const seenIds = new Set<string>();
+
     for (const result of pathMatches) {
-      seen.add(result.id);
-      merged.push(result);
-      if (merged.length >= input.limit) {
-        return merged;
-      }
-    }
-    for (const result of hybrid) {
-      if (seen.has(result.id)) {
+      if (seenIds.has(result.id)) {
         continue;
       }
       merged.push(result);
-      if (merged.length >= input.limit) {
+      seenIds.add(result.id);
+      if (merged.length >= options.limit) {
+        return merged;
+      }
+    }
+
+    for (const result of hybrid) {
+      if (seenIds.has(result.id)) {
+        continue;
+      }
+      merged.push(result);
+      seenIds.add(result.id);
+      if (merged.length >= options.limit) {
         break;
       }
     }
-    return merged;
+
+    const budgeted =
+      typeof options.responseTokenBudget === 'number' && options.responseTokenBudget > 0
+        ? applyTokenBudget(merged, options.responseTokenBudget)
+        : merged;
+    return budgeted.slice(0, options.limit);
   }
 
-  private async semanticSearch(options: QueryOptions): Promise<SearchResult[]> {
-    if (!this.embeddingClient.isConfigured() || options.query.trim().length === 0) {
+  private async semanticSearch(input: {
+    query: string;
+    semanticK: number;
+    memoryTypes?: MemoryType[] | undefined;
+    includePinned: boolean;
+  }): Promise<SearchResult[]> {
+    if (!this.embeddingClient.isConfigured() || !input.query.trim()) {
       return [];
     }
-    const queryVector = await this.embeddingClient.embed(options.query);
+
+    const queryVector = await this.embeddingClient.embed(input.query);
     if (!queryVector) {
       return [];
     }
 
-    const rows = this.store.listEmbeddings(options.memoryTypes, options.includePinned);
+    const rows = this.store.listEmbeddings(input.memoryTypes, input.includePinned) as EmbeddingRow[];
     return rows
       .filter((row) => row.vector.length === queryVector.length)
-      .map((row) => ({
-        id: row.id,
-        memory_type: row.memory_type,
-        content: row.content,
-        tags: row.tags,
-        score: cosineSimilarity(queryVector, row.vector),
-        is_pinned: row.is_pinned,
-        updated_at: row.updated_at,
-      }))
-      .sort((a, b) => this.sortSearchResults(a, b))
-      .slice(0, options.semanticK ?? DEFAULT_SEMANTIC_K);
+      .map((row) => {
+        const cosine = cosineSimilarity(queryVector, row.vector);
+        const normalizedScore = (cosine + 1) / 2;
+        const pathMatchers = this.store.getMemory(row.id)?.path_matchers.map((value) => value.path_matcher) ?? [];
+
+        return {
+          id: row.id,
+          memory_type: row.memory_type,
+          content: row.content,
+          tags: row.tags,
+          is_pinned: row.is_pinned,
+          path_matchers: pathMatchers,
+          score: normalizedScore,
+          source: 'hybrid' as const,
+          updated_at: row.updated_at,
+        };
+      })
+      .sort((left, right) => this.sortSearchResults(left, right))
+      .slice(0, input.semanticK);
   }
 
   private findPathMatches(
@@ -149,56 +176,64 @@ export class RetrievalService {
     memoryTypes: MemoryType[] | undefined,
     includePinned: boolean,
   ): SearchResult[] {
-    const normalizedPaths = targetPaths
-      .map((inputPath) => normalizePathForMatch(inputPath))
+    const normalizedTargets = targetPaths
+      .map((value) => normalizePathForMatch(value))
       .filter(Boolean);
-    if (normalizedPaths.length === 0) {
+    if (normalizedTargets.length === 0) {
       return [];
     }
 
-    const matchers = this.store.listPathMatchers();
-    const bestMatchSpecificityByMemoryId = new Map<string, MatcherSpecificity>();
-    for (const matcher of matchers) {
-      const matcherFn = picomatch(matcher.path_matcher, { dot: true });
-      const isMatch = normalizedPaths.some((targetPath) => matcherFn(targetPath));
-      if (!isMatch) {
+    const bestMatchByMemoryId = new Map<string, MatcherSpecificity>();
+    for (const matcher of this.store.listPathMatchers()) {
+      if (!this.matchesAnyTarget(matcher.path_matcher, normalizedTargets)) {
         continue;
       }
       const specificity = this.computeMatcherSpecificity(matcher.path_matcher);
-      const current = bestMatchSpecificityByMemoryId.get(matcher.memory_id);
-      if (!current || this.sortByMatcherSpecificity(specificity, current) < 0) {
-        bestMatchSpecificityByMemoryId.set(matcher.memory_id, specificity);
+      const existing = bestMatchByMemoryId.get(matcher.memory_id);
+      if (!existing || this.sortByMatcherSpecificity(specificity, existing) < 0) {
+        bestMatchByMemoryId.set(matcher.memory_id, specificity);
       }
     }
 
-    const ids = [...bestMatchSpecificityByMemoryId.keys()];
-    if (ids.length === 0) {
+    const memoryIds = [...bestMatchByMemoryId.keys()];
+    if (memoryIds.length === 0) {
       return [];
     }
 
-    const rankedPathMatches: RankedPathMatch[] = this.store
-      .getMemoriesByIds(ids)
+    const ranked = this.store
+      .getMemoriesByIds(memoryIds)
       .filter((memory) => (memoryTypes ? memoryTypes.includes(memory.memory_type) : true))
       .filter((memory) => (includePinned ? true : !memory.is_pinned))
       .flatMap((memory) => {
-        const specificity = bestMatchSpecificityByMemoryId.get(memory.id);
+        const specificity = bestMatchByMemoryId.get(memory.id);
         if (!specificity) {
           return [];
         }
         return [
           {
-            effectRank: this.classifyPolicyEffect(memory),
             memory,
             specificity,
+            effectRank: this.classifyPolicyEffect(memory),
           },
         ];
       });
 
-    rankedPathMatches.sort((a, b) => this.sortPathMatches(a, b));
-    return rankedPathMatches.map((entry, index) => ({
+    ranked.sort((left, right) => this.sortPathMatches(left, right));
+
+    return ranked.map((entry, index) => ({
       ...entry.memory,
+      source: 'path',
       score: 1 / (index + 1),
     }));
+  }
+
+  private matchesAnyTarget(pathMatcher: string, targets: string[]): boolean {
+    try {
+      const matcher = picomatch(pathMatcher, { dot: true });
+      return targets.some((target) => matcher(target));
+    } catch {
+      return false;
+    }
   }
 
   private mergeHybrid(input: {
@@ -206,7 +241,7 @@ export class RetrievalService {
     semantic: SearchResult[];
     limit: number;
   }): SearchResult[] {
-    const byId = new Map<
+    const byMemoryId = new Map<
       string,
       {
         bestRank: number;
@@ -215,23 +250,26 @@ export class RetrievalService {
       }
     >();
 
-    const addRankedList = (results: SearchResult[]): void => {
-      for (let index = 0; index < results.length; index += 1) {
-        const result = results[index];
+    const addRankedBranch = (branch: SearchResult[]): void => {
+      for (let index = 0; index < branch.length; index += 1) {
+        const result = branch[index];
         if (!result) {
           continue;
         }
+
         const rank = index + 1;
         const contribution = 1 / (RRF_RANK_CONSTANT + rank);
-        const current = byId.get(result.id);
+        const current = byMemoryId.get(result.id);
+
         if (!current) {
-          byId.set(result.id, {
-            bestRank: rank,
+          byMemoryId.set(result.id, {
             representative: result,
+            bestRank: rank,
             rrfScore: contribution,
           });
           continue;
         }
+
         current.rrfScore += contribution;
         if (rank < current.bestRank) {
           current.bestRank = rank;
@@ -240,60 +278,69 @@ export class RetrievalService {
       }
     };
 
-    addRankedList(input.lexical);
-    addRankedList(input.semantic);
+    addRankedBranch(input.lexical);
+    addRankedBranch(input.semantic);
 
-    return [...byId.values()]
+    return [...byMemoryId.values()]
       .map((entry) => ({
         ...entry.representative,
         score: entry.rrfScore,
+        source: 'hybrid' as const,
       }))
-      .sort((a, b) => this.sortSearchResults(a, b))
+      .sort((left, right) => this.sortSearchResults(left, right))
       .slice(0, input.limit);
   }
 
-  private sortSearchResults(a: SearchResult, b: SearchResult): number {
-    if (a.score !== b.score) {
-      return b.score - a.score;
+  private sortSearchResults(left: SearchResult, right: SearchResult): number {
+    if (left.score !== right.score) {
+      return right.score - left.score;
     }
-    return Date.parse(b.updated_at) - Date.parse(a.updated_at);
+    const timeOrder = right.updated_at.localeCompare(left.updated_at);
+    if (timeOrder !== 0) {
+      return timeOrder;
+    }
+    return left.id.localeCompare(right.id);
   }
 
-  private sortPathMatches(a: RankedPathMatch, b: RankedPathMatch): number {
-    if (a.effectRank !== b.effectRank) {
-      return b.effectRank - a.effectRank;
+  private sortPathMatches(left: RankedPathMatch, right: RankedPathMatch): number {
+    if (left.effectRank !== right.effectRank) {
+      return right.effectRank - left.effectRank;
     }
-    const specificityOrder = this.sortByMatcherSpecificity(a.specificity, b.specificity);
+
+    const specificityOrder = this.sortByMatcherSpecificity(left.specificity, right.specificity);
     if (specificityOrder !== 0) {
       return specificityOrder;
     }
-    if (a.memory.is_pinned !== b.memory.is_pinned) {
-      return a.memory.is_pinned ? -1 : 1;
+
+    if (left.memory.is_pinned !== right.memory.is_pinned) {
+      return left.memory.is_pinned ? -1 : 1;
     }
-    return Date.parse(b.memory.updated_at) - Date.parse(a.memory.updated_at);
+
+    const timeOrder = right.memory.updated_at.localeCompare(left.memory.updated_at);
+    if (timeOrder !== 0) {
+      return timeOrder;
+    }
+    return left.memory.id.localeCompare(right.memory.id);
   }
 
-  private sortByMatcherSpecificity(a: MatcherSpecificity, b: MatcherSpecificity): number {
-    if (a.scopeRank !== b.scopeRank) {
-      return b.scopeRank - a.scopeRank;
+  private sortByMatcherSpecificity(left: MatcherSpecificity, right: MatcherSpecificity): number {
+    if (left.scopeRank !== right.scopeRank) {
+      return right.scopeRank - left.scopeRank;
     }
-    if (a.literalSegmentCount !== b.literalSegmentCount) {
-      return b.literalSegmentCount - a.literalSegmentCount;
+    if (left.literalSegmentCount !== right.literalSegmentCount) {
+      return right.literalSegmentCount - left.literalSegmentCount;
     }
-    if (a.wildcardSegmentCount !== b.wildcardSegmentCount) {
-      return a.wildcardSegmentCount - b.wildcardSegmentCount;
+    if (left.wildcardSegmentCount !== right.wildcardSegmentCount) {
+      return left.wildcardSegmentCount - right.wildcardSegmentCount;
     }
-    if (a.hasDoubleStar !== b.hasDoubleStar) {
-      return a.hasDoubleStar ? 1 : -1;
+    if (left.hasDoubleStar !== right.hasDoubleStar) {
+      return left.hasDoubleStar ? 1 : -1;
     }
-    if (a.matcherLength !== b.matcherLength) {
-      return b.matcherLength - a.matcherLength;
-    }
-    return 0;
+    return right.matcherLength - left.matcherLength;
   }
 
-  private computeMatcherSpecificity(pattern: string): MatcherSpecificity {
-    const normalized = normalizePathForMatch(pattern);
+  private computeMatcherSpecificity(pathMatcher: string): MatcherSpecificity {
+    const normalized = normalizePathForMatch(pathMatcher);
     const segments = normalized.split('/').filter(Boolean);
     const hasDoubleStar = normalized.includes('**');
     const wildcardSegmentCount = segments.reduce((count, segment) => {
@@ -301,8 +348,13 @@ export class RetrievalService {
     }, 0);
     const literalSegmentCount = segments.length - wildcardSegmentCount;
     const hasGlob = this.hasGlobChars(normalized);
-    const isLiteral = !hasGlob;
-    const scopeRank = isLiteral ? (this.looksFileLikePath(normalized) ? 4 : 3) : hasDoubleStar ? 1 : 2;
+
+    let scopeRank = 1;
+    if (!hasGlob) {
+      scopeRank = this.looksFileLikePath(normalized) ? 4 : 3;
+    } else if (!hasDoubleStar) {
+      scopeRank = 2;
+    }
 
     return {
       hasDoubleStar,
@@ -317,14 +369,15 @@ export class RetrievalService {
     if (memory.memory_type !== 'rule') {
       return 0;
     }
+
     const text = `${memory.content} ${memory.tags.join(' ')}`.toLowerCase();
-    const hasNegativeInstruction =
-      /\b(do not|don't|never|must not|forbidden|prohibit|cannot|can't)\b/.test(text);
-    const hasEditVerb = /\b(edit|modify|change|touch|delete|remove|overwrite|write)\b/.test(text);
-    if (hasNegativeInstruction && hasEditVerb) {
+    if (/\b(do not|don't|never|must not|forbidden|deny|prohibit|cannot|can't)\b/.test(text)) {
+      return 4;
+    }
+    if (/\b(must|always|required|enforce|only)\b/.test(text)) {
       return 3;
     }
-    if (/\b(must|always|required|enforce|only|policy)\b/.test(text)) {
+    if (/\b(prefer|should|recommended|ideally)\b/.test(text)) {
       return 2;
     }
     return 1;
@@ -335,10 +388,7 @@ export class RetrievalService {
   }
 
   private looksFileLikePath(value: string): boolean {
-    const base = value.split('/').filter(Boolean).at(-1) ?? '';
-    if (!base) {
-      return false;
-    }
-    return base.includes('.') || base.startsWith('.');
+    const lastSegment = value.split('/').filter(Boolean).at(-1) ?? '';
+    return Boolean(lastSegment) && (lastSegment.includes('.') || lastSegment.startsWith('.'));
   }
 }

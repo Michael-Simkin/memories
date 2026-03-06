@@ -1,9 +1,9 @@
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
+import path from 'node:path';
 
 import { ulid } from 'ulid';
 
-import { EMBEDDING_DIMENSIONS } from '../shared/constants.js';
-import { warn } from '../shared/logger.js';
+import { logWarn } from '../shared/logger.js';
 import type {
   AddMemoryInput,
   MemoryRecord,
@@ -12,6 +12,32 @@ import type {
   SearchResult,
   UpdateMemoryInput,
 } from '../shared/types.js';
+
+interface StatementRunResult {
+  changes: number;
+}
+
+interface SqliteStatement<TRow = Record<string, unknown>> {
+  all(...params: unknown[]): TRow[];
+  get(...params: unknown[]): TRow | undefined;
+  run(...params: unknown[]): StatementRunResult;
+}
+
+interface SqliteDatabase {
+  close(): void;
+  exec(sql: string): void;
+  loadExtension(path: string): void;
+  pragma(command: string): unknown;
+  prepare<TRow = Record<string, unknown>>(sql: string): SqliteStatement<TRow>;
+  transaction<TArgs extends unknown[], TResult>(fn: (...args: TArgs) => TResult): (...args: TArgs) => TResult;
+}
+
+type BetterSqlite3Constructor = new (
+  filename: string,
+  options?: {
+    timeout?: number;
+  },
+) => SqliteDatabase;
 
 interface MemoryRow {
   id: string;
@@ -42,64 +68,167 @@ interface MemoryPathMatcherRow {
   path_matcher: string;
 }
 
-const STOP_WORDS = new Set<string>([
-  'a',
-  'an',
-  'and',
-  'are',
-  'as',
-  'at',
-  'be',
-  'by',
-  'for',
-  'from',
-  'has',
-  'he',
-  'in',
-  'is',
-  'it',
-  'its',
-  'of',
-  'on',
-  'or',
-  'that',
-  'the',
-  'to',
-  'was',
-  'were',
-  'will',
-  'with',
-]);
+function loadBetterSqlite3(pluginRoot: string): BetterSqlite3Constructor {
+  const nativeRoot = path.join(pluginRoot, 'native');
+  const requireFromStorage = createRequire(import.meta.url);
+
+  let resolvedPath: string;
+  try {
+    resolvedPath = requireFromStorage.resolve('better-sqlite3', { paths: [nativeRoot] });
+  } catch (error) {
+    throw new Error(
+      `better-sqlite3 is missing from runtime native dependencies at ${nativeRoot}. ` +
+        `Run engine startup to install dependencies. ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+    );
+  }
+
+  const loaded = requireFromStorage(resolvedPath) as unknown;
+  const constructor = (
+    typeof loaded === 'object' &&
+    loaded !== null &&
+    'default' in loaded &&
+    typeof (loaded as { default: unknown }).default === 'function'
+      ? (loaded as { default: unknown }).default
+      : loaded
+  ) as BetterSqlite3Constructor;
+
+  if (typeof constructor !== 'function') {
+    throw new Error(`better-sqlite3 resolved at ${resolvedPath} but did not export a constructor`);
+  }
+
+  return constructor;
+}
+
+function parseTags(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter((value): value is string => typeof value === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function parseVector(raw: string): number[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter((value): value is number => typeof value === 'number');
+  } catch {
+    return [];
+  }
+}
+
+function normalizeMatchers(matchers: PathMatcherInput[]): PathMatcherInput[] {
+  const seen = new Set<string>();
+  const normalized: PathMatcherInput[] = [];
+
+  for (const matcher of matchers) {
+    const value = matcher.path_matcher.trim();
+    if (!value || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    normalized.push({ path_matcher: value });
+  }
+
+  return normalized;
+}
+
+function extractTerms(query: string): string[] {
+  const terms = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 2);
+  return [...new Set(terms)];
+}
+
+function makeTagFtsQuery(terms: string[]): string {
+  return terms.map((term) => `"${term.replaceAll('"', '')}"`).join(' OR ');
+}
+
+function clamp01(value: number): number {
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 1) {
+    return 1;
+  }
+  return value;
+}
+
+function normalizeBm25(value: number, range: { min: number; max: number }): number {
+  const magnitude = Math.abs(value);
+  if (range.max <= range.min) {
+    return 1;
+  }
+  return clamp01(1 - (magnitude - range.min) / (range.max - range.min));
+}
+
+function computeBm25Range(rows: LexicalRow[]): { min: number; max: number } {
+  if (rows.length === 0) {
+    return { min: 0, max: 0 };
+  }
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const row of rows) {
+    const magnitude = Math.abs(row.score);
+    if (magnitude < min) {
+      min = magnitude;
+    }
+    if (magnitude > max) {
+      max = magnitude;
+    }
+  }
+  return { min, max };
+}
+
+export interface MemoryStoreOptions {
+  dbPath: string;
+  pluginRoot: string;
+  sqliteVecExtensionPath?: string | null;
+  embeddingDimensions: number;
+}
 
 export class MemoryStore {
-  private readonly db: DatabaseSync;
+  private readonly database: SqliteDatabase;
   private readonly vecEnabled: boolean;
+  private readonly embeddingDimensions: number;
 
-  public constructor(dbPath: string, vecExtensionPath?: string | null) {
-    this.db = new DatabaseSync(dbPath, {
-      allowExtension: true,
-      enableForeignKeyConstraints: true,
+  public constructor(options: MemoryStoreOptions) {
+    this.embeddingDimensions = options.embeddingDimensions;
+    const BetterSqlite3 = loadBetterSqlite3(options.pluginRoot);
+
+    this.database = new BetterSqlite3(options.dbPath, {
       timeout: 5000,
     });
-    this.db.exec('PRAGMA journal_mode = WAL');
-    this.vecEnabled = this.tryEnableVec(vecExtensionPath ?? null);
-    this.initialize();
+    this.database.pragma('foreign_keys = ON');
+    this.database.pragma('journal_mode = WAL');
+
+    this.initializeSchema();
+    this.vecEnabled = this.tryEnableVec(options.sqliteVecExtensionPath ?? null);
+    this.initializeVecSchemaIfEnabled();
   }
 
   public close(): void {
-    this.db.close();
+    this.database.close();
   }
 
   public memoryCount(): number {
-    const row = this.db.prepare('SELECT COUNT(*) as count FROM memories').get() as unknown as {
-      count: number;
-    };
-    return row.count;
+    const row = this.database.prepare<{ count: number }>('SELECT COUNT(*) AS count FROM memories').get();
+    return row?.count ?? 0;
   }
 
   public listMemories(limit: number, offset: number): MemoryRecord[] {
-    const rows = this.db
-      .prepare(
+    const rows = this.database
+      .prepare<MemoryRow>(
         `
           SELECT id, memory_type, content, tags_json, is_pinned, created_at, updated_at
           FROM memories
@@ -107,29 +236,27 @@ export class MemoryStore {
           LIMIT ? OFFSET ?
         `,
       )
-      .all(limit, offset) as unknown as MemoryRow[];
+      .all(limit, offset);
     return rows.map((row) => this.inflateMemory(row));
   }
 
   public getMemory(id: string): MemoryRecord | null {
-    const row = this.db
-      .prepare(
+    const row = this.database
+      .prepare<MemoryRow>(
         `
           SELECT id, memory_type, content, tags_json, is_pinned, created_at, updated_at
           FROM memories
           WHERE id = ?
         `,
       )
-      .get(id) as unknown as MemoryRow | undefined;
-    if (!row) {
-      return null;
-    }
-    return this.inflateMemory(row);
+      .get(id);
+
+    return row ? this.inflateMemory(row) : null;
   }
 
   public getPinnedMemories(): SearchResult[] {
-    const rows = this.db
-      .prepare(
+    const rows = this.database
+      .prepare<Pick<MemoryRow, 'id' | 'memory_type' | 'content' | 'tags_json' | 'is_pinned' | 'updated_at'>>(
         `
           SELECT id, memory_type, content, tags_json, is_pinned, updated_at
           FROM memories
@@ -137,59 +264,76 @@ export class MemoryStore {
           ORDER BY updated_at DESC
         `,
       )
-      .all() as unknown as Array<
-      Pick<MemoryRow, 'id' | 'memory_type' | 'content' | 'tags_json' | 'is_pinned' | 'updated_at'>
-    >;
+      .all();
+
     return rows.map((row) => ({
       id: row.id,
       memory_type: row.memory_type,
       content: row.content,
-      tags: this.parseTags(row.tags_json),
-      score: 1,
+      tags: parseTags(row.tags_json),
       is_pinned: row.is_pinned === 1,
+      path_matchers: this.getPathMatchersByMemoryId(row.id),
+      score: 1,
+      source: 'hybrid',
       updated_at: row.updated_at,
     }));
   }
 
-  public createMemory(input: AddMemoryInput): MemoryRecord {
+  public createMemory(input: AddMemoryInput, embeddingVector?: number[] | null): MemoryRecord {
     const now = new Date().toISOString();
-    const id = ulid();
-    const tagsJson = JSON.stringify(input.tags);
+    const memoryId = ulid();
+    const normalizedTags = input.tags.map((tag) => tag.trim()).filter(Boolean);
+    const normalizedMatchers = normalizeMatchers(input.path_matchers);
 
-    this.withTransaction(() => {
-      this.db
+    const transaction = this.database.transaction(() => {
+      this.database
         .prepare(
           `
             INSERT INTO memories (id, memory_type, content, tags_json, is_pinned, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
           `,
         )
-        .run(id, input.memory_type, input.content, tagsJson, input.is_pinned ? 1 : 0, now, now);
-      this.syncFts(id, input.content, input.tags);
-      this.replacePathMatchers(id, input.path_matchers, now);
-    });
+        .run(
+          memoryId,
+          input.memory_type,
+          input.content,
+          JSON.stringify(normalizedTags),
+          input.is_pinned ? 1 : 0,
+          now,
+          now,
+        );
 
-    const created = this.getMemory(id);
+      this.syncFts(memoryId, normalizedTags);
+      this.replacePathMatchers(memoryId, normalizedMatchers, now);
+      this.syncEmbedding(memoryId, embeddingVector, now);
+    });
+    transaction();
+
+    const created = this.getMemory(memoryId);
     if (!created) {
-      throw new Error('Created memory missing after transaction');
+      throw new Error('Memory was not found after create transaction');
     }
     return created;
   }
 
-  public updateMemory(id: string, input: UpdateMemoryInput): MemoryRecord | null {
-    const current = this.getMemory(id);
+  public updateMemory(
+    memoryId: string,
+    updates: UpdateMemoryInput,
+    embeddingVector?: number[] | null,
+  ): MemoryRecord | null {
+    const current = this.getMemory(memoryId);
     if (!current) {
       return null;
     }
-    const next = {
-      content: input.content ?? current.content,
-      is_pinned: input.is_pinned ?? current.is_pinned,
-      tags: input.tags ?? current.tags,
-      updated_at: new Date().toISOString(),
-    };
 
-    this.withTransaction(() => {
-      this.db
+    const nextContent = updates.content ?? current.content;
+    const nextTags =
+      updates.tags?.map((tag) => tag.trim()).filter(Boolean) ?? [...current.tags.map((tag) => tag.trim())];
+    const nextPinned = updates.is_pinned ?? current.is_pinned;
+    const now = new Date().toISOString();
+
+    const transaction = this.database.transaction(() => {
+      this.database
         .prepare(
           `
             UPDATE memories
@@ -197,27 +341,30 @@ export class MemoryStore {
             WHERE id = ?
           `,
         )
-        .run(next.content, JSON.stringify(next.tags), next.is_pinned ? 1 : 0, next.updated_at, id);
-      this.syncFts(id, next.content, next.tags);
-      if (input.path_matchers) {
-        this.replacePathMatchers(id, input.path_matchers, next.updated_at);
-      }
-    });
+        .run(nextContent, JSON.stringify(nextTags), nextPinned ? 1 : 0, now, memoryId);
 
-    return this.getMemory(id);
+      this.syncFts(memoryId, nextTags);
+      if (updates.path_matchers) {
+        this.replacePathMatchers(memoryId, normalizeMatchers(updates.path_matchers), now);
+      }
+      this.syncEmbedding(memoryId, embeddingVector, now);
+    });
+    transaction();
+
+    return this.getMemory(memoryId);
   }
 
-  public deleteMemory(id: string): boolean {
-    const result = this.withTransaction(() => {
-      this.db.prepare('DELETE FROM memory_path_matchers WHERE memory_id = ?').run(id);
-      this.db.prepare('DELETE FROM memory_fts WHERE id = ?').run(id);
-      this.db.prepare('DELETE FROM memory_embeddings WHERE memory_id = ?').run(id);
+  public deleteMemory(memoryId: string): boolean {
+    const transaction = this.database.transaction(() => {
+      this.database.prepare('DELETE FROM memory_path_matchers WHERE memory_id = ?').run(memoryId);
+      this.database.prepare('DELETE FROM memory_fts WHERE id = ?').run(memoryId);
+      this.database.prepare('DELETE FROM memory_embeddings WHERE memory_id = ?').run(memoryId);
       if (this.vecEnabled) {
-        this.db.prepare('DELETE FROM vec_memory WHERE id = ?').run(id);
+        this.database.prepare('DELETE FROM vec_memory WHERE id = ?').run(memoryId);
       }
-      return this.db.prepare('DELETE FROM memories WHERE id = ?').run(id).changes > 0;
+      return this.database.prepare('DELETE FROM memories WHERE id = ?').run(memoryId).changes > 0;
     });
-    return result;
+    return transaction();
   }
 
   public lexicalSearch(input: {
@@ -226,10 +373,12 @@ export class MemoryStore {
     memoryTypes?: MemoryType[];
     includePinned: boolean;
   }): SearchResult[] {
-    const normalizedQuery = input.query.trim();
-    if (normalizedQuery.length === 0) {
-      const rows = this.db
-        .prepare(
+    const trimmedQuery = input.query.trim();
+    if (!trimmedQuery) {
+      const rows = this.database
+        .prepare<
+          Pick<MemoryRow, 'id' | 'memory_type' | 'content' | 'tags_json' | 'is_pinned' | 'updated_at'>
+        >(
           `
             SELECT id, memory_type, content, tags_json, is_pinned, updated_at
             FROM memories
@@ -238,9 +387,7 @@ export class MemoryStore {
             LIMIT ?
           `,
         )
-        .all(input.limit) as unknown as Array<
-        Pick<MemoryRow, 'id' | 'memory_type' | 'content' | 'tags_json' | 'is_pinned' | 'updated_at'>
-      >;
+        .all(input.limit);
 
       return rows
         .filter((row) => !input.memoryTypes || input.memoryTypes.includes(row.memory_type))
@@ -248,23 +395,25 @@ export class MemoryStore {
           id: row.id,
           memory_type: row.memory_type,
           content: row.content,
-          tags: this.parseTags(row.tags_json),
-          score: 0.1,
+          tags: parseTags(row.tags_json),
           is_pinned: row.is_pinned === 1,
+          path_matchers: this.getPathMatchersByMemoryId(row.id),
+          score: 0.1,
+          source: 'hybrid' as const,
           updated_at: row.updated_at,
         }));
     }
 
-    const terms = this.extractSearchTerms(normalizedQuery);
+    const terms = extractTerms(trimmedQuery);
     if (terms.length === 0) {
       return [];
     }
 
     const candidateLimit = Math.min(Math.max(input.limit * 3, input.limit), 200);
-    const rows = this.db
-      .prepare(
+    const rows = this.database
+      .prepare<LexicalRow>(
         `
-          SELECT m.id, m.memory_type, m.content, m.tags_json, m.is_pinned, m.created_at, m.updated_at, bm25(memory_fts) as score
+          SELECT m.id, m.memory_type, m.content, m.tags_json, m.is_pinned, m.created_at, m.updated_at, bm25(memory_fts) AS score
           FROM memory_fts
           JOIN memories m ON m.id = memory_fts.id
           WHERE memory_fts MATCH ?
@@ -273,36 +422,34 @@ export class MemoryStore {
           LIMIT ?
         `,
       )
-      .all(this.makeFtsQueryFromTerms(terms), candidateLimit) as unknown as LexicalRow[];
+      .all(makeTagFtsQuery(terms), candidateLimit);
 
-    const bm25Range = this.computeBm25Range(rows);
-    const loweredQuery = normalizedQuery.toLowerCase();
+    const bm25Range = computeBm25Range(rows);
 
     return rows
       .filter((row) => !input.memoryTypes || input.memoryTypes.includes(row.memory_type))
       .map((row) => {
-        const tags = this.parseTags(row.tags_json);
-        const searchableText = `${row.content} ${tags.join(' ')}`.toLowerCase();
+        const tags = parseTags(row.tags_json);
+        const loweredTags = tags.join(' ').toLowerCase();
         const matchedTerms = terms.reduce((count, term) => {
-          return searchableText.includes(term) ? count + 1 : count;
+          return loweredTags.includes(term) ? count + 1 : count;
         }, 0);
-        const coverageScore = matchedTerms / terms.length;
-        const bm25Score = this.normalizeBm25(row.score, bm25Range);
-        const phraseBoost =
-          loweredQuery.length >= 3 && searchableText.includes(loweredQuery) ? 0.05 : 0;
-        const score = this.clamp01(0.7 * bm25Score + 0.25 * coverageScore + phraseBoost);
+        const coverage = matchedTerms / terms.length;
+        const score = clamp01(0.8 * normalizeBm25(row.score, bm25Range) + 0.2 * coverage);
 
         return {
           id: row.id,
           memory_type: row.memory_type,
           content: row.content,
           tags,
-          score,
           is_pinned: row.is_pinned === 1,
+          path_matchers: this.getPathMatchersByMemoryId(row.id),
+          score,
+          source: 'hybrid' as const,
           updated_at: row.updated_at,
         };
       })
-      .sort((a, b) => b.score - a.score || Date.parse(b.updated_at) - Date.parse(a.updated_at))
+      .sort((left, right) => right.score - left.score || right.updated_at.localeCompare(left.updated_at))
       .slice(0, input.limit);
   }
 
@@ -318,8 +465,10 @@ export class MemoryStore {
     updated_at: string;
     vector: number[];
   }> {
-    const rows = this.db
-      .prepare(
+    const rows = this.database
+      .prepare<
+        EmbeddingRow & Pick<MemoryRow, 'memory_type' | 'content' | 'tags_json' | 'is_pinned'>
+      >(
         `
           SELECT e.memory_id, e.vector_json, e.updated_at,
                  m.memory_type, m.content, m.tags_json, m.is_pinned
@@ -328,9 +477,7 @@ export class MemoryStore {
           WHERE (${includePinned ? '1=1' : 'm.is_pinned = 0'})
         `,
       )
-      .all() as unknown as Array<
-      EmbeddingRow & Pick<MemoryRow, 'memory_type' | 'content' | 'tags_json' | 'is_pinned'>
-    >;
+      .all();
 
     return rows
       .filter((row) => !memoryTypes || memoryTypes.includes(row.memory_type))
@@ -338,104 +485,76 @@ export class MemoryStore {
         id: row.memory_id,
         memory_type: row.memory_type,
         content: row.content,
-        tags: this.parseTags(row.tags_json),
+        tags: parseTags(row.tags_json),
         is_pinned: row.is_pinned === 1,
         updated_at: row.updated_at,
-        vector: this.parseVector(row.vector_json),
+        vector: parseVector(row.vector_json),
       }));
   }
 
   public upsertEmbedding(memoryId: string, vector: number[]): void {
     const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `
-          INSERT INTO memory_embeddings (memory_id, vector_json, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(memory_id) DO UPDATE SET vector_json = excluded.vector_json, updated_at = excluded.updated_at
-        `,
-      )
-      .run(memoryId, JSON.stringify(vector), now);
-
-    if (this.vecEnabled) {
-      if (vector.length !== EMBEDDING_DIMENSIONS) {
-        warn('Skipping vec_memory sync due embedding dimension mismatch', {
-          actual: vector.length,
-          expected: EMBEDDING_DIMENSIONS,
-          memoryId,
-        });
-        return;
-      }
-      try {
-        this.db.prepare('DELETE FROM vec_memory WHERE id = ?').run(memoryId);
-        this.db
-          .prepare(
-            `
-              INSERT INTO vec_memory (id, vector)
-              VALUES (?, ?)
-            `,
-          )
-          .run(memoryId, JSON.stringify(vector));
-      } catch (error) {
-        warn('Failed to sync vec_memory row', {
-          error: error instanceof Error ? error.message : String(error),
-          memoryId,
-        });
-      }
-    }
+    this.syncEmbedding(memoryId, vector, now);
   }
 
   public removeEmbedding(memoryId: string): void {
-    this.db.prepare('DELETE FROM memory_embeddings WHERE memory_id = ?').run(memoryId);
-    if (this.vecEnabled) {
-      this.db.prepare('DELETE FROM vec_memory WHERE id = ?').run(memoryId);
-    }
+    this.syncEmbedding(memoryId, null, new Date().toISOString());
   }
 
   public listPathMatchers(): MemoryPathMatcherRow[] {
-    return this.db
-      .prepare(
+    return this.database
+      .prepare<MemoryPathMatcherRow>(
         `
           SELECT memory_id, path_matcher
           FROM memory_path_matchers
           ORDER BY created_at DESC
         `,
       )
-      .all() as unknown as MemoryPathMatcherRow[];
+      .all();
   }
 
   public getMemoriesByIds(ids: string[]): SearchResult[] {
     if (ids.length === 0) {
       return [];
     }
-    const placeholders = ids.map(() => '?').join(',');
-    const rows = this.db
-      .prepare(
+
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = this.database
+      .prepare<
+        Pick<MemoryRow, 'id' | 'memory_type' | 'content' | 'tags_json' | 'is_pinned' | 'updated_at'>
+      >(
         `
           SELECT id, memory_type, content, tags_json, is_pinned, updated_at
           FROM memories
           WHERE id IN (${placeholders})
         `,
       )
-      .all(...ids) as unknown as Array<
-      Pick<MemoryRow, 'id' | 'memory_type' | 'content' | 'tags_json' | 'is_pinned' | 'updated_at'>
-    >;
+      .all(...ids);
 
     const byId = new Map(rows.map((row) => [row.id, row]));
-    const ordered = ids.map((id) => byId.get(id)).filter(Boolean) as typeof rows;
-    return ordered.map((row) => ({
-      id: row.id,
-      memory_type: row.memory_type,
-      content: row.content,
-      tags: this.parseTags(row.tags_json),
-      score: 1,
-      is_pinned: row.is_pinned === 1,
-      updated_at: row.updated_at,
-    }));
+    return ids.flatMap((id) => {
+      const row = byId.get(id);
+      if (!row) {
+        return [];
+      }
+      return [
+        {
+          id: row.id,
+          memory_type: row.memory_type,
+          content: row.content,
+          tags: parseTags(row.tags_json),
+          is_pinned: row.is_pinned === 1,
+          path_matchers: this.getPathMatchersByMemoryId(row.id),
+          score: 1,
+          source: 'hybrid' as const,
+          updated_at: row.updated_at,
+        },
+      ];
+    });
   }
 
-  private initialize(): void {
-    this.db.exec(`
+  private initializeSchema(): void {
+    this.database.exec(`
       CREATE TABLE IF NOT EXISTS memories (
         id TEXT PRIMARY KEY,
         memory_type TEXT NOT NULL,
@@ -456,13 +575,12 @@ export class MemoryStore {
         created_at TEXT NOT NULL
       );
 
-      CREATE INDEX IF NOT EXISTS idx_mpm_path_matcher ON memory_path_matchers(path_matcher);
-      CREATE INDEX IF NOT EXISTS idx_mpm_memory_id ON memory_path_matchers(memory_id);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_mpm_unique ON memory_path_matchers(memory_id, path_matcher);
+      CREATE INDEX IF NOT EXISTS idx_mpm_memory_id ON memory_path_matchers(memory_id);
+      CREATE INDEX IF NOT EXISTS idx_mpm_path_matcher ON memory_path_matchers(path_matcher);
 
       CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
         id UNINDEXED,
-        content,
         tags_text
       );
 
@@ -472,96 +590,60 @@ export class MemoryStore {
         updated_at TEXT NOT NULL
       );
     `);
+  }
 
-    if (this.vecEnabled) {
-      try {
-        this.db.exec(`
-          CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
-            id TEXT PRIMARY KEY,
-            vector float[${EMBEDDING_DIMENSIONS}] distance_metric=cosine
-          );
-        `);
-      } catch (error) {
-        warn('Failed creating vec_memory virtual table', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+  private initializeVecSchemaIfEnabled(): void {
+    if (!this.vecEnabled) {
+      return;
+    }
+
+    try {
+      this.database.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
+          id TEXT PRIMARY KEY,
+          vector float[${this.embeddingDimensions}] distance_metric=cosine
+        );
+      `);
+    } catch (error) {
+      logWarn('Failed creating vec_memory virtual table; fallback to JSON vectors only', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
   private tryEnableVec(extensionPath: string | null): boolean {
     if (!extensionPath) {
-      warn('sqlite-vec extension path not provided; using JS semantic fallback');
       return false;
     }
     try {
-      this.db.loadExtension(extensionPath);
+      this.database.loadExtension(extensionPath);
       return true;
     } catch (error) {
-      warn('sqlite-vec extension failed to load; using JS semantic fallback', {
+      logWarn('sqlite-vec extension failed to load; continuing without vec table', {
         error: error instanceof Error ? error.message : String(error),
       });
       return false;
     }
   }
 
-  private withTransaction<T>(fn: () => T): T {
-    this.db.exec('BEGIN');
-    try {
-      const result = fn();
-      this.db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
-  }
-
-  private syncFts(memoryId: string, content: string, tags: string[]): void {
-    this.db.prepare('DELETE FROM memory_fts WHERE id = ?').run(memoryId);
-    this.db
-      .prepare('INSERT INTO memory_fts (id, content, tags_text) VALUES (?, ?, ?)')
-      .run(memoryId, content, tags.join(' '));
-  }
-
-  private replacePathMatchers(
-    memoryId: string,
-    pathMatchers: PathMatcherInput[],
-    nowIso: string,
-  ): void {
-    this.db.prepare('DELETE FROM memory_path_matchers WHERE memory_id = ?').run(memoryId);
-    const normalizedPathMatchers = this.normalizePathMatchers(pathMatchers);
-    if (normalizedPathMatchers.length === 0) {
-      return;
-    }
-    const insert = this.db.prepare(
-      `
-        INSERT INTO memory_path_matchers (id, memory_id, path_matcher, created_at)
-        VALUES (?, ?, ?, ?)
-      `,
-    );
-    for (const matcher of normalizedPathMatchers) {
-      insert.run(ulid(), memoryId, matcher.path_matcher, nowIso);
-    }
-  }
-
-  private normalizePathMatchers(pathMatchers: PathMatcherInput[]): PathMatcherInput[] {
-    const seen = new Set<string>();
-    const normalized: PathMatcherInput[] = [];
-    for (const matcher of pathMatchers) {
-      const pathMatcher = matcher.path_matcher.trim();
-      if (!pathMatcher || seen.has(pathMatcher)) {
-        continue;
-      }
-      seen.add(pathMatcher);
-      normalized.push({ path_matcher: pathMatcher });
-    }
-    return normalized;
-  }
-
   private inflateMemory(row: MemoryRow): MemoryRecord {
-    const pathMatchers = this.db
-      .prepare(
+    return {
+      id: row.id,
+      memory_type: row.memory_type,
+      content: row.content,
+      tags: parseTags(row.tags_json),
+      is_pinned: row.is_pinned === 1,
+      path_matchers: this.getPathMatchersByMemoryId(row.id).map((pathMatcher) => ({
+        path_matcher: pathMatcher,
+      })),
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  }
+
+  private getPathMatchersByMemoryId(memoryId: string): string[] {
+    const rows = this.database
+      .prepare<MatcherRow>(
         `
           SELECT path_matcher
           FROM memory_path_matchers
@@ -569,93 +651,86 @@ export class MemoryStore {
           ORDER BY created_at DESC
         `,
       )
-      .all(row.id) as unknown as MatcherRow[];
-
-    return {
-      id: row.id,
-      memory_type: row.memory_type,
-      content: row.content,
-      tags: this.parseTags(row.tags_json),
-      is_pinned: row.is_pinned === 1,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      path_matchers: pathMatchers.map((matcher) => ({
-        path_matcher: matcher.path_matcher,
-      })),
-    };
+      .all(memoryId);
+    return rows.map((row) => row.path_matcher);
   }
 
-  private parseTags(raw: string): string[] {
+  private syncFts(memoryId: string, tags: string[]): void {
+    this.database.prepare('DELETE FROM memory_fts WHERE id = ?').run(memoryId);
+    this.database
+      .prepare('INSERT INTO memory_fts (id, tags_text) VALUES (?, ?)')
+      .run(memoryId, tags.join(' '));
+  }
+
+  private replacePathMatchers(memoryId: string, pathMatchers: PathMatcherInput[], createdAt: string): void {
+    this.database.prepare('DELETE FROM memory_path_matchers WHERE memory_id = ?').run(memoryId);
+    if (pathMatchers.length === 0) {
+      return;
+    }
+
+    const insertStatement = this.database.prepare(
+      `
+        INSERT INTO memory_path_matchers (id, memory_id, path_matcher, created_at)
+        VALUES (?, ?, ?, ?)
+      `,
+    );
+    for (const matcher of pathMatchers) {
+      insertStatement.run(ulid(), memoryId, matcher.path_matcher, createdAt);
+    }
+  }
+
+  private syncEmbedding(memoryId: string, vector: number[] | null | undefined, updatedAt: string): void {
+    if (vector === undefined) {
+      return;
+    }
+
+    if (vector === null) {
+      this.database.prepare('DELETE FROM memory_embeddings WHERE memory_id = ?').run(memoryId);
+      if (this.vecEnabled) {
+        this.database.prepare('DELETE FROM vec_memory WHERE id = ?').run(memoryId);
+      }
+      return;
+    }
+
+    this.database
+      .prepare(
+        `
+          INSERT INTO memory_embeddings (memory_id, vector_json, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(memory_id) DO UPDATE SET
+            vector_json = excluded.vector_json,
+            updated_at = excluded.updated_at
+        `,
+      )
+      .run(memoryId, JSON.stringify(vector), updatedAt);
+
+    if (!this.vecEnabled) {
+      return;
+    }
+    if (vector.length !== this.embeddingDimensions) {
+      logWarn('Skipping vec_memory sync because embedding dimensions mismatch', {
+        actual: vector.length,
+        expected: this.embeddingDimensions,
+        memoryId,
+      });
+      return;
+    }
+
     try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-      return parsed.filter((value): value is string => typeof value === 'string');
-    } catch {
-      return [];
+      this.database.prepare('DELETE FROM vec_memory WHERE id = ?').run(memoryId);
+      this.database
+        .prepare(
+          `
+            INSERT INTO vec_memory (id, vector)
+            VALUES (?, ?)
+          `,
+        )
+        .run(memoryId, JSON.stringify(vector));
+    } catch (error) {
+      logWarn('Failed syncing vec_memory row; keeping JSON embedding row', {
+        error: error instanceof Error ? error.message : String(error),
+        memoryId,
+      });
     }
-  }
-
-  private parseVector(raw: string): number[] {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-      return parsed.filter((value): value is number => typeof value === 'number');
-    } catch {
-      return [];
-    }
-  }
-
-  private makeFtsQueryFromTerms(terms: string[]): string {
-    return terms.map((term) => `"${term.replaceAll('"', '')}"`).join(' OR ');
-  }
-
-  private extractSearchTerms(query: string): string[] {
-    const rawTerms = query
-      .toLowerCase()
-      .split(/[^a-z0-9]+/g)
-      .map((term) => term.trim())
-      .filter((term) => term.length >= 2)
-      .filter((term) => !STOP_WORDS.has(term));
-    return [...new Set(rawTerms)];
-  }
-
-  private computeBm25Range(rows: LexicalRow[]): { min: number; max: number } {
-    let min = Number.POSITIVE_INFINITY;
-    let max = Number.NEGATIVE_INFINITY;
-    for (const row of rows) {
-      const value = Math.abs(row.score);
-      if (value < min) {
-        min = value;
-      }
-      if (value > max) {
-        max = value;
-      }
-    }
-    if (!Number.isFinite(min) || !Number.isFinite(max)) {
-      return { min: 0, max: 0 };
-    }
-    return { min, max };
-  }
-
-  private normalizeBm25(rawBm25: number, range: { min: number; max: number }): number {
-    const value = Math.abs(rawBm25);
-    if (range.max <= range.min) {
-      return 1;
-    }
-    return this.clamp01(1 - (value - range.min) / (range.max - range.min));
-  }
-
-  private clamp01(value: number): number {
-    if (value < 0) {
-      return 0;
-    }
-    if (value > 1) {
-      return 1;
-    }
-    return value;
   }
 }

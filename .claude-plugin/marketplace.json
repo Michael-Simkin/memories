@@ -11,7 +11,7 @@
     {
       "name": "memories",
       "source": "./plugins/memories",
-      "description": "Local project memory for Claude Code with semantic + lexical retrieval",
+      "description": "Local project memory for Claude Code with semantic and lexical retrieval",
       "homepage": "https://github.com/Michael-Simkin/memories/tree/master/plugins/memories",
       "repository": "https://github.com/Michael-Simkin/memories",
       "license": "MIT",

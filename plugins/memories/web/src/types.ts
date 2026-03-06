@@ -20,8 +20,10 @@ export interface MemorySearchResult {
   memory_type: MemoryType;
   content: string;
   tags: string[];
-  score: number;
   is_pinned: boolean;
+  path_matchers: string[];
+  score: number;
+  source: 'path' | 'hybrid';
   updated_at: string;
 }
 
@@ -30,4 +32,15 @@ export interface StatsResponse {
   memory_count: number;
   online: boolean;
   uptime_ms: number;
+}
+
+export interface EventLog {
+  at: string;
+  event: string;
+  status: 'ok' | 'error' | 'skipped';
+  kind: 'hook' | 'operation' | 'system';
+  session_id?: string;
+  memory_id?: string;
+  detail?: string;
+  data?: Record<string, unknown>;
 }

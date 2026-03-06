@@ -1,3 +1,6 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import js from '@eslint/js';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import importX from 'eslint-plugin-import-x';
@@ -6,10 +9,11 @@ import unusedImports from 'eslint-plugin-unused-imports';
 import tseslint from 'typescript-eslint';
 
 const tsFiles = ['**/*.ts', '**/*.tsx'];
+const configDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/web/dist/**', '**/node_modules/**'],
+    ignores: ['**/dist/**', '**/web/dist/**', '**/node_modules/**', '**/coverage/**'],
   },
   js.configs.recommended,
   {
@@ -17,8 +21,12 @@ export default tseslint.config(
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
-        projectService: true,
-        tsconfigRootDir: process.cwd(),
+        project: [
+          path.join(configDirectory, 'plugins/memories/tsconfig.json'),
+          path.join(configDirectory, 'plugins/memories/tsconfig.test.json'),
+          path.join(configDirectory, 'plugins/memories/web/tsconfig.json'),
+        ],
+        tsconfigRootDir: configDirectory,
       },
     },
     plugins: {
@@ -41,7 +49,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ['plugins/memories/src/shared/logger.ts'],
+    files: [
+      'plugins/memories/src/shared/logger.ts',
+      'plugins/memories/src/engine/main.ts',
+      'plugins/memories/src/engine/ensure-engine.ts',
+      'plugins/memories/src/extraction/run.ts',
+      'plugins/memories/src/mcp/search-server.ts',
+    ],
     rules: {
       'no-console': 'off',
     },

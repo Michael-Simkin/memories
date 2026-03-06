@@ -1,19 +1,27 @@
 import type { SearchResult } from './types.js';
 
-function estimateTokens(text: string): number {
+export function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+export function estimateSearchResultTokens(result: SearchResult): number {
+  return estimateTextTokens(
+    `${result.content} ${result.tags.join(' ')} ${result.path_matchers.join(' ')}`,
+  );
 }
 
 export function applyTokenBudget(results: SearchResult[], maxTokens: number): SearchResult[] {
   const selected: SearchResult[] = [];
-  let used = 0;
+  let consumed = 0;
+
   for (const result of results) {
-    const cost = estimateTokens(`${result.content} ${result.tags.join(' ')}`);
-    if (selected.length > 0 && used + cost > maxTokens) {
+    const cost = estimateSearchResultTokens(result);
+    if (selected.length > 0 && consumed + cost > maxTokens) {
       break;
     }
     selected.push(result);
-    used += cost;
+    consumed += cost;
   }
+
   return selected;
 }
