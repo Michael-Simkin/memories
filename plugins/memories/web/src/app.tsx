@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import {
   createMemory,
   deleteMemory,
+  fetchBackgroundHooks,
   fetchLogs,
   fetchMemories,
   fetchStats,
@@ -11,6 +12,7 @@ import {
   updateMemory,
 } from './api.js';
 import type {
+  BackgroundHook,
   EventLog,
   Memory,
   MemorySearchResult,
@@ -120,6 +122,23 @@ function formatSearchDebug(memory: DisplayMemory): string | null {
     parts.push(`fusion ${memory.rrf_score.toFixed(4)}`);
   }
   return parts.length > 0 ? parts.join(' • ') : null;
+}
+
+function formatDurationMs(inputMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(inputMs / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m ${seconds}s`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${minutes}m`;
 }
 
 interface MemoryModalProps {
@@ -286,6 +305,12 @@ export function App() {
     refetchInterval: 2000,
   });
 
+  const backgroundHooksQuery = useQuery({
+    queryKey: ['background-hooks'],
+    queryFn: fetchBackgroundHooks,
+    refetchInterval: 1000,
+  });
+
   const memoriesQuery = useQuery({
     queryKey: ['memories'],
     queryFn: fetchMemories,
@@ -345,6 +370,10 @@ export function App() {
   }, [memoryRows]);
 
   const logs = logsQuery.data ?? [];
+  const backgroundHooks = backgroundHooksQuery.data?.items ?? [];
+  const backgroundHooksNowMs = backgroundHooksQuery.data
+    ? Date.parse(backgroundHooksQuery.data.meta.now)
+    : Date.now();
 
   function trimLogLine(value: string, maxChars = 120): string {
     const singleLine = value.replace(/\s+/g, ' ').trim();
@@ -379,9 +408,58 @@ export function App() {
       <header className="stats-bar">
         <span>Memories: {statsQuery.data?.memory_count ?? '—'}</span>
         <span>Sessions: {statsQuery.data?.active_sessions ?? '—'}</span>
+        <span>Background Hooks: {statsQuery.data?.active_background_hooks ?? '—'}</span>
         <span>Uptime: {statsQuery.data ? Math.floor(statsQuery.data.uptime_ms / 1000) : '—'}s</span>
         <span>Status: {statsQuery.data?.online ? 'online' : 'offline'}</span>
+        <span>
+          Shutdown: {statsQuery.data?.shutdown_blocked ? 'blocked by hooks' : 'clear'}
+        </span>
       </header>
+
+      <section className="background-hooks-panel">
+        <div className="section-header">
+          <h2>Background Hooks</h2>
+          <small>Polling every 1s.</small>
+        </div>
+        {backgroundHooksQuery.isLoading ? <p>Loading background hooks…</p> : null}
+        {backgroundHooksQuery.error ? (
+          <p className="error-text">{String(backgroundHooksQuery.error)}</p>
+        ) : null}
+        {backgroundHooks.length === 0 ? (
+          <p className="background-hooks-empty">No background hooks running.</p>
+        ) : (
+          <ul className="background-hook-list">
+            {backgroundHooks.map((hook: BackgroundHook) => {
+              const runningForMs = backgroundHooksNowMs - Date.parse(hook.started_at);
+              const heartbeatAgeMs = backgroundHooksNowMs - Date.parse(hook.last_heartbeat_at);
+              const staleInMs = Date.parse(hook.stale_at) - backgroundHooksNowMs;
+              const hardTimeoutInMs = Date.parse(hook.hard_timeout_at) - backgroundHooksNowMs;
+              return (
+                <li key={hook.id} className="background-hook-card">
+                  <div className="background-hook-header">
+                    <strong>{hook.hook_name}</strong>
+                    <span className="memory-pill effect-must">{hook.state}</span>
+                  </div>
+                  <p className="background-hook-metrics">
+                    running for {formatDurationMs(runningForMs)} • last heartbeat{' '}
+                    {formatDurationMs(heartbeatAgeMs)} ago
+                  </p>
+                  <p className="background-hook-metrics">
+                    stale in {formatDurationMs(staleInMs)} • hard timeout in{' '}
+                    {formatDurationMs(hardTimeoutInMs)}
+                  </p>
+                  <p className="background-hook-meta">
+                    id: <code>{hook.id}</code>
+                    {hook.session_id ? ` • session: ${hook.session_id}` : ''}
+                    {typeof hook.pid === 'number' ? ` • pid: ${hook.pid}` : ''}
+                  </p>
+                  {hook.detail ? <p className="background-hook-detail">{hook.detail}</p> : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
 
       <nav className="tabs">
         <button

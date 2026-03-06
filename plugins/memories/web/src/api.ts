@@ -1,4 +1,11 @@
-import type { EventLog, Memory, MemorySearchResult, MemoryType, StatsResponse } from './types.js';
+import type {
+  BackgroundHooksResponse,
+  EventLog,
+  Memory,
+  MemorySearchResult,
+  MemoryType,
+  StatsResponse,
+} from './types.js';
 
 const MAX_SEARCH_LIMIT = 50;
 
@@ -12,6 +19,10 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 export async function fetchStats(): Promise<StatsResponse> {
   return parseJson<StatsResponse>(await fetch('/stats'));
+}
+
+export async function fetchBackgroundHooks(): Promise<BackgroundHooksResponse> {
+  return parseJson<BackgroundHooksResponse>(await fetch('/background-hooks'));
 }
 
 export async function fetchMemories(): Promise<{ items: Memory[]; total: number }> {

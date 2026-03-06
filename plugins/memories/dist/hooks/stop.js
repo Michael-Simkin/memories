@@ -7,6 +7,7 @@ var __export = (target, all) => {
 
 // src/hooks/stop.ts
 import { spawn } from "child_process";
+import { randomUUID } from "crypto";
 import { access } from "fs/promises";
 
 // src/shared/hook-io.ts
@@ -13915,6 +13916,7 @@ var MAX_SEARCH_LIMIT = 50;
 var DEFAULT_SEMANTIC_K = 30;
 var DEFAULT_LEXICAL_K = 30;
 var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
+var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
 
 // src/shared/types.ts
 var memoryTypeSchema = external_exports.enum(MEMORY_TYPES);
@@ -13989,6 +13991,25 @@ var memoryEventLogSchema = external_exports.object({
   memory_id: external_exports.string().optional(),
   detail: external_exports.string().optional(),
   data: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
+});
+var backgroundHookRecordSchema = external_exports.object({
+  id: external_exports.string().trim().min(1),
+  hook_name: external_exports.string().trim().min(1),
+  state: external_exports.literal("running"),
+  started_at: external_exports.string().min(1),
+  last_heartbeat_at: external_exports.string().min(1),
+  stale_at: external_exports.string().min(1),
+  hard_timeout_at: external_exports.string().min(1),
+  session_id: external_exports.string().trim().min(1).optional(),
+  detail: external_exports.string().trim().min(1).optional(),
+  pid: external_exports.number().int().positive().optional()
+});
+var backgroundHooksResponseSchema = external_exports.object({
+  items: external_exports.array(backgroundHookRecordSchema),
+  meta: external_exports.object({
+    active: external_exports.number().int().nonnegative(),
+    now: external_exports.string().min(1)
+  })
 });
 var createActionSchema = external_exports.object({
   action: external_exports.literal("create"),
@@ -14169,6 +14190,18 @@ function isEngineUnavailableError(error48) {
   }
   return error48.message.includes("ENGINE_UNAVAILABLE:");
 }
+async function postEngineJson(endpoint, route, payload) {
+  const response = await fetch(`http://${endpoint.host}:${endpoint.port}${route}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`ENGINE_UNAVAILABLE: ${response.status} ${response.statusText} ${body}`);
+  }
+  return await response.json();
+}
 
 // src/hooks/schemas.ts
 var sessionStartPayloadSchema = external_exports.object({
@@ -14197,31 +14230,48 @@ var sessionEndPayloadSchema = external_exports.object({
 }).catchall(external_exports.unknown());
 
 // src/hooks/stop.ts
+var STOP_EXTRACTION_BACKGROUND_HOOK_NAME = "stop/extraction";
+async function registerBackgroundHook(endpoint, payload) {
+  await postEngineJson(
+    endpoint,
+    "/background-hooks/start",
+    payload
+  );
+}
+async function finishBackgroundHook(endpoint, backgroundHookId, payload) {
+  await postEngineJson(
+    endpoint,
+    `/background-hooks/${backgroundHookId}/finish`,
+    payload
+  );
+}
 function spawnStopWorker(handoff) {
   const pluginRoot = resolvePluginRoot();
   const workerEntrypoint = `${pluginRoot}/dist/extraction/run.js`;
   const handoffPayload = Buffer.from(JSON.stringify(handoff), "utf8").toString("base64");
-  const child = spawn(process.execPath, [workerEntrypoint, "--handoff", handoffPayload], {
-    detached: true,
-    env: {
-      ...process.env,
-      CLAUDE_PLUGIN_ROOT: pluginRoot,
-      PROJECT_ROOT: handoff.project_root
-    },
-    stdio: "ignore"
-  });
-  child.once("error", (error48) => {
-    logError("Failed to spawn stop extraction worker", {
-      error: error48.message,
-      workerEntrypoint
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [workerEntrypoint, "--handoff", handoffPayload], {
+      detached: true,
+      env: {
+        ...process.env,
+        CLAUDE_PLUGIN_ROOT: pluginRoot,
+        PROJECT_ROOT: handoff.project_root
+      },
+      stdio: "ignore"
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve(typeof child.pid === "number" ? { pid: child.pid } : {});
     });
   });
-  child.unref();
 }
 var defaultDependencies = {
   accessFn: access,
   appendEventLogFn: appendEventLog,
   ensureProjectDirectoriesFn: ensureProjectDirectories,
+  finishBackgroundHookFn: finishBackgroundHook,
+  registerBackgroundHookFn: registerBackgroundHook,
   resolveEndpointFromLockFn: resolveEndpointFromLock,
   spawnStopWorkerFn: spawnStopWorker
 };
@@ -14242,23 +14292,40 @@ async function handleStopHook(payload, dependencies = defaultDependencies) {
   try {
     await dependencies.accessFn(payload.transcript_path);
     const endpoint = await dependencies.resolveEndpointFromLockFn(projectRoot);
-    dependencies.spawnStopWorkerFn({
-      endpoint: {
-        host: endpoint.host,
-        port: endpoint.port
-      },
-      project_root: projectRoot,
-      transcript_path: payload.transcript_path,
-      ...payload.last_assistant_message ? { last_assistant_message: payload.last_assistant_message } : {},
-      ...payload.session_id ? { session_id: payload.session_id } : {}
+    const backgroundHookId = randomUUID();
+    await dependencies.registerBackgroundHookFn(endpoint, {
+      id: backgroundHookId,
+      hook_name: STOP_EXTRACTION_BACKGROUND_HOOK_NAME,
+      ...payload.session_id ? { session_id: payload.session_id } : {},
+      detail: `transcript=${payload.transcript_path}`
     });
+    let spawnedWorker;
+    try {
+      spawnedWorker = await dependencies.spawnStopWorkerFn({
+        background_hook_id: backgroundHookId,
+        endpoint: {
+          host: endpoint.host,
+          port: endpoint.port
+        },
+        project_root: projectRoot,
+        transcript_path: payload.transcript_path,
+        ...payload.last_assistant_message ? { last_assistant_message: payload.last_assistant_message } : {},
+        ...payload.session_id ? { session_id: payload.session_id } : {}
+      });
+    } catch (error48) {
+      await dependencies.finishBackgroundHookFn(endpoint, backgroundHookId, {
+        status: "error",
+        detail: `spawn failed: ${error48 instanceof Error ? error48.message : String(error48)}`
+      });
+      throw error48;
+    }
     await dependencies.appendEventLogFn(paths.eventLogPath, {
       at: (/* @__PURE__ */ new Date()).toISOString(),
       event: "Stop",
       kind: "hook",
       status: "ok",
       ...payload.session_id ? { session_id: payload.session_id } : {},
-      detail: `handoff=${payload.transcript_path}`
+      detail: `handoff=${payload.transcript_path}; hook_id=${backgroundHookId}${typeof spawnedWorker.pid === "number" ? `; pid=${spawnedWorker.pid}` : ""}`
     });
     return { continue: true };
   } catch (error48) {

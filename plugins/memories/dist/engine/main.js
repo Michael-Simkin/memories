@@ -38990,6 +38990,10 @@ var DEFAULT_LEXICAL_K = 30;
 var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
 var DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 var DEFAULT_OLLAMA_TIMEOUT_MS = 1e4;
+var DEFAULT_ENGINE_DRAIN_GRACE_MS = 500;
+var DEFAULT_BACKGROUND_HOOK_HEARTBEAT_TIMEOUT_MS = 2e4;
+var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
+var DEFAULT_BACKGROUND_HOOK_SWEEP_INTERVAL_MS = 5e3;
 var OLLAMA_PROFILE_CONFIG = {
   bge: {
     dimensions: 1024,
@@ -39238,6 +39242,14 @@ async function removeFileIfExists(filePath) {
     if (!isErrnoException(error48) || error48.code !== "ENOENT") {
       throw error48;
     }
+  }
+}
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 function normalizePathForMatch(inputPath) {
@@ -39733,6 +39745,25 @@ var memoryEventLogSchema = external_exports.object({
   memory_id: external_exports.string().optional(),
   detail: external_exports.string().optional(),
   data: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
+});
+var backgroundHookRecordSchema = external_exports.object({
+  id: external_exports.string().trim().min(1),
+  hook_name: external_exports.string().trim().min(1),
+  state: external_exports.literal("running"),
+  started_at: external_exports.string().min(1),
+  last_heartbeat_at: external_exports.string().min(1),
+  stale_at: external_exports.string().min(1),
+  hard_timeout_at: external_exports.string().min(1),
+  session_id: external_exports.string().trim().min(1).optional(),
+  detail: external_exports.string().trim().min(1).optional(),
+  pid: external_exports.number().int().positive().optional()
+});
+var backgroundHooksResponseSchema = external_exports.object({
+  items: external_exports.array(backgroundHookRecordSchema),
+  meta: external_exports.object({
+    active: external_exports.number().int().nonnegative(),
+    now: external_exports.string().min(1)
+  })
 });
 var createActionSchema = external_exports.object({
   action: external_exports.literal("create"),
@@ -40480,6 +40511,22 @@ var logsQuerySchema = external_exports.object({
 var memoryIdParamSchema = external_exports.object({
   id: external_exports.string().trim().min(1)
 });
+var backgroundHookStartSchema = external_exports.object({
+  id: external_exports.string().trim().min(1),
+  hook_name: external_exports.string().trim().min(1),
+  session_id: external_exports.string().trim().min(1).optional(),
+  detail: external_exports.string().trim().min(1).optional(),
+  pid: external_exports.number().int().positive().optional()
+});
+var backgroundHookHeartbeatSchema = external_exports.object({
+  detail: external_exports.string().trim().min(1).optional(),
+  pid: external_exports.number().int().positive().optional()
+});
+var backgroundHookFinishSchema = external_exports.object({
+  status: external_exports.enum(["ok", "error", "skipped"]),
+  detail: external_exports.string().trim().min(1).optional(),
+  pid: external_exports.number().int().positive().optional()
+});
 function toEventLog(input) {
   return memoryEventLogSchema.parse(input);
 }
@@ -40487,6 +40534,12 @@ function createEngineApp(options) {
   const app = (0, import_express.default)();
   app.use(import_express.default.json({ limit: "2mb" }));
   const startedAtMs = Date.now();
+  const backgroundHookPolicy = {
+    heartbeatTimeoutMs: options.backgroundHookPolicy?.heartbeatTimeoutMs ?? DEFAULT_BACKGROUND_HOOK_HEARTBEAT_TIMEOUT_MS,
+    maxRuntimeMs: options.backgroundHookPolicy?.maxRuntimeMs ?? DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS,
+    sweepIntervalMs: options.backgroundHookPolicy?.sweepIntervalMs ?? DEFAULT_BACKGROUND_HOOK_SWEEP_INTERVAL_MS
+  };
+  const drainGraceMs = options.drainGraceMs ?? DEFAULT_ENGINE_DRAIN_GRACE_MS;
   const profile = resolveOllamaProfile(process.env.MEMORIES_OLLAMA_PROFILE);
   const store = new MemoryStore({
     dbPath: path3.join(options.projectRoot, ".memories", "ai_memory.db"),
@@ -40497,7 +40550,119 @@ function createEngineApp(options) {
   const embeddingClient = new EmbeddingClient();
   const retrieval = new RetrievalService(store, embeddingClient);
   const activeSessions = /* @__PURE__ */ new Set();
+  const activeBackgroundHooks = /* @__PURE__ */ new Map();
   let drainTriggered = false;
+  let drainTimer = null;
+  function clearDrainTimer() {
+    if (!drainTimer) {
+      return;
+    }
+    clearTimeout(drainTimer);
+    drainTimer = null;
+  }
+  function cancelDrain() {
+    clearDrainTimer();
+    drainTriggered = false;
+  }
+  function serializeBackgroundHook(hook) {
+    return {
+      id: hook.id,
+      hook_name: hook.hook_name,
+      state: "running",
+      started_at: new Date(hook.startedAtMs).toISOString(),
+      last_heartbeat_at: new Date(hook.lastHeartbeatAtMs).toISOString(),
+      stale_at: new Date(hook.staleAtMs).toISOString(),
+      hard_timeout_at: new Date(hook.hardTimeoutAtMs).toISOString(),
+      ...hook.session_id ? { session_id: hook.session_id } : {},
+      ...hook.detail ? { detail: hook.detail } : {},
+      ...typeof hook.pid === "number" ? { pid: hook.pid } : {}
+    };
+  }
+  async function maybeTriggerDrain() {
+    if (drainTriggered || drainTimer || activeSessions.size > 0 || activeBackgroundHooks.size > 0) {
+      return;
+    }
+    drainTimer = setTimeout(() => {
+      drainTimer = null;
+      if (drainTriggered || activeSessions.size > 0 || activeBackgroundHooks.size > 0) {
+        return;
+      }
+      drainTriggered = true;
+      void options.onSessionDrain().catch((error48) => {
+        logError("Session drain callback failed", {
+          error: error48 instanceof Error ? error48.message : String(error48)
+        });
+      });
+    }, drainGraceMs);
+    drainTimer.unref?.();
+  }
+  async function appendBackgroundHookLifecycleEvent(event, hook, status, detail) {
+    const runtimeMs = Math.max(0, Date.now() - hook.startedAtMs);
+    await appendEventLog(
+      options.eventLogPath,
+      toEventLog({
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        event,
+        kind: "hook",
+        status,
+        ...hook.session_id ? { session_id: hook.session_id } : {},
+        detail: detail ?? hook.hook_name,
+        data: {
+          hook_id: hook.id,
+          hook_name: hook.hook_name,
+          runtime_ms: runtimeMs,
+          ...typeof hook.pid === "number" ? { pid: hook.pid } : {}
+        }
+      })
+    );
+  }
+  async function sweepExpiredBackgroundHooks() {
+    const now = Date.now();
+    const expired = [];
+    for (const hook of activeBackgroundHooks.values()) {
+      if (now >= hook.hardTimeoutAtMs) {
+        expired.push({
+          hook,
+          detail: `${hook.hook_name} exceeded max runtime of ${backgroundHookPolicy.maxRuntimeMs}ms`
+        });
+        continue;
+      }
+      if (now >= hook.staleAtMs) {
+        expired.push({
+          hook,
+          detail: `${hook.hook_name} heartbeat timed out after ${backgroundHookPolicy.heartbeatTimeoutMs}ms`
+        });
+        continue;
+      }
+      if (typeof hook.pid === "number" && !isPidAlive(hook.pid)) {
+        expired.push({
+          hook,
+          detail: `${hook.hook_name} process ${hook.pid} is no longer alive`
+        });
+      }
+    }
+    if (expired.length === 0) {
+      return;
+    }
+    for (const entry of expired) {
+      activeBackgroundHooks.delete(entry.hook.id);
+      await appendBackgroundHookLifecycleEvent(
+        "background-hook/expire",
+        entry.hook,
+        "error",
+        entry.detail
+      );
+    }
+    await maybeTriggerDrain();
+  }
+  const backgroundHookSweepTimer = setInterval(() => {
+    void sweepExpiredBackgroundHooks().catch((error48) => {
+      logError("Background hook sweep failed", {
+        error: error48 instanceof Error ? error48.message : String(error48)
+      });
+    });
+  }, backgroundHookPolicy.sweepIntervalMs);
+  backgroundHookSweepTimer.unref?.();
   const staticUiDir = path3.join(options.pluginRoot, "web", "dist");
   if (existsSync(staticUiDir)) {
     app.use("/ui", import_express.default.static(staticUiDir));
@@ -40515,11 +40680,14 @@ function createEngineApp(options) {
       port: options.port
     });
   });
-  app.get("/stats", (_request, response) => {
+  app.get("/stats", async (_request, response) => {
+    await sweepExpiredBackgroundHooks();
     response.json({
       active_sessions: activeSessions.size,
+      active_background_hooks: activeBackgroundHooks.size,
       memory_count: store.memoryCount(),
       online: true,
+      shutdown_blocked: activeSessions.size === 0 && activeBackgroundHooks.size > 0,
       uptime_ms: Date.now() - startedAtMs
     });
   });
@@ -40530,7 +40698,7 @@ function createEngineApp(options) {
     }
     const sessionId = parsed.data.session_id;
     activeSessions.add(sessionId);
-    drainTriggered = false;
+    cancelDrain();
     await updateConnectedSessions(options.lockPath, (currentSessions) => [...currentSessions, sessionId]);
     await appendEventLog(
       options.eventLogPath,
@@ -40565,15 +40733,95 @@ function createEngineApp(options) {
         session_id: sessionId
       })
     );
-    if (activeSessions.size === 0 && !drainTriggered) {
-      drainTriggered = true;
-      void options.onSessionDrain().catch((error48) => {
-        logError("Session drain callback failed", {
-          error: error48 instanceof Error ? error48.message : String(error48)
-        });
-      });
-    }
+    await maybeTriggerDrain();
     return response.json({ active_sessions: activeSessions.size, ok: true });
+  });
+  app.get("/background-hooks", async (_request, response) => {
+    await sweepExpiredBackgroundHooks();
+    const items = [...activeBackgroundHooks.values()].sort((left, right) => left.startedAtMs - right.startedAtMs).map((hook) => serializeBackgroundHook(hook));
+    return response.json({
+      items,
+      meta: {
+        active: items.length,
+        now: (/* @__PURE__ */ new Date()).toISOString()
+      }
+    });
+  });
+  app.post("/background-hooks/start", async (request, response) => {
+    const parsed = backgroundHookStartSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendError(response, 400, "INVALID_BACKGROUND_HOOK", parsed.error.message);
+    }
+    await sweepExpiredBackgroundHooks();
+    cancelDrain();
+    const now = Date.now();
+    const nextHook = {
+      id: parsed.data.id,
+      hook_name: parsed.data.hook_name,
+      startedAtMs: now,
+      lastHeartbeatAtMs: now,
+      staleAtMs: now + backgroundHookPolicy.heartbeatTimeoutMs,
+      hardTimeoutAtMs: now + backgroundHookPolicy.maxRuntimeMs,
+      ...parsed.data.session_id ? { session_id: parsed.data.session_id } : {},
+      ...parsed.data.detail ? { detail: parsed.data.detail } : {},
+      ...typeof parsed.data.pid === "number" ? { pid: parsed.data.pid } : {}
+    };
+    activeBackgroundHooks.set(nextHook.id, nextHook);
+    await appendBackgroundHookLifecycleEvent("background-hook/start", nextHook, "ok");
+    return response.status(201).json({ active: true, ok: true });
+  });
+  app.post("/background-hooks/:id/heartbeat", async (request, response) => {
+    const parsedId = memoryIdParamSchema.safeParse(request.params);
+    if (!parsedId.success) {
+      return sendError(response, 400, "INVALID_BACKGROUND_HOOK_ID", parsedId.error.message);
+    }
+    const parsedBody = backgroundHookHeartbeatSchema.safeParse(request.body ?? {});
+    if (!parsedBody.success) {
+      return sendError(response, 400, "INVALID_BACKGROUND_HOOK", parsedBody.error.message);
+    }
+    await sweepExpiredBackgroundHooks();
+    const current = activeBackgroundHooks.get(parsedId.data.id);
+    if (!current) {
+      return response.json({ active: false, ok: true });
+    }
+    const now = Date.now();
+    activeBackgroundHooks.set(parsedId.data.id, {
+      ...current,
+      lastHeartbeatAtMs: now,
+      staleAtMs: now + backgroundHookPolicy.heartbeatTimeoutMs,
+      ...parsedBody.data.detail ? { detail: parsedBody.data.detail } : {},
+      ...typeof parsedBody.data.pid === "number" ? { pid: parsedBody.data.pid } : {}
+    });
+    return response.json({ active: true, ok: true });
+  });
+  app.post("/background-hooks/:id/finish", async (request, response) => {
+    const parsedId = memoryIdParamSchema.safeParse(request.params);
+    if (!parsedId.success) {
+      return sendError(response, 400, "INVALID_BACKGROUND_HOOK_ID", parsedId.error.message);
+    }
+    const parsedBody = backgroundHookFinishSchema.safeParse(request.body ?? {});
+    if (!parsedBody.success) {
+      return sendError(response, 400, "INVALID_BACKGROUND_HOOK", parsedBody.error.message);
+    }
+    await sweepExpiredBackgroundHooks();
+    const current = activeBackgroundHooks.get(parsedId.data.id);
+    if (!current) {
+      return response.json({ active: false, ok: true });
+    }
+    const finalHook = {
+      ...current,
+      ...parsedBody.data.detail ? { detail: parsedBody.data.detail } : {},
+      ...typeof parsedBody.data.pid === "number" ? { pid: parsedBody.data.pid } : {}
+    };
+    activeBackgroundHooks.delete(parsedId.data.id);
+    await appendBackgroundHookLifecycleEvent(
+      "background-hook/finish",
+      finalHook,
+      parsedBody.data.status,
+      parsedBody.data.detail
+    );
+    await maybeTriggerDrain();
+    return response.json({ active: false, ok: true });
   });
   app.get("/memories/pinned", (_request, response) => {
     const startedAt = Date.now();
@@ -40727,7 +40975,11 @@ function createEngineApp(options) {
   });
   return {
     app,
-    close: () => store.close(),
+    close: () => {
+      clearDrainTimer();
+      clearInterval(backgroundHookSweepTimer);
+      store.close();
+    },
     getSessionCount: () => activeSessions.size
   };
 }

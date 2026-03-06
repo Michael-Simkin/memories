@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { memoryTypeSchema, pathMatcherSchema } from '../shared/types.js';
 
 export const workerPayloadSchema = z.object({
+  background_hook_id: z.string().trim().min(1).optional(),
   endpoint: z.object({
     host: z.string().min(1),
     port: z.number().int().min(1).max(65535),

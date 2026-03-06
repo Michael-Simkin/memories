@@ -17,7 +17,7 @@ main {
 .stats-bar {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   margin-bottom: 16px;
 }
 
@@ -31,6 +31,61 @@ main {
   display: flex;
   gap: 8px;
   margin-bottom: 14px;
+}
+
+.background-hooks-panel {
+  background: #171c30;
+  border: 1px solid #2d344c;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  padding: 12px;
+}
+
+.background-hook-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.background-hook-card {
+  background: #11172a;
+  border: 1px solid #2a3558;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.background-hook-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.background-hook-metrics,
+.background-hook-meta,
+.background-hook-detail,
+.background-hooks-empty {
+  margin: 0;
+}
+
+.background-hook-metrics,
+.background-hook-meta {
+  color: #9fb0da;
+  font-size: 12px;
+}
+
+.background-hook-detail {
+  color: #dce2f0;
+  font-size: 12px;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.background-hooks-empty {
+  color: #9fb0da;
 }
 
 .tabs button {

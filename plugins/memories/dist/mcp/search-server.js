@@ -35796,6 +35796,7 @@ var DEFAULT_SEMANTIC_K = 30;
 var DEFAULT_LEXICAL_K = 30;
 var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
 var DEFAULT_MCP_ENGINE_TIMEOUT_MS = 2500;
+var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
 
 // src/shared/fs-utils.ts
 import { appendFile, readFile, rename, rm, writeFile } from "fs/promises";
@@ -36083,6 +36084,25 @@ var memoryEventLogSchema = external_exports3.object({
   detail: external_exports3.string().optional(),
   data: external_exports3.record(external_exports3.string(), external_exports3.unknown()).optional()
 });
+var backgroundHookRecordSchema = external_exports3.object({
+  id: external_exports3.string().trim().min(1),
+  hook_name: external_exports3.string().trim().min(1),
+  state: external_exports3.literal("running"),
+  started_at: external_exports3.string().min(1),
+  last_heartbeat_at: external_exports3.string().min(1),
+  stale_at: external_exports3.string().min(1),
+  hard_timeout_at: external_exports3.string().min(1),
+  session_id: external_exports3.string().trim().min(1).optional(),
+  detail: external_exports3.string().trim().min(1).optional(),
+  pid: external_exports3.number().int().positive().optional()
+});
+var backgroundHooksResponseSchema = external_exports3.object({
+  items: external_exports3.array(backgroundHookRecordSchema),
+  meta: external_exports3.object({
+    active: external_exports3.number().int().nonnegative(),
+    now: external_exports3.string().min(1)
+  })
+});
 var createActionSchema = external_exports3.object({
   action: external_exports3.literal("create"),
   confidence: external_exports3.number().min(0).max(1),
@@ -36190,7 +36210,7 @@ async function runRecall(rawInput) {
 function createRecallMcpServer() {
   const server = new McpServer({
     name: "memories",
-    version: "0.2.16"
+    version: "0.2.17"
   });
   server.registerTool(
     "recall",

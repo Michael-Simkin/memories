@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { ZodError } from 'zod';
 
+import { DEFAULT_BACKGROUND_HOOK_HEARTBEAT_INTERVAL_MS } from '../shared/constants.js';
 import { normalizePathForMatch } from '../shared/fs-utils.js';
 import { logError } from '../shared/logger.js';
 import { appendEventLog } from '../shared/logs.js';
@@ -176,6 +177,87 @@ export function buildClaudeProcessEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.Proces
   };
 }
 
+interface BackgroundHookLeaseController {
+  finish: (status: 'ok' | 'error' | 'skipped', detail?: string) => Promise<void>;
+}
+
+async function postBackgroundHookSignal(
+  endpoint: { host: string; port: number },
+  route: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const response = await fetch(`http://${endpoint.host}:${endpoint.port}${route}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`${response.status}: ${response.statusText} ${body}`);
+  }
+}
+
+function createBackgroundHookLeaseController(payload: WorkerPayload): BackgroundHookLeaseController {
+  if (!payload.background_hook_id) {
+    return {
+      finish: async () => {},
+    };
+  }
+
+  let closed = false;
+  let heartbeatFailed = false;
+  const heartbeat = async (): Promise<void> => {
+    try {
+      await postBackgroundHookSignal(
+        payload.endpoint,
+        `/background-hooks/${payload.background_hook_id}/heartbeat`,
+        { pid: process.pid },
+      );
+      heartbeatFailed = false;
+    } catch (error) {
+      if (!heartbeatFailed) {
+        heartbeatFailed = true;
+        logError('Background hook heartbeat failed', {
+          background_hook_id: payload.background_hook_id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  };
+
+  void heartbeat();
+  const heartbeatTimer = setInterval(() => {
+    void heartbeat();
+  }, DEFAULT_BACKGROUND_HOOK_HEARTBEAT_INTERVAL_MS);
+  heartbeatTimer.unref?.();
+
+  return {
+    finish: async (status, detail) => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      clearInterval(heartbeatTimer);
+      try {
+        await postBackgroundHookSignal(
+          payload.endpoint,
+          `/background-hooks/${payload.background_hook_id}/finish`,
+          {
+            detail,
+            pid: process.pid,
+            status,
+          },
+        );
+      } catch (error) {
+        logError('Background hook finish failed', {
+          background_hook_id: payload.background_hook_id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  };
+}
+
 export function readHandoffArg(argv: string[]): string | null {
   const index = argv.indexOf('--handoff');
   if (index === -1) {
@@ -195,6 +277,9 @@ export async function executeWorker(
   dependencies: WorkerDependencies = defaultDependencies,
 ): Promise<void> {
   const projectPaths = getProjectPaths(payload.project_root);
+  const backgroundHookLease = createBackgroundHookLeaseController(payload);
+  let backgroundHookStatus: 'ok' | 'error' | 'skipped' = 'ok';
+  let backgroundHookDetail = 'completed';
   await dependencies.appendEventLogFn(projectPaths.eventLogPath, {
     at: new Date().toISOString(),
     event: 'extraction/start',
@@ -349,7 +434,11 @@ export async function executeWorker(
       ...(payload.session_id ? { session_id: payload.session_id } : {}),
       detail: failed ? 'stopped after first write failure' : 'completed',
     });
+    backgroundHookStatus = failed ? 'error' : 'ok';
+    backgroundHookDetail = failed ? 'stopped after first write failure' : 'completed';
   } catch (error) {
+    backgroundHookStatus = 'error';
+    backgroundHookDetail = error instanceof Error ? error.message : String(error);
     await dependencies.appendEventLogFn(projectPaths.eventLogPath, {
       at: new Date().toISOString(),
       event: 'extraction/error',
@@ -363,6 +452,8 @@ export async function executeWorker(
       error: error instanceof Error ? error.message : String(error),
       ...(buildErrorDebugData(error) ? { debug: buildErrorDebugData(error) } : {}),
     });
+  } finally {
+    await backgroundHookLease.finish(backgroundHookStatus, backgroundHookDetail);
   }
 }
 

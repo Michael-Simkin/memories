@@ -109,6 +109,29 @@ export const memoryEventLogSchema = z.object({
 });
 export type MemoryEventLog = z.infer<typeof memoryEventLogSchema>;
 
+export const backgroundHookRecordSchema = z.object({
+  id: z.string().trim().min(1),
+  hook_name: z.string().trim().min(1),
+  state: z.literal('running'),
+  started_at: z.string().min(1),
+  last_heartbeat_at: z.string().min(1),
+  stale_at: z.string().min(1),
+  hard_timeout_at: z.string().min(1),
+  session_id: z.string().trim().min(1).optional(),
+  detail: z.string().trim().min(1).optional(),
+  pid: z.number().int().positive().optional(),
+});
+export type BackgroundHookRecord = z.infer<typeof backgroundHookRecordSchema>;
+
+export const backgroundHooksResponseSchema = z.object({
+  items: z.array(backgroundHookRecordSchema),
+  meta: z.object({
+    active: z.number().int().nonnegative(),
+    now: z.string().min(1),
+  }),
+});
+export type BackgroundHooksResponse = z.infer<typeof backgroundHooksResponseSchema>;
+
 const createActionSchema = z.object({
   action: z.literal('create'),
   confidence: z.number().min(0).max(1),

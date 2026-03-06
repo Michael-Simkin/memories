@@ -14,6 +14,26 @@ async function setupRuntime(): Promise<{
   lockPath: string;
   runtime: ReturnType<typeof createEngineApp>;
 }> {
+  return setupRuntimeWithOptions();
+}
+
+async function waitForTick(ms = 0): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function setupRuntimeWithOptions(options?: {
+  backgroundHookPolicy?: {
+    heartbeatTimeoutMs?: number;
+    maxRuntimeMs?: number;
+    sweepIntervalMs?: number;
+  };
+  drainGraceMs?: number;
+}): Promise<{
+  drainCalls: () => number;
+  eventLogPath: string;
+  lockPath: string;
+  runtime: ReturnType<typeof createEngineApp>;
+}> {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'memories-api-'));
   const memoriesDir = path.join(projectRoot, '.memories');
   await mkdir(memoriesDir, { recursive: true });
@@ -39,6 +59,8 @@ async function setupRuntime(): Promise<{
     eventLogPath,
     port: 4321,
     sqliteVecExtensionPath: null,
+    ...(typeof options?.drainGraceMs === 'number' ? { drainGraceMs: options.drainGraceMs } : {}),
+    ...(options?.backgroundHookPolicy ? { backgroundHookPolicy: options.backgroundHookPolicy } : {}),
     onSessionDrain: async () => {
       drainCount += 1;
     },
@@ -146,14 +168,98 @@ describe('createEngineApp', () => {
   });
 
   it('triggers session drain callback exactly once when sessions hit zero', async () => {
-    const { runtime, drainCalls } = await setupRuntime();
+    const { runtime, drainCalls } = await setupRuntimeWithOptions({ drainGraceMs: 0 });
     const api = request(runtime.app);
 
     await api.post('/sessions/connect').send({ session_id: 'session-3' }).expect(200);
     await api.post('/sessions/disconnect').send({ session_id: 'session-3' }).expect(200);
     await api.post('/sessions/disconnect').send({ session_id: 'session-3' }).expect(200);
 
+    await waitForTick();
     expect(drainCalls()).toBe(1);
+    runtime.close();
+  });
+
+  it('tracks background hooks and blocks drain until they finish', async () => {
+    const { runtime, drainCalls } = await setupRuntimeWithOptions({ drainGraceMs: 0 });
+    const api = request(runtime.app);
+
+    await api.post('/sessions/connect').send({ session_id: 'session-bg' }).expect(200);
+    await api
+      .post('/background-hooks/start')
+      .send({
+        id: 'hook-1',
+        hook_name: 'stop/extraction',
+        session_id: 'session-bg',
+        detail: 'transcript=/tmp/transcript.jsonl',
+      })
+      .expect(201);
+
+    await api.post('/sessions/disconnect').send({ session_id: 'session-bg' }).expect(200);
+    await waitForTick();
+    expect(drainCalls()).toBe(0);
+
+    await api.get('/stats').expect(200).expect(({ body }) => {
+      expect(body.active_background_hooks).toBe(1);
+      expect(body.shutdown_blocked).toBe(true);
+    });
+
+    await api.get('/background-hooks').expect(200).expect(({ body }) => {
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0]?.hook_name).toBe('stop/extraction');
+      expect(body.items[0]?.state).toBe('running');
+    });
+
+    await api.post('/background-hooks/hook-1/heartbeat').send({ pid: process.pid }).expect(200);
+    await api
+      .post('/background-hooks/hook-1/finish')
+      .send({ status: 'ok', detail: 'completed' })
+      .expect(200);
+
+    await waitForTick();
+    expect(drainCalls()).toBe(1);
+
+    await api.get('/background-hooks').expect(200).expect(({ body }) => {
+      expect(body.items).toHaveLength(0);
+    });
+
+    runtime.close();
+  });
+
+  it('expires stale background hooks and drains after cleanup', async () => {
+    const { runtime, drainCalls } = await setupRuntimeWithOptions({
+      backgroundHookPolicy: {
+        heartbeatTimeoutMs: 60,
+        maxRuntimeMs: 500,
+        sweepIntervalMs: 20,
+      },
+      drainGraceMs: 0,
+    });
+    const api = request(runtime.app);
+
+    await api.post('/sessions/connect').send({ session_id: 'session-expire' }).expect(200);
+    await api
+      .post('/background-hooks/start')
+      .send({
+        id: 'hook-expire',
+        hook_name: 'stop/extraction',
+        session_id: 'session-expire',
+      })
+      .expect(201);
+    await api.post('/sessions/disconnect').send({ session_id: 'session-expire' }).expect(200);
+
+    await waitForTick(180);
+    expect(drainCalls()).toBe(1);
+
+    await api.get('/background-hooks').expect(200).expect(({ body }) => {
+      expect(body.items).toHaveLength(0);
+    });
+
+    await api.get('/logs').expect(200).expect(({ body }) => {
+      const events = (body.items as Array<{ event: string; detail?: string }>).map((item) => item.event);
+      expect(events).toContain('background-hook/expire');
+    });
+
     runtime.close();
   });
 });

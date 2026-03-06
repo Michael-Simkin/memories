@@ -91,7 +91,7 @@ export async function runRecall(rawInput: unknown): Promise<string> {
 export function createRecallMcpServer(): McpServer {
   const server = new McpServer({
     name: 'memories',
-    version: '0.2.16',
+    version: '0.2.17',
   });
 
   server.registerTool(

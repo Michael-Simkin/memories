@@ -35,9 +35,32 @@ export interface MemorySearchResult {
 
 export interface StatsResponse {
   active_sessions: number;
+  active_background_hooks: number;
   memory_count: number;
   online: boolean;
+  shutdown_blocked: boolean;
   uptime_ms: number;
+}
+
+export interface BackgroundHook {
+  id: string;
+  hook_name: string;
+  state: 'running';
+  started_at: string;
+  last_heartbeat_at: string;
+  stale_at: string;
+  hard_timeout_at: string;
+  session_id?: string;
+  detail?: string;
+  pid?: number;
+}
+
+export interface BackgroundHooksResponse {
+  items: BackgroundHook[];
+  meta: {
+    active: number;
+    now: string;
+  };
 }
 
 export interface EventLog {

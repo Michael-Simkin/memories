@@ -13779,6 +13779,19 @@ function date4(params) {
 // ../../node_modules/zod/v4/classic/external.js
 config(en_default());
 
+// src/shared/constants.ts
+var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
+var MEMORY_DB_FILE = "ai_memory.db";
+var ENGINE_LOCK_FILE = "engine.lock.json";
+var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
+var DEFAULT_SEARCH_LIMIT = 10;
+var MAX_SEARCH_LIMIT = 50;
+var DEFAULT_SEMANTIC_K = 30;
+var DEFAULT_LEXICAL_K = 30;
+var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
+var DEFAULT_BACKGROUND_HOOK_HEARTBEAT_INTERVAL_MS = 5e3;
+var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
+
 // src/shared/fs-utils.ts
 import { appendFile, readFile, rename, rm, writeFile } from "fs/promises";
 import path from "path";
@@ -13869,17 +13882,6 @@ function logError(message, data) {
 // src/shared/logs.ts
 import { readFile as readFile2 } from "fs/promises";
 
-// src/shared/constants.ts
-var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
-var MEMORY_DB_FILE = "ai_memory.db";
-var ENGINE_LOCK_FILE = "engine.lock.json";
-var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
-var DEFAULT_SEARCH_LIMIT = 10;
-var MAX_SEARCH_LIMIT = 50;
-var DEFAULT_SEMANTIC_K = 30;
-var DEFAULT_LEXICAL_K = 30;
-var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
-
 // src/shared/types.ts
 var memoryTypeSchema = external_exports.enum(MEMORY_TYPES);
 var pathMatcherSchema = external_exports.object({
@@ -13953,6 +13955,25 @@ var memoryEventLogSchema = external_exports.object({
   memory_id: external_exports.string().optional(),
   detail: external_exports.string().optional(),
   data: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
+});
+var backgroundHookRecordSchema = external_exports.object({
+  id: external_exports.string().trim().min(1),
+  hook_name: external_exports.string().trim().min(1),
+  state: external_exports.literal("running"),
+  started_at: external_exports.string().min(1),
+  last_heartbeat_at: external_exports.string().min(1),
+  stale_at: external_exports.string().min(1),
+  hard_timeout_at: external_exports.string().min(1),
+  session_id: external_exports.string().trim().min(1).optional(),
+  detail: external_exports.string().trim().min(1).optional(),
+  pid: external_exports.number().int().positive().optional()
+});
+var backgroundHooksResponseSchema = external_exports.object({
+  items: external_exports.array(backgroundHookRecordSchema),
+  meta: external_exports.object({
+    active: external_exports.number().int().nonnegative(),
+    now: external_exports.string().min(1)
+  })
 });
 var createActionSchema = external_exports.object({
   action: external_exports.literal("create"),
@@ -14045,6 +14066,7 @@ function getProjectPaths(projectRoot) {
 
 // src/extraction/contracts.ts
 var workerPayloadSchema = external_exports.object({
+  background_hook_id: external_exports.string().trim().min(1).optional(),
   endpoint: external_exports.object({
     host: external_exports.string().min(1),
     port: external_exports.number().int().min(1).max(65535)
@@ -14184,6 +14206,75 @@ function buildClaudeProcessEnv(baseEnv) {
     CLAUDE_CODE_SIMPLE: "1"
   };
 }
+async function postBackgroundHookSignal(endpoint, route, payload) {
+  const response = await fetch(`http://${endpoint.host}:${endpoint.port}${route}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`${response.status}: ${response.statusText} ${body}`);
+  }
+}
+function createBackgroundHookLeaseController(payload) {
+  if (!payload.background_hook_id) {
+    return {
+      finish: async () => {
+      }
+    };
+  }
+  let closed = false;
+  let heartbeatFailed = false;
+  const heartbeat = async () => {
+    try {
+      await postBackgroundHookSignal(
+        payload.endpoint,
+        `/background-hooks/${payload.background_hook_id}/heartbeat`,
+        { pid: process.pid }
+      );
+      heartbeatFailed = false;
+    } catch (error48) {
+      if (!heartbeatFailed) {
+        heartbeatFailed = true;
+        logError("Background hook heartbeat failed", {
+          background_hook_id: payload.background_hook_id,
+          error: error48 instanceof Error ? error48.message : String(error48)
+        });
+      }
+    }
+  };
+  void heartbeat();
+  const heartbeatTimer = setInterval(() => {
+    void heartbeat();
+  }, DEFAULT_BACKGROUND_HOOK_HEARTBEAT_INTERVAL_MS);
+  heartbeatTimer.unref?.();
+  return {
+    finish: async (status, detail) => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      clearInterval(heartbeatTimer);
+      try {
+        await postBackgroundHookSignal(
+          payload.endpoint,
+          `/background-hooks/${payload.background_hook_id}/finish`,
+          {
+            detail,
+            pid: process.pid,
+            status
+          }
+        );
+      } catch (error48) {
+        logError("Background hook finish failed", {
+          background_hook_id: payload.background_hook_id,
+          error: error48 instanceof Error ? error48.message : String(error48)
+        });
+      }
+    }
+  };
+}
 function readHandoffArg(argv) {
   const index = argv.indexOf("--handoff");
   if (index === -1) {
@@ -14198,6 +14289,9 @@ function decodeWorkerPayload(encodedHandoff) {
 }
 async function executeWorker(payload, dependencies = defaultDependencies) {
   const projectPaths = getProjectPaths(payload.project_root);
+  const backgroundHookLease = createBackgroundHookLeaseController(payload);
+  let backgroundHookStatus = "ok";
+  let backgroundHookDetail = "completed";
   await dependencies.appendEventLogFn(projectPaths.eventLogPath, {
     at: (/* @__PURE__ */ new Date()).toISOString(),
     event: "extraction/start",
@@ -14336,7 +14430,11 @@ async function executeWorker(payload, dependencies = defaultDependencies) {
       ...payload.session_id ? { session_id: payload.session_id } : {},
       detail: failed ? "stopped after first write failure" : "completed"
     });
+    backgroundHookStatus = failed ? "error" : "ok";
+    backgroundHookDetail = failed ? "stopped after first write failure" : "completed";
   } catch (error48) {
+    backgroundHookStatus = "error";
+    backgroundHookDetail = error48 instanceof Error ? error48.message : String(error48);
     await dependencies.appendEventLogFn(projectPaths.eventLogPath, {
       at: (/* @__PURE__ */ new Date()).toISOString(),
       event: "extraction/error",
@@ -14350,6 +14448,8 @@ async function executeWorker(payload, dependencies = defaultDependencies) {
       error: error48 instanceof Error ? error48.message : String(error48),
       ...buildErrorDebugData(error48) ? { debug: buildErrorDebugData(error48) } : {}
     });
+  } finally {
+    await backgroundHookLease.finish(backgroundHookStatus, backgroundHookDetail);
   }
 }
 async function readTranscriptContext(transcriptPath, projectRoot) {

@@ -13911,6 +13911,7 @@ var MAX_SEARCH_LIMIT = 50;
 var DEFAULT_SEMANTIC_K = 30;
 var DEFAULT_LEXICAL_K = 30;
 var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
+var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
 
 // src/shared/types.ts
 var memoryTypeSchema = external_exports.enum(MEMORY_TYPES);
@@ -13985,6 +13986,25 @@ var memoryEventLogSchema = external_exports.object({
   memory_id: external_exports.string().optional(),
   detail: external_exports.string().optional(),
   data: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
+});
+var backgroundHookRecordSchema = external_exports.object({
+  id: external_exports.string().trim().min(1),
+  hook_name: external_exports.string().trim().min(1),
+  state: external_exports.literal("running"),
+  started_at: external_exports.string().min(1),
+  last_heartbeat_at: external_exports.string().min(1),
+  stale_at: external_exports.string().min(1),
+  hard_timeout_at: external_exports.string().min(1),
+  session_id: external_exports.string().trim().min(1).optional(),
+  detail: external_exports.string().trim().min(1).optional(),
+  pid: external_exports.number().int().positive().optional()
+});
+var backgroundHooksResponseSchema = external_exports.object({
+  items: external_exports.array(backgroundHookRecordSchema),
+  meta: external_exports.object({
+    active: external_exports.number().int().nonnegative(),
+    now: external_exports.string().min(1)
+  })
 });
 var createActionSchema = external_exports.object({
   action: external_exports.literal("create"),

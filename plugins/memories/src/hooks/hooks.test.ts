@@ -79,7 +79,9 @@ describe('hook handlers', () => {
       transcript_path: '/tmp/transcript.jsonl',
       session_id: 'session-stop',
     };
-    const spawnStopWorkerFn = vi.fn();
+    const spawnStopWorkerFn = vi.fn().mockResolvedValue({ pid: 7788 });
+    const registerBackgroundHookFn = vi.fn().mockResolvedValue({ active: true, ok: true });
+    const finishBackgroundHookFn = vi.fn().mockResolvedValue({ active: false, ok: true });
 
     const output = await handleStopHook(payload, {
       accessFn: vi.fn().mockResolvedValue(undefined),
@@ -91,18 +93,31 @@ describe('hook handlers', () => {
         lockPath: '/tmp/.memories/engine.lock.json',
         eventLogPath: '/tmp/events.log',
       }),
+      finishBackgroundHookFn,
+      registerBackgroundHookFn,
       resolveEndpointFromLockFn: vi.fn().mockResolvedValue({ host: '127.0.0.1', port: 4322 }),
       spawnStopWorkerFn,
     });
 
     expect(output).toEqual({ continue: true });
+    expect(registerBackgroundHookFn).toHaveBeenCalledTimes(1);
+    expect(registerBackgroundHookFn).toHaveBeenCalledWith(
+      { host: '127.0.0.1', port: 4322 },
+      expect.objectContaining({
+        detail: 'transcript=/tmp/transcript.jsonl',
+        hook_name: 'stop/extraction',
+        session_id: 'session-stop',
+      }),
+    );
     expect(spawnStopWorkerFn).toHaveBeenCalledTimes(1);
     expect(spawnStopWorkerFn).toHaveBeenCalledWith(
       expect.objectContaining({
+        background_hook_id: expect.any(String),
         endpoint: { host: '127.0.0.1', port: 4322 },
         transcript_path: '/tmp/transcript.jsonl',
       }),
     );
+    expect(finishBackgroundHookFn).not.toHaveBeenCalled();
   });
 
   it('UserPromptSubmit injects the per-prompt memory reminder', async () => {
