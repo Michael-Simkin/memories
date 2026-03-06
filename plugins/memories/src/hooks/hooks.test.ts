@@ -96,6 +96,11 @@ describe('hook handlers', () => {
     {
       name: 'Ollama is not installed',
       code: 'ollama_not_installed' as const,
+      commands: [
+        '- `brew install ollama`',
+        '- `brew services start ollama`',
+        '- `ollama pull bge-m3`',
+      ],
       systemMessage:
         'Memories could not be launched on macOS because Ollama is not installed. Run `brew install ollama`, `brew services start ollama`, and `ollama pull bge-m3`. Or ask Claude to do it for you.',
       detail: 'OLLAMA_NOT_INSTALLED: ollama CLI not found; model=bge-m3; baseUrl=http://127.0.0.1:11434',
@@ -104,8 +109,13 @@ describe('hook handlers', () => {
     {
       name: 'Ollama is installed but the background service is not running',
       code: 'ollama_service_not_running' as const,
+      commands: [
+        '- `brew services start ollama`',
+        '- `brew services list`',
+        '- `ollama list`',
+      ],
       systemMessage:
-        'Memories could not be launched on macOS because Ollama is installed but the background service is not running. Run `brew install ollama`, `brew services start ollama`, and `ollama pull bge-m3`. Or ask Claude to do it for you.',
+        'Memories could not be launched on macOS because Ollama is installed but the background service is not running. Run `brew services start ollama`, `brew services list`, and `ollama list`. Or ask Claude to do it for you.',
       detail:
         'OLLAMA_SERVICE_NOT_RUNNING: fetch failed; model=bge-m3; baseUrl=http://127.0.0.1:11434',
       contextLine:
@@ -114,8 +124,13 @@ describe('hook handlers', () => {
     {
       name: 'the Ollama model `bge-m3` is not installed',
       code: 'ollama_model_missing' as const,
+      commands: [
+        '- `ollama list`',
+        '- `ollama pull bge-m3`',
+        '- `ollama show bge-m3`',
+      ],
       systemMessage:
-        'Memories could not be launched on macOS because the Ollama model `bge-m3` is not installed. Run `brew install ollama`, `brew services start ollama`, and `ollama pull bge-m3`. Or ask Claude to do it for you.',
+        'Memories could not be launched on macOS because the Ollama model `bge-m3` is not installed. Run `ollama list`, `ollama pull bge-m3`, and `ollama show bge-m3`. Or ask Claude to do it for you.',
       detail:
         'OLLAMA_MODEL_MISSING: model=bge-m3; baseUrl=http://127.0.0.1:11434; available=nomic-embed-text',
       contextLine:
@@ -138,9 +153,7 @@ describe('hook handlers', () => {
               '<memory-setup>',
               testCase.contextLine,
               'If the user asks you to fix this, run these commands in order:',
-              '- `brew install ollama`',
-              '- `brew services start ollama`',
-              '- `ollama pull bge-m3`',
+              ...testCase.commands,
               'Do not run setup commands unless the user asks.',
               '</memory-setup>',
             ].join('\n'),
@@ -161,9 +174,7 @@ describe('hook handlers', () => {
             '<memory-setup>',
             testCase.contextLine,
             'If the user asks you to fix this, run these commands in order:',
-            '- `brew install ollama`',
-            '- `brew services start ollama`',
-            '- `ollama pull bge-m3`',
+            ...testCase.commands,
             'Do not run setup commands unless the user asks.',
             '</memory-setup>',
           ].join('\n'),

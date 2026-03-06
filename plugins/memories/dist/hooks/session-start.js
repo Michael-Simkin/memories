@@ -14486,8 +14486,19 @@ function renderStartupMemoryContext(markdown) {
     "</memory>"
   ].join("\n");
 }
-function macOsOllamaSetupCommands(model) {
-  return ["brew install ollama", "brew services start ollama", `ollama pull ${model}`];
+function macOsOllamaSetupCommands(code, model) {
+  switch (code) {
+    case "ollama_not_installed":
+      return ["brew install ollama", "brew services start ollama", `ollama pull ${model}`];
+    case "ollama_service_not_running":
+      return ["brew services start ollama", "brew services list", "ollama list"];
+    case "ollama_model_missing":
+      return ["ollama list", `ollama pull ${model}`, `ollama show ${model}`];
+  }
+}
+function formatCommandList(commands) {
+  const [first, second, third] = commands;
+  return `\`${first}\`, \`${second}\`, and \`${third}\``;
 }
 function describeOllamaIssue(code, model) {
   switch (code) {
@@ -14500,11 +14511,11 @@ function describeOllamaIssue(code, model) {
   }
 }
 function renderOllamaSystemMessage(code, model) {
-  const [installCommand, startCommand, pullCommand] = macOsOllamaSetupCommands(model);
-  return `Memories could not be launched on macOS because ${describeOllamaIssue(code, model)}. Run \`${installCommand}\`, \`${startCommand}\`, and \`${pullCommand}\`. Or ask Claude to do it for you.`;
+  const commands = macOsOllamaSetupCommands(code, model);
+  return `Memories could not be launched on macOS because ${describeOllamaIssue(code, model)}. Run ${formatCommandList(commands)}. Or ask Claude to do it for you.`;
 }
 function renderOllamaAdditionalContext(code, model) {
-  const commands = macOsOllamaSetupCommands(model);
+  const commands = macOsOllamaSetupCommands(code, model);
   return [
     "<memory-setup>",
     `Memories are unavailable because ${describeOllamaIssue(code, model)} on macOS.`,
