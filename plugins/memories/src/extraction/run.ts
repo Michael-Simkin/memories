@@ -524,7 +524,7 @@ async function runClaudePrompt(prompt: string, projectRoot: string): Promise<Cla
         '--no-session-persistence',
         '--dangerously-skip-permissions',
         '--model',
-        'claude-opus-4-6',
+        'claude-sonnet-4-6',
       ],
       {
         cwd: projectRoot,
@@ -604,7 +604,9 @@ function parseClaudeJson(raw: string): unknown {
     };
     parseDebugInfo.has_result_string = typeof candidate.result === 'string';
     parseDebugInfo.has_result_object = !!candidate.result && typeof candidate.result === 'object';
-    parseDebugInfo.content_block_count = Array.isArray(candidate.content) ? candidate.content.length : 0;
+    parseDebugInfo.content_block_count = Array.isArray(candidate.content)
+      ? candidate.content.length
+      : 0;
     parseDebugInfo.content_text_block_count = Array.isArray(candidate.content)
       ? candidate.content.filter((block) => typeof block?.text === 'string').length
       : 0;

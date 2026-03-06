@@ -88,4 +88,9 @@ async function run(): Promise<void> {
   writeHookOutput(output);
 }
 
-void run();
+void run().catch((error) => {
+  logError('SessionEnd hook entrypoint failed', {
+    error: error instanceof Error ? error.message : String(error),
+  });
+  writeFailOpenOutput();
+});

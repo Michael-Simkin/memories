@@ -1,5 +1,23 @@
 import { defineConfig } from 'tsup';
 
+const bundledRuntimeDependencies = [
+  '@modelcontextprotocol/sdk',
+  '@modelcontextprotocol/sdk/server/mcp.js',
+  '@modelcontextprotocol/sdk/server/stdio.js',
+  'express',
+  'picomatch',
+  'ulid',
+  'zod',
+];
+
+const nativeRuntimeDependencies = [
+  'better-sqlite3',
+  'sqlite-vec-darwin-arm64',
+  'sqlite-vec-darwin-x64',
+  'sqlite-vec-linux-arm64',
+  'sqlite-vec-linux-x64',
+];
+
 export default defineConfig({
   clean: true,
   dts: false,
@@ -12,8 +30,9 @@ export default defineConfig({
     'hooks/user-prompt-submit': 'src/hooks/user-prompt-submit.ts',
     'mcp/search-server': 'src/mcp/search-server.ts',
   },
-  external: ['better-sqlite3', 'sqlite-vec-darwin-arm64', 'sqlite-vec-darwin-x64', 'sqlite-vec-linux-arm64', 'sqlite-vec-linux-x64'],
+  external: nativeRuntimeDependencies,
   format: ['esm'],
+  noExternal: bundledRuntimeDependencies,
   outDir: 'dist',
   platform: 'node',
   sourcemap: true,

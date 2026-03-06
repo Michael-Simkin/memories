@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-start.js"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-start.js\""
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/hooks/user-prompt-submit.js"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/user-prompt-submit.js\""
           }
         ]
       }
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/hooks/stop.js"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/stop.js\""
           }
         ]
       }
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-end.js"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-end.js\""
           }
         ]
       }
