@@ -19,6 +19,9 @@ const nativeRuntimeDependencies = [
 ];
 
 export default defineConfig({
+  banner: {
+    js: "import { createRequire as __memoriesCreateRequire } from 'node:module'; const require = __memoriesCreateRequire(import.meta.url);",
+  },
   clean: true,
   dts: false,
   entry: {

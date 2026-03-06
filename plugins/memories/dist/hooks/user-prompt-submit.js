@@ -1,3 +1,4 @@
+import { createRequire as __memoriesCreateRequire } from 'node:module'; const require = __memoriesCreateRequire(import.meta.url);
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)

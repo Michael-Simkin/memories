@@ -1,3 +1,4 @@
+import { createRequire as __memoriesCreateRequire } from 'node:module'; const require = __memoriesCreateRequire(import.meta.url);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -36189,7 +36190,7 @@ async function runRecall(rawInput) {
 function createRecallMcpServer() {
   const server = new McpServer({
     name: "memories",
-    version: "0.2.14"
+    version: "0.2.15"
   });
   server.registerTool(
     "recall",
