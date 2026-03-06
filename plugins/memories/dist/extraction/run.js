@@ -14484,7 +14484,7 @@ async function runClaudePrompt(prompt, projectRoot) {
         "--no-session-persistence",
         "--dangerously-skip-permissions",
         "--model",
-        "claude-sonnet-4"
+        "claude-sonnet-4-6"
       ],
       {
         cwd: projectRoot,
