@@ -10,7 +10,13 @@ import {
   searchMemories,
   updateMemory,
 } from './api.js';
-import type { EventLog, Memory, MemorySearchResult, MemoryType } from './types.js';
+import type {
+  EventLog,
+  Memory,
+  MemorySearchResult,
+  MemoryType,
+  SearchMatchSource,
+} from './types.js';
 
 type Tab = 'memories' | 'logs';
 const MIN_SEARCH_QUERY_LENGTH = 2;
@@ -32,6 +38,11 @@ interface DisplayMemory {
   tags: string[];
   updated_at: string;
   score?: number;
+  matched_by?: SearchMatchSource[];
+  path_score?: number;
+  lexical_score?: number;
+  semantic_score?: number;
+  rrf_score?: number;
 }
 
 function toDraft(memory?: DisplayMemory): MemoryDraft {
@@ -85,6 +96,30 @@ function classifyMatcherScope(pattern: string): 'exact-file' | 'exact-dir' | 'si
     return lastSegment.includes('.') || lastSegment.startsWith('.') ? 'exact-file' : 'exact-dir';
   }
   return hasDoubleStar ? 'deep-glob' : 'single-glob';
+}
+
+function formatMatchedBy(matchedBy: SearchMatchSource[] | undefined): string | null {
+  if (!matchedBy || matchedBy.length === 0) {
+    return null;
+  }
+  return matchedBy.join(' + ');
+}
+
+function formatSearchDebug(memory: DisplayMemory): string | null {
+  const parts: string[] = [];
+  if (typeof memory.path_score === 'number') {
+    parts.push(`path ${memory.path_score.toFixed(3)}`);
+  }
+  if (typeof memory.lexical_score === 'number') {
+    parts.push(`lexical ${memory.lexical_score.toFixed(3)}`);
+  }
+  if (typeof memory.semantic_score === 'number') {
+    parts.push(`semantic ${memory.semantic_score.toFixed(3)}`);
+  }
+  if (typeof memory.rrf_score === 'number') {
+    parts.push(`fusion ${memory.rrf_score.toFixed(4)}`);
+  }
+  return parts.length > 0 ? parts.join(' • ') : null;
 }
 
 interface MemoryModalProps {
@@ -219,6 +254,11 @@ function toDisplayMemoryFromSearch(result: MemorySearchResult): DisplayMemory {
     tags: result.tags,
     updated_at: result.updated_at,
     score: result.score,
+    ...(result.matched_by ? { matched_by: result.matched_by } : {}),
+    ...(typeof result.path_score === 'number' ? { path_score: result.path_score } : {}),
+    ...(typeof result.lexical_score === 'number' ? { lexical_score: result.lexical_score } : {}),
+    ...(typeof result.semantic_score === 'number' ? { semantic_score: result.semantic_score } : {}),
+    ...(typeof result.rrf_score === 'number' ? { rrf_score: result.rrf_score } : {}),
   };
 }
 
@@ -249,12 +289,15 @@ export function App() {
   const memoriesQuery = useQuery({
     queryKey: ['memories'],
     queryFn: fetchMemories,
+    refetchInterval: activeTab === 'memories' ? 2000 : false,
   });
 
   const searchResultsQuery = useQuery({
     queryKey: ['memory-search', searchQuery],
     queryFn: ({ signal }) => searchMemories(searchQuery, { signal }),
-    enabled: searchQuery.length >= MIN_SEARCH_QUERY_LENGTH,
+    enabled: activeTab === 'memories' && searchQuery.length >= MIN_SEARCH_QUERY_LENGTH,
+    refetchInterval:
+      activeTab === 'memories' && searchQuery.length >= MIN_SEARCH_QUERY_LENGTH ? 2000 : false,
   });
 
   const logsQuery = useQuery({
@@ -398,6 +441,8 @@ export function App() {
           <ul className="memory-list">
             {memoryRows.map((memory) => {
               const policyEffect = classifyPolicyEffect(memory);
+              const matchedBy = formatMatchedBy(memory.matched_by);
+              const searchDebug = formatSearchDebug(memory);
               return (
                 <li
                   key={memory.id}
@@ -434,8 +479,10 @@ export function App() {
                     )}
                   </div>
                   {typeof memory.score === 'number' ? (
-                    <p className="memory-score">match score: {memory.score.toFixed(3)}</p>
+                    <p className="memory-score">rank score: {memory.score.toFixed(3)}</p>
                   ) : null}
+                  {matchedBy ? <p className="memory-search-meta">matched by: {matchedBy}</p> : null}
+                  {searchDebug ? <p className="memory-search-debug">{searchDebug}</p> : null}
                   <div className="memory-actions">
                     <button
                       type="button"

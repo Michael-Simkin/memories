@@ -125,8 +125,10 @@ describe('MCP recall server', () => {
   });
 
   it('contains required invocation policy guidance text', () => {
-    expect(recallInvocationPolicyText).toContain('by default before most non-trivial work');
-    expect(recallInvocationPolicyText).toContain('Skip only for trivial context-free one-liners');
-    expect(recallInvocationPolicyText).toContain('Re-run whenever task scope changes');
+    expect(recallInvocationPolicyText).toContain('Main memory brain');
+    expect(recallInvocationPolicyText).toContain('REQUIRED: call recall before acting');
+    expect(recallInvocationPolicyText).toContain('do not skip');
+    expect(recallInvocationPolicyText).toContain('direct instructions do not');
+    expect(recallInvocationPolicyText).toContain('file, path, command, or requested change');
   });
 });

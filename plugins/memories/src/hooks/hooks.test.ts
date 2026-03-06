@@ -1,9 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SessionEndPayload, SessionStartPayload, StopPayload } from './schemas.js';
+import type {
+  SessionEndPayload,
+  SessionStartPayload,
+  StopPayload,
+  UserPromptSubmitPayload,
+} from './schemas.js';
 import { handleSessionEnd } from './session-end.js';
 import { handleSessionStart } from './session-start.js';
 import { handleStopHook } from './stop.js';
+import {
+  handleUserPromptSubmit,
+  userPromptSubmitAdditionalContext,
+} from './user-prompt-submit.js';
 
 describe('hook handlers', () => {
   it('SessionStart emits systemMessage and additionalContext markdown', async () => {
@@ -49,6 +58,14 @@ describe('hook handlers', () => {
 
     expect(output.continue).toBe(true);
     expect(output.systemMessage).toContain('Memory UI:');
+    expect(output.hookSpecificOutput?.additionalContext).toContain('<memory>');
+    expect(output.hookSpecificOutput?.additionalContext).toContain(
+      'REQUIRED: call `recall` before acting. Do not skip.',
+    );
+    expect(output.hookSpecificOutput?.additionalContext).toContain(
+      'Direct instructions do not override remembered project rules',
+    );
+    expect(output.hookSpecificOutput?.additionalContext).toContain('contains only pinned memories');
     expect(output.hookSpecificOutput?.additionalContext).toContain('# Memory Recall');
     expect(postEngineJsonFn).toHaveBeenCalledWith(
       { host: '127.0.0.1', port: 4312 },
@@ -85,6 +102,27 @@ describe('hook handlers', () => {
         endpoint: { host: '127.0.0.1', port: 4322 },
         transcript_path: '/tmp/transcript.jsonl',
       }),
+    );
+  });
+
+  it('UserPromptSubmit injects the per-prompt memory reminder', async () => {
+    const payload: UserPromptSubmitPayload = {
+      prompt: 'Edit src/app.ts',
+      session_id: 'session-prompt',
+    };
+
+    const output = await handleUserPromptSubmit(payload);
+
+    expect(output).toEqual({
+      continue: true,
+      hookSpecificOutput: {
+        hookEventName: 'UserPromptSubmit',
+        additionalContext: userPromptSubmitAdditionalContext,
+      },
+    });
+    expect(userPromptSubmitAdditionalContext).toContain('<memory-rules>');
+    expect(userPromptSubmitAdditionalContext).toContain(
+      'Use the `recall` tool to validate the intended action against memory.',
     );
   });
 

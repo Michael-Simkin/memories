@@ -337,6 +337,26 @@ function cosineSimilarity(a, b) {
   }
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
+function clamp01(value) {
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 1) {
+    return 1;
+  }
+  return value;
+}
+function normalizeRankScore(rawScore, maxScore) {
+  if (maxScore <= 0) {
+    return 0;
+  }
+  return clamp01(rawScore / maxScore);
+}
+function orderMatchSources(values) {
+  const order = ["path", "lexical", "semantic"];
+  const set = new Set(values);
+  return order.filter((value) => set.has(value));
+}
 var RetrievalService = class {
   store;
   embeddingClient;
@@ -413,6 +433,8 @@ var RetrievalService = class {
         is_pinned: row.is_pinned,
         path_matchers: pathMatchers,
         score: normalizedScore,
+        matched_by: ["semantic"],
+        semantic_score: normalizedScore,
         source: "hybrid",
         updated_at: row.updated_at
       };
@@ -452,11 +474,16 @@ var RetrievalService = class {
       ];
     });
     ranked.sort((left, right) => this.sortPathMatches(left, right));
-    return ranked.map((entry, index) => ({
-      ...entry.memory,
-      source: "path",
-      score: 1 / (index + 1)
-    }));
+    return ranked.map((entry, index) => {
+      const pathScore = 1 / (index + 1);
+      return {
+        ...entry.memory,
+        source: "path",
+        score: pathScore,
+        matched_by: ["path"],
+        path_score: pathScore
+      };
+    });
   }
   matchesAnyTarget(pathMatcher, targets) {
     try {
@@ -468,7 +495,7 @@ var RetrievalService = class {
   }
   mergeHybrid(input) {
     const byMemoryId = /* @__PURE__ */ new Map();
-    const addRankedBranch = (branch) => {
+    const addRankedBranch = (branch, branchName) => {
       for (let index = 0; index < branch.length; index += 1) {
         const result = branch[index];
         if (!result) {
@@ -481,22 +508,39 @@ var RetrievalService = class {
           byMemoryId.set(result.id, {
             representative: result,
             bestRank: rank,
-            rrfScore: contribution
+            rrfScore: contribution,
+            matchedBy: /* @__PURE__ */ new Set([branchName]),
+            lexicalScore: branchName === "lexical" ? result.lexical_score ?? result.score : void 0,
+            semanticScore: branchName === "semantic" ? result.semantic_score ?? result.score : void 0
           });
           continue;
         }
         current.rrfScore += contribution;
+        current.matchedBy.add(branchName);
+        if (branchName === "lexical") {
+          current.lexicalScore = result.lexical_score ?? result.score;
+        } else {
+          current.semanticScore = result.semantic_score ?? result.score;
+        }
         if (rank < current.bestRank) {
           current.bestRank = rank;
           current.representative = result;
         }
       }
     };
-    addRankedBranch(input.lexical);
-    addRankedBranch(input.semantic);
-    return [...byMemoryId.values()].map((entry) => ({
+    addRankedBranch(input.lexical, "lexical");
+    addRankedBranch(input.semantic, "semantic");
+    const mergedValues = [...byMemoryId.values()];
+    const maxRrfScore = mergedValues.reduce((best, entry) => {
+      return Math.max(best, entry.rrfScore);
+    }, 0);
+    return mergedValues.map((entry) => ({
       ...entry.representative,
-      score: entry.rrfScore,
+      score: normalizeRankScore(entry.rrfScore, maxRrfScore),
+      matched_by: orderMatchSources(entry.matchedBy),
+      ...typeof entry.lexicalScore === "number" ? { lexical_score: entry.lexicalScore } : {},
+      ...typeof entry.semanticScore === "number" ? { semantic_score: entry.semanticScore } : {},
+      rrf_score: entry.rrfScore,
       source: "hybrid"
     })).sort((left, right) => this.sortSearchResults(left, right)).slice(0, input.limit);
   }
@@ -694,6 +738,7 @@ var searchRequestSchema = z2.object({
   lexical_k: z2.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_LEXICAL_K),
   response_token_budget: z2.number().int().min(200).max(2e4).default(DEFAULT_RESPONSE_TOKEN_BUDGET)
 });
+var searchMatchSourceSchema = z2.enum(["path", "lexical", "semantic"]);
 var searchResultSchema = z2.object({
   id: z2.string(),
   memory_type: memoryTypeSchema,
@@ -701,8 +746,13 @@ var searchResultSchema = z2.object({
   tags: z2.array(z2.string()),
   is_pinned: z2.boolean(),
   path_matchers: z2.array(z2.string()),
-  score: z2.number(),
+  score: z2.number().min(0).max(1),
   source: z2.enum(["path", "hybrid"]),
+  matched_by: z2.array(searchMatchSourceSchema).optional(),
+  path_score: z2.number().min(0).max(1).optional(),
+  lexical_score: z2.number().min(0).max(1).optional(),
+  semantic_score: z2.number().min(0).max(1).optional(),
+  rrf_score: z2.number().nonnegative().optional(),
   updated_at: z2.string()
 });
 var searchResponseSchema = z2.object({
@@ -886,7 +936,7 @@ function extractTerms(query) {
 function makeTagFtsQuery(terms) {
   return terms.map((term) => `"${term.replaceAll('"', "")}"`).join(" OR ");
 }
-function clamp01(value) {
+function clamp012(value) {
   if (value < 0) {
     return 0;
   }
@@ -900,7 +950,7 @@ function normalizeBm25(value, range) {
   if (range.max <= range.min) {
     return 1;
   }
-  return clamp01(1 - (magnitude - range.min) / (range.max - range.min));
+  return clamp012(1 - (magnitude - range.min) / (range.max - range.min));
 }
 function computeBm25Range(rows) {
   if (rows.length === 0) {
@@ -1073,6 +1123,8 @@ var MemoryStore = class {
         is_pinned: row.is_pinned === 1,
         path_matchers: this.getPathMatchersByMemoryId(row.id),
         score: 0.1,
+        matched_by: ["lexical"],
+        lexical_score: 0.1,
         source: "hybrid",
         updated_at: row.updated_at
       }));
@@ -1101,7 +1153,7 @@ var MemoryStore = class {
         return loweredTags.includes(term) ? count + 1 : count;
       }, 0);
       const coverage = matchedTerms / terms.length;
-      const score = clamp01(0.8 * normalizeBm25(row.score, bm25Range) + 0.2 * coverage);
+      const score = clamp012(0.8 * normalizeBm25(row.score, bm25Range) + 0.2 * coverage);
       return {
         id: row.id,
         memory_type: row.memory_type,
@@ -1110,6 +1162,8 @@ var MemoryStore = class {
         is_pinned: row.is_pinned === 1,
         path_matchers: this.getPathMatchersByMemoryId(row.id),
         score,
+        matched_by: ["lexical"],
+        lexical_score: score,
         source: "hybrid",
         updated_at: row.updated_at
       };

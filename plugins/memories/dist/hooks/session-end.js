@@ -178,6 +178,7 @@ var searchRequestSchema = z.object({
   lexical_k: z.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_LEXICAL_K),
   response_token_budget: z.number().int().min(200).max(2e4).default(DEFAULT_RESPONSE_TOKEN_BUDGET)
 });
+var searchMatchSourceSchema = z.enum(["path", "lexical", "semantic"]);
 var searchResultSchema = z.object({
   id: z.string(),
   memory_type: memoryTypeSchema,
@@ -185,8 +186,13 @@ var searchResultSchema = z.object({
   tags: z.array(z.string()),
   is_pinned: z.boolean(),
   path_matchers: z.array(z.string()),
-  score: z.number(),
+  score: z.number().min(0).max(1),
   source: z.enum(["path", "hybrid"]),
+  matched_by: z.array(searchMatchSourceSchema).optional(),
+  path_score: z.number().min(0).max(1).optional(),
+  lexical_score: z.number().min(0).max(1).optional(),
+  semantic_score: z.number().min(0).max(1).optional(),
+  rrf_score: z.number().nonnegative().optional(),
   updated_at: z.string()
 });
 var searchResponseSchema = z.object({
@@ -397,6 +403,12 @@ import { z as z3 } from "zod";
 var sessionStartPayloadSchema = z3.object({
   cwd: z3.string().optional(),
   project_root: z3.string().optional(),
+  session_id: z3.string().optional()
+}).catchall(z3.unknown());
+var userPromptSubmitPayloadSchema = z3.object({
+  cwd: z3.string().optional(),
+  project_root: z3.string().optional(),
+  prompt: z3.string().optional(),
   session_id: z3.string().optional()
 }).catchall(z3.unknown());
 var stopPayloadSchema = z3.object({

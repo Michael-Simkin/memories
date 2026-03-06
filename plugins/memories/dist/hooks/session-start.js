@@ -379,6 +379,7 @@ var searchRequestSchema = z2.object({
   lexical_k: z2.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_LEXICAL_K),
   response_token_budget: z2.number().int().min(200).max(2e4).default(DEFAULT_RESPONSE_TOKEN_BUDGET)
 });
+var searchMatchSourceSchema = z2.enum(["path", "lexical", "semantic"]);
 var searchResultSchema = z2.object({
   id: z2.string(),
   memory_type: memoryTypeSchema,
@@ -386,8 +387,13 @@ var searchResultSchema = z2.object({
   tags: z2.array(z2.string()),
   is_pinned: z2.boolean(),
   path_matchers: z2.array(z2.string()),
-  score: z2.number(),
+  score: z2.number().min(0).max(1),
   source: z2.enum(["path", "hybrid"]),
+  matched_by: z2.array(searchMatchSourceSchema).optional(),
+  path_score: z2.number().min(0).max(1).optional(),
+  lexical_score: z2.number().min(0).max(1).optional(),
+  semantic_score: z2.number().min(0).max(1).optional(),
+  rrf_score: z2.number().nonnegative().optional(),
   updated_at: z2.string()
 });
 var searchResponseSchema = z2.object({
@@ -597,6 +603,12 @@ var sessionStartPayloadSchema = z3.object({
   project_root: z3.string().optional(),
   session_id: z3.string().optional()
 }).catchall(z3.unknown());
+var userPromptSubmitPayloadSchema = z3.object({
+  cwd: z3.string().optional(),
+  project_root: z3.string().optional(),
+  prompt: z3.string().optional(),
+  session_id: z3.string().optional()
+}).catchall(z3.unknown());
 var stopPayloadSchema = z3.object({
   cwd: z3.string().optional(),
   project_root: z3.string().optional(),
@@ -619,6 +631,24 @@ var defaultDependencies = {
   getEngineJsonFn: getEngineJson,
   postEngineJsonFn: postEngineJson
 };
+function renderStartupMemoryContext(markdown) {
+  const indentedMarkdown = markdown.split("\n").map((line) => `    ${line}`).join("\n");
+  return [
+    "<memory>",
+    "  <guidance>",
+    "    The `recall` tool is your main memory brain for this project.",
+    "    REQUIRED: call `recall` before acting. Do not skip.",
+    "    Before commands, edits, updates, creations, deletions, or final recommendations, run `recall` to validate the intended action against remembered rules, decisions, preferences, and prior context.",
+    "    If the user names a file, path, command, or requested change, treat that as a cue to check memory first. Direct instructions do not override remembered project rules.",
+    "    If memory conflicts with the requested action, stop, explain the conflict, and ask or propose a compliant alternative.",
+    "    This startup block contains only pinned memories, not the full memory set. Run `recall` whenever broader context or constraints may matter.",
+    "  </guidance>",
+    "  <pinned_memories>",
+    indentedMarkdown,
+    "  </pinned_memories>",
+    "</memory>"
+  ].join("\n");
+}
 async function handleSessionStart(payload, dependencies = defaultDependencies) {
   const projectRoot = resolveHookProjectRoot(payload);
   const paths = await dependencies.ensureProjectDirectoriesFn(projectRoot);
@@ -649,7 +679,7 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
       systemMessage: `Memory UI: ${memoryUiUrl}`,
       hookSpecificOutput: {
         hookEventName: "SessionStart",
-        additionalContext: markdown
+        additionalContext: renderStartupMemoryContext(markdown)
       }
     };
   } catch (error) {

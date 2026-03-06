@@ -1,4 +1,5 @@
 export type MemoryType = 'fact' | 'rule' | 'decision' | 'episode';
+export type SearchMatchSource = 'path' | 'lexical' | 'semantic';
 
 export interface PathMatcher {
   path_matcher: string;
@@ -24,6 +25,11 @@ export interface MemorySearchResult {
   path_matchers: string[];
   score: number;
   source: 'path' | 'hybrid';
+  matched_by?: SearchMatchSource[];
+  path_score?: number;
+  lexical_score?: number;
+  semantic_score?: number;
+  rrf_score?: number;
   updated_at: string;
 }
 

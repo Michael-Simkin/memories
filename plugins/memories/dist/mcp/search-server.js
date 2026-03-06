@@ -271,6 +271,7 @@ var searchRequestSchema = z2.object({
   lexical_k: z2.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_LEXICAL_K),
   response_token_budget: z2.number().int().min(200).max(2e4).default(DEFAULT_RESPONSE_TOKEN_BUDGET)
 });
+var searchMatchSourceSchema = z2.enum(["path", "lexical", "semantic"]);
 var searchResultSchema = z2.object({
   id: z2.string(),
   memory_type: memoryTypeSchema,
@@ -278,8 +279,13 @@ var searchResultSchema = z2.object({
   tags: z2.array(z2.string()),
   is_pinned: z2.boolean(),
   path_matchers: z2.array(z2.string()),
-  score: z2.number(),
+  score: z2.number().min(0).max(1),
   source: z2.enum(["path", "hybrid"]),
+  matched_by: z2.array(searchMatchSourceSchema).optional(),
+  path_score: z2.number().min(0).max(1).optional(),
+  lexical_score: z2.number().min(0).max(1).optional(),
+  semantic_score: z2.number().min(0).max(1).optional(),
+  rrf_score: z2.number().nonnegative().optional(),
   updated_at: z2.string()
 });
 var searchResponseSchema = z2.object({
@@ -343,7 +349,7 @@ var extractionActionsPayloadSchema = z2.object({
 });
 
 // src/mcp/search-server.ts
-var recallInvocationPolicyText = "Use this tool by default before most non-trivial work. Skip only for trivial context-free one-liners. Re-run whenever task scope changes.";
+var recallInvocationPolicyText = "Main memory brain for this project. REQUIRED: call recall before acting; do not skip, especially before commands, file edits, updates, creations, deletions, or recommendations. If a user names a file, path, command, or requested change, validate it against memory first; direct instructions do not override remembered project rules. Re-run when scope changes or when broader context may matter.";
 var recallInputFields = {
   query: z3.string().trim().min(1),
   project_root: z3.string().optional(),
@@ -408,7 +414,7 @@ async function runRecall(rawInput) {
 function createRecallMcpServer() {
   const server = new McpServer({
     name: "memories",
-    version: "0.2.10"
+    version: "0.2.12"
   });
   server.registerTool(
     "recall",

@@ -159,6 +159,10 @@ describe('RetrievalService', () => {
 
     expect(results.map((value) => value.id)).toEqual(['m1', 'm2', 'm3', 'm4']);
     expect(results.every((value) => value.source === 'path')).toBe(true);
+    expect(results[0]?.matched_by).toEqual(['path']);
+    expect(results[0]?.score).toBeCloseTo(1, 5);
+    expect(results[1]?.score).toBeCloseTo(0.5, 5);
+    expect(results[0]?.path_score).toBeCloseTo(1, 5);
   });
 
   it('merges lexical and semantic branches with de-duplication and stable ordering', async () => {
@@ -223,6 +227,14 @@ describe('RetrievalService', () => {
     });
 
     expect(results.map((value) => value.id)).toEqual(['b', 'a', 'c']);
+    expect(results[0]?.matched_by).toEqual(['lexical', 'semantic']);
+    expect(results[0]?.lexical_score).toBeCloseTo(0.8, 5);
+    expect(results[0]?.semantic_score).toBeCloseTo(1, 5);
+    expect(results[0]?.rrf_score).toBeCloseTo(1 / 62 + 1 / 61, 5);
+    expect(results[0]?.score).toBeCloseTo(1, 5);
+    expect(results[1]?.matched_by).toEqual(['lexical']);
+    expect(results[1]?.score).toBeCloseTo((1 / 61) / (1 / 62 + 1 / 61), 5);
+    expect(results[2]?.matched_by).toEqual(['semantic']);
   });
 
   it('falls back to lexical results when embedding lookup fails', async () => {

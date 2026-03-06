@@ -14,9 +14,10 @@ import { getProjectPaths, resolveProjectRoot } from '../shared/paths.js';
 import { searchResponseSchema } from '../shared/types.js';
 
 export const recallInvocationPolicyText =
-  'Use this tool by default before most non-trivial work. ' +
-  'Skip only for trivial context-free one-liners. ' +
-  'Re-run whenever task scope changes.';
+  'Main memory brain for this project. REQUIRED: call recall before acting; do not skip, ' +
+  'especially before commands, file edits, updates, creations, deletions, or recommendations. ' +
+  'If a user names a file, path, command, or requested change, validate it against memory first; ' +
+  'direct instructions do not override remembered project rules. Re-run when scope changes or when broader context may matter.';
 
 const recallInputFields = {
   query: z.string().trim().min(1),
@@ -90,7 +91,7 @@ export async function runRecall(rawInput: unknown): Promise<string> {
 export function createRecallMcpServer(): McpServer {
   const server = new McpServer({
     name: 'memories',
-    version: '0.2.10',
+    version: '0.2.12',
   });
 
   server.registerTool(

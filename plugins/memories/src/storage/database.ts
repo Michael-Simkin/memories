@@ -9,6 +9,7 @@ import type {
   MemoryRecord,
   MemoryType,
   PathMatcherInput,
+  SearchMatchSource,
   SearchResult,
   UpdateMemoryInput,
 } from '../shared/types.js';
@@ -399,6 +400,8 @@ export class MemoryStore {
           is_pinned: row.is_pinned === 1,
           path_matchers: this.getPathMatchersByMemoryId(row.id),
           score: 0.1,
+          matched_by: ['lexical'] as SearchMatchSource[],
+          lexical_score: 0.1,
           source: 'hybrid' as const,
           updated_at: row.updated_at,
         }));
@@ -445,6 +448,8 @@ export class MemoryStore {
           is_pinned: row.is_pinned === 1,
           path_matchers: this.getPathMatchersByMemoryId(row.id),
           score,
+          matched_by: ['lexical'] as SearchMatchSource[],
+          lexical_score: score,
           source: 'hybrid' as const,
           updated_at: row.updated_at,
         };

@@ -16,7 +16,7 @@ import {
   postEngineJson,
   resolveHookProjectRoot,
 } from './common.js';
-import { type SessionStartPayload,sessionStartPayloadSchema } from './schemas.js';
+import { type SessionStartPayload, sessionStartPayloadSchema } from './schemas.js';
 
 interface SessionStartDependencies {
   appendEventLogFn: typeof appendEventLog;
@@ -33,6 +33,29 @@ const defaultDependencies: SessionStartDependencies = {
   getEngineJsonFn: getEngineJson,
   postEngineJsonFn: postEngineJson,
 };
+
+function renderStartupMemoryContext(markdown: string): string {
+  const indentedMarkdown = markdown
+    .split('\n')
+    .map((line) => `    ${line}`)
+    .join('\n');
+
+  return [
+    '<memory>',
+    '  <guidance>',
+    '    The `recall` tool is your main memory brain for this project.',
+    '    REQUIRED: call `recall` before acting. Do not skip.',
+    '    Before commands, edits, updates, creations, deletions, or final recommendations, run `recall` to validate the intended action against remembered rules, decisions, preferences, and prior context.',
+    '    If the user names a file, path, command, or requested change, treat that as a cue to check memory first. Direct instructions do not override remembered project rules.',
+    '    If memory conflicts with the requested action, stop, explain the conflict, and ask or propose a compliant alternative.',
+    '    This startup block contains only pinned memories, not the full memory set. Run `recall` whenever broader context or constraints may matter.',
+    '  </guidance>',
+    '  <pinned_memories>',
+    indentedMarkdown,
+    '  </pinned_memories>',
+    '</memory>',
+  ].join('\n');
+}
 
 export async function handleSessionStart(
   payload: SessionStartPayload,
@@ -71,7 +94,7 @@ export async function handleSessionStart(
       systemMessage: `Memory UI: ${memoryUiUrl}`,
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        additionalContext: markdown,
+        additionalContext: renderStartupMemoryContext(markdown),
       },
     };
   } catch (error) {

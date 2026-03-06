@@ -9,6 +9,7 @@ export default defineConfig({
     'hooks/session-end': 'src/hooks/session-end.ts',
     'hooks/session-start': 'src/hooks/session-start.ts',
     'hooks/stop': 'src/hooks/stop.ts',
+    'hooks/user-prompt-submit': 'src/hooks/user-prompt-submit.ts',
     'mcp/search-server': 'src/mcp/search-server.ts',
   },
   external: ['better-sqlite3', 'sqlite-vec-darwin-arm64', 'sqlite-vec-darwin-x64', 'sqlite-vec-linux-arm64', 'sqlite-vec-linux-x64'],

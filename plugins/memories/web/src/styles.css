@@ -276,6 +276,18 @@ main {
 .memory-score {
   color: #c7d2f2;
   font-size: 12px;
+  margin: 0 0 4px;
+}
+
+.memory-search-meta {
+  color: #9fb0da;
+  font-size: 12px;
+  margin: 0 0 4px;
+}
+
+.memory-search-debug {
+  color: #7f90bc;
+  font-size: 11px;
   margin: 0 0 8px;
 }
 

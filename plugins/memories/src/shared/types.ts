@@ -65,6 +65,9 @@ export const searchRequestSchema = z.object({
 });
 export type SearchRequest = z.infer<typeof searchRequestSchema>;
 
+export const searchMatchSourceSchema = z.enum(['path', 'lexical', 'semantic']);
+export type SearchMatchSource = z.infer<typeof searchMatchSourceSchema>;
+
 export const searchResultSchema = z.object({
   id: z.string(),
   memory_type: memoryTypeSchema,
@@ -72,8 +75,13 @@ export const searchResultSchema = z.object({
   tags: z.array(z.string()),
   is_pinned: z.boolean(),
   path_matchers: z.array(z.string()),
-  score: z.number(),
+  score: z.number().min(0).max(1),
   source: z.enum(['path', 'hybrid']),
+  matched_by: z.array(searchMatchSourceSchema).optional(),
+  path_score: z.number().min(0).max(1).optional(),
+  lexical_score: z.number().min(0).max(1).optional(),
+  semantic_score: z.number().min(0).max(1).optional(),
+  rrf_score: z.number().nonnegative().optional(),
   updated_at: z.string(),
 });
 export type SearchResult = z.infer<typeof searchResultSchema>;

@@ -10,6 +10,17 @@ export const sessionStartPayloadSchema = z
 
 export type SessionStartPayload = z.infer<typeof sessionStartPayloadSchema>;
 
+export const userPromptSubmitPayloadSchema = z
+  .object({
+    cwd: z.string().optional(),
+    project_root: z.string().optional(),
+    prompt: z.string().optional(),
+    session_id: z.string().optional(),
+  })
+  .catchall(z.unknown());
+
+export type UserPromptSubmitPayload = z.infer<typeof userPromptSubmitPayloadSchema>;
+
 export const stopPayloadSchema = z
   .object({
     cwd: z.string().optional(),

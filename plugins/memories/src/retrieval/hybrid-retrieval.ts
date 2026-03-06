@@ -3,7 +3,7 @@ import picomatch from 'picomatch';
 import { DEFAULT_LEXICAL_K, DEFAULT_SEMANTIC_K } from '../shared/constants.js';
 import { normalizePathForMatch } from '../shared/fs-utils.js';
 import { applyTokenBudget } from '../shared/token-budget.js';
-import type { MemoryType, SearchResult } from '../shared/types.js';
+import type { MemoryType, SearchMatchSource, SearchResult } from '../shared/types.js';
 import type { MemoryStore } from '../storage/database.js';
 import type { EmbeddingClient } from './embeddings.js';
 
@@ -64,6 +64,29 @@ function cosineSimilarity(a: number[], b: number[]): number {
     return 0;
   }
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function clamp01(value: number): number {
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 1) {
+    return 1;
+  }
+  return value;
+}
+
+function normalizeRankScore(rawScore: number, maxScore: number): number {
+  if (maxScore <= 0) {
+    return 0;
+  }
+  return clamp01(rawScore / maxScore);
+}
+
+function orderMatchSources(values: Iterable<SearchMatchSource>): SearchMatchSource[] {
+  const order: SearchMatchSource[] = ['path', 'lexical', 'semantic'];
+  const set = new Set(values);
+  return order.filter((value) => set.has(value));
 }
 
 export class RetrievalService {
@@ -163,6 +186,8 @@ export class RetrievalService {
           is_pinned: row.is_pinned,
           path_matchers: pathMatchers,
           score: normalizedScore,
+          matched_by: ['semantic'] as SearchMatchSource[],
+          semantic_score: normalizedScore,
           source: 'hybrid' as const,
           updated_at: row.updated_at,
         };
@@ -220,11 +245,16 @@ export class RetrievalService {
 
     ranked.sort((left, right) => this.sortPathMatches(left, right));
 
-    return ranked.map((entry, index) => ({
-      ...entry.memory,
-      source: 'path',
-      score: 1 / (index + 1),
-    }));
+    return ranked.map((entry, index) => {
+      const pathScore = 1 / (index + 1);
+      return {
+        ...entry.memory,
+        source: 'path',
+        score: pathScore,
+        matched_by: ['path'] as SearchMatchSource[],
+        path_score: pathScore,
+      };
+    });
   }
 
   private matchesAnyTarget(pathMatcher: string, targets: string[]): boolean {
@@ -247,10 +277,13 @@ export class RetrievalService {
         bestRank: number;
         representative: SearchResult;
         rrfScore: number;
+        matchedBy: Set<SearchMatchSource>;
+        lexicalScore?: number | undefined;
+        semanticScore?: number | undefined;
       }
     >();
 
-    const addRankedBranch = (branch: SearchResult[]): void => {
+    const addRankedBranch = (branch: SearchResult[], branchName: 'lexical' | 'semantic'): void => {
       for (let index = 0; index < branch.length; index += 1) {
         const result = branch[index];
         if (!result) {
@@ -266,11 +299,20 @@ export class RetrievalService {
             representative: result,
             bestRank: rank,
             rrfScore: contribution,
+            matchedBy: new Set<SearchMatchSource>([branchName]),
+            lexicalScore: branchName === 'lexical' ? result.lexical_score ?? result.score : undefined,
+            semanticScore: branchName === 'semantic' ? result.semantic_score ?? result.score : undefined,
           });
           continue;
         }
 
         current.rrfScore += contribution;
+        current.matchedBy.add(branchName);
+        if (branchName === 'lexical') {
+          current.lexicalScore = result.lexical_score ?? result.score;
+        } else {
+          current.semanticScore = result.semantic_score ?? result.score;
+        }
         if (rank < current.bestRank) {
           current.bestRank = rank;
           current.representative = result;
@@ -278,13 +320,22 @@ export class RetrievalService {
       }
     };
 
-    addRankedBranch(input.lexical);
-    addRankedBranch(input.semantic);
+    addRankedBranch(input.lexical, 'lexical');
+    addRankedBranch(input.semantic, 'semantic');
 
-    return [...byMemoryId.values()]
+    const mergedValues = [...byMemoryId.values()];
+    const maxRrfScore = mergedValues.reduce((best, entry) => {
+      return Math.max(best, entry.rrfScore);
+    }, 0);
+
+    return mergedValues
       .map((entry) => ({
         ...entry.representative,
-        score: entry.rrfScore,
+        score: normalizeRankScore(entry.rrfScore, maxRrfScore),
+        matched_by: orderMatchSources(entry.matchedBy),
+        ...(typeof entry.lexicalScore === 'number' ? { lexical_score: entry.lexicalScore } : {}),
+        ...(typeof entry.semanticScore === 'number' ? { semantic_score: entry.semanticScore } : {}),
+        rrf_score: entry.rrfScore,
         source: 'hybrid' as const,
       }))
       .sort((left, right) => this.sortSearchResults(left, right))
