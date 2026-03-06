@@ -5,6 +5,10 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// src/hooks/session-start.ts
+import { execFile } from "child_process";
+import { promisify } from "util";
+
 // src/engine/ensure-engine.ts
 import { spawn } from "child_process";
 import { existsSync } from "fs";
@@ -13829,7 +13833,36 @@ var MAX_SEARCH_LIMIT = 50;
 var DEFAULT_SEMANTIC_K = 30;
 var DEFAULT_LEXICAL_K = 30;
 var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
+var DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
+var DEFAULT_OLLAMA_TIMEOUT_MS = 1e4;
 var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
+var OLLAMA_PROFILE_CONFIG = {
+  bge: {
+    dimensions: 1024,
+    model: "bge-m3"
+  },
+  nomic: {
+    dimensions: 768,
+    model: "nomic-embed-text"
+  }
+};
+function parsePositiveInteger(rawValue, fallback) {
+  if (!rawValue) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(rawValue.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+function resolveOllamaProfile(rawProfile) {
+  const normalized = rawProfile?.trim().toLowerCase();
+  if (normalized === "nomic") {
+    return "nomic";
+  }
+  return "bge";
+}
 
 // src/shared/lockfile.ts
 var lockMetadataSchema = external_exports.object({
@@ -14421,12 +14454,18 @@ var sessionEndPayloadSchema = external_exports.object({
 }).catchall(external_exports.unknown());
 
 // src/hooks/session-start.ts
+var execFileAsync = promisify(execFile);
+var GENERIC_STARTUP_FAILURE_MESSAGE = "Memories could not be launched, see details in the logs";
+var MAX_SESSION_START_OLLAMA_TIMEOUT_MS = 2500;
 var defaultDependencies = {
   appendEventLogFn: appendEventLog,
+  diagnoseOllamaFn: diagnoseOllamaStartupIssue,
   ensureEngineFn: ensureEngine,
   ensureProjectDirectoriesFn: ensureProjectDirectories,
   getEngineJsonFn: getEngineJson,
   postEngineJsonFn: postEngineJson
+};
+var OllamaServiceNotRunningError = class extends Error {
 };
 function renderStartupMemoryContext(markdown) {
   const indentedMarkdown = markdown.split("\n").map((line) => `    ${line}`).join("\n");
@@ -14447,12 +14486,168 @@ function renderStartupMemoryContext(markdown) {
     "</memory>"
   ].join("\n");
 }
+function macOsOllamaSetupCommands(model) {
+  return ["brew install ollama", "brew services start ollama", `ollama pull ${model}`];
+}
+function describeOllamaIssue(code, model) {
+  switch (code) {
+    case "ollama_not_installed":
+      return "Ollama is not installed";
+    case "ollama_service_not_running":
+      return "Ollama is installed but the background service is not running";
+    case "ollama_model_missing":
+      return `the Ollama model \`${model}\` is not installed`;
+  }
+}
+function renderOllamaSystemMessage(code, model) {
+  const [installCommand, startCommand, pullCommand] = macOsOllamaSetupCommands(model);
+  return `Memories could not be launched on macOS because ${describeOllamaIssue(code, model)}. Run \`${installCommand}\`, \`${startCommand}\`, and \`${pullCommand}\`. Or ask Claude to do it for you.`;
+}
+function renderOllamaAdditionalContext(code, model) {
+  const commands = macOsOllamaSetupCommands(model);
+  return [
+    "<memory-setup>",
+    `Memories are unavailable because ${describeOllamaIssue(code, model)} on macOS.`,
+    "If the user asks you to fix this, run these commands in order:",
+    ...commands.map((command) => `- \`${command}\``),
+    "Do not run setup commands unless the user asks.",
+    "</memory-setup>"
+  ].join("\n");
+}
+function createOllamaStartupIssue(code, model, detail) {
+  return {
+    additionalContext: renderOllamaAdditionalContext(code, model),
+    code,
+    detail,
+    systemMessage: renderOllamaSystemMessage(code, model)
+  };
+}
+async function isOllamaInstalled() {
+  try {
+    await execFileAsync("ollama", ["--version"]);
+    return true;
+  } catch (error48) {
+    if (error48?.code === "ENOENT") {
+      return false;
+    }
+    throw error48;
+  }
+}
+function startupOllamaTimeoutMs() {
+  const configuredTimeoutMs = parsePositiveInteger(
+    process.env.MEMORIES_OLLAMA_TIMEOUT_MS,
+    DEFAULT_OLLAMA_TIMEOUT_MS
+  );
+  return Math.min(configuredTimeoutMs, MAX_SESSION_START_OLLAMA_TIMEOUT_MS);
+}
+async function fetchOllamaModelNames(baseUrl) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), startupOllamaTimeoutMs());
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/api/tags`, {
+      method: "GET",
+      signal: controller.signal
+    });
+  } catch (error48) {
+    throw new OllamaServiceNotRunningError(
+      error48 instanceof Error ? error48.message : String(error48)
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw new Error(`Ollama tags request failed: ${response.status} ${response.statusText} ${responseText}`);
+  }
+  const payload = await response.json();
+  if (!Array.isArray(payload.models)) {
+    throw new Error("Ollama tags response did not include a models array");
+  }
+  return payload.models.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const names = [];
+    const maybeEntry = entry;
+    if (typeof maybeEntry.name === "string") {
+      names.push(maybeEntry.name);
+    }
+    if (typeof maybeEntry.model === "string") {
+      names.push(maybeEntry.model);
+    }
+    return names;
+  });
+}
+function hasOllamaModel(modelNames, model) {
+  return modelNames.some((entry) => {
+    const trimmed = entry.trim();
+    return trimmed === model || trimmed.startsWith(`${model}:`) || trimmed.split(":")[0] === model;
+  });
+}
+async function diagnoseOllamaStartupIssue() {
+  const profile = resolveOllamaProfile(process.env.MEMORIES_OLLAMA_PROFILE);
+  const model = OLLAMA_PROFILE_CONFIG[profile].model;
+  const baseUrl = (process.env.MEMORIES_OLLAMA_URL ?? DEFAULT_OLLAMA_URL).trim().replace(/\/+$/, "");
+  if (!baseUrl) {
+    throw new Error("Ollama URL is blank; memories require Ollama to launch.");
+  }
+  if (!await isOllamaInstalled()) {
+    return createOllamaStartupIssue(
+      "ollama_not_installed",
+      model,
+      `OLLAMA_NOT_INSTALLED: ollama CLI not found; model=${model}; baseUrl=${baseUrl}`
+    );
+  }
+  let modelNames;
+  try {
+    modelNames = await fetchOllamaModelNames(baseUrl);
+  } catch (error48) {
+    if (error48 instanceof OllamaServiceNotRunningError) {
+      return createOllamaStartupIssue(
+        "ollama_service_not_running",
+        model,
+        `OLLAMA_SERVICE_NOT_RUNNING: ${error48.message}; model=${model}; baseUrl=${baseUrl}`
+      );
+    }
+    throw error48;
+  }
+  if (!hasOllamaModel(modelNames, model)) {
+    return createOllamaStartupIssue(
+      "ollama_model_missing",
+      model,
+      `OLLAMA_MODEL_MISSING: model=${model}; baseUrl=${baseUrl}; available=${modelNames.join(", ") || "none"}`
+    );
+  }
+  return null;
+}
 async function handleSessionStart(payload, dependencies = defaultDependencies) {
   const projectRoot = resolveHookProjectRoot(payload);
-  const paths = await dependencies.ensureProjectDirectoriesFn(projectRoot);
+  const sessionId = payload.session_id?.trim();
+  let eventLogPath = null;
   try {
+    const paths = await dependencies.ensureProjectDirectoriesFn(projectRoot);
+    eventLogPath = paths.eventLogPath;
+    const ollamaIssue = await dependencies.diagnoseOllamaFn();
+    if (ollamaIssue) {
+      await dependencies.appendEventLogFn(paths.eventLogPath, {
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        event: "SessionStart",
+        kind: "hook",
+        status: "skipped",
+        ...sessionId ? { session_id: sessionId } : {},
+        detail: ollamaIssue.detail
+      });
+      return {
+        continue: true,
+        systemMessage: ollamaIssue.systemMessage,
+        hookSpecificOutput: {
+          hookEventName: "SessionStart",
+          additionalContext: ollamaIssue.additionalContext
+        }
+      };
+    }
     const endpoint = await dependencies.ensureEngineFn(projectRoot);
-    const sessionId = payload.session_id?.trim();
     if (sessionId) {
       await dependencies.postEngineJsonFn(endpoint, "/sessions/connect", { session_id: sessionId });
     }
@@ -14481,30 +14676,37 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
       }
     };
   } catch (error48) {
-    if (isEngineUnavailableError(error48)) {
-      await dependencies.appendEventLogFn(paths.eventLogPath, {
+    if (isEngineUnavailableError(error48) && eventLogPath) {
+      await dependencies.appendEventLogFn(eventLogPath, {
         at: (/* @__PURE__ */ new Date()).toISOString(),
         event: "SessionStart",
         kind: "hook",
         status: "skipped",
+        ...sessionId ? { session_id: sessionId } : {},
         detail: error48 instanceof Error ? error48.message : String(error48)
       });
       return {
         continue: true,
-        systemMessage: "Memory engine unavailable; continuing without memory context."
+        systemMessage: GENERIC_STARTUP_FAILURE_MESSAGE
       };
     }
-    await dependencies.appendEventLogFn(paths.eventLogPath, {
-      at: (/* @__PURE__ */ new Date()).toISOString(),
-      event: "SessionStart",
-      kind: "hook",
-      status: "error",
-      detail: error48 instanceof Error ? error48.message : String(error48)
-    });
+    if (eventLogPath) {
+      await dependencies.appendEventLogFn(eventLogPath, {
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        event: "SessionStart",
+        kind: "hook",
+        status: "error",
+        ...sessionId ? { session_id: sessionId } : {},
+        detail: error48 instanceof Error ? error48.message : String(error48)
+      });
+    }
     logError("SessionStart hook failed", {
       error: error48 instanceof Error ? error48.message : String(error48)
     });
-    return { continue: true };
+    return {
+      continue: true,
+      systemMessage: GENERIC_STARTUP_FAILURE_MESSAGE
+    };
   }
 }
 async function run() {
