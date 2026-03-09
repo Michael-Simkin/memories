@@ -18,6 +18,11 @@ export interface NodeRuntimeDescriptor extends NodeRuntimeCandidate {
   major: number;
 }
 
+export interface NpmInvocation {
+  argsPrefix: string[];
+  command: string;
+}
+
 export function parseNodeMajor(version: string): number {
   const majorText = version.trim().replace(/^v/i, '').split('.')[0] ?? '';
   const major = Number.parseInt(majorText, 10);
@@ -94,6 +99,37 @@ export async function resolveEngineNodeRuntime(): Promise<NodeRuntimeDescriptor>
   throw new Error(
     `Node ${REQUIRED_ENGINE_NODE_MAJOR}.x is required for engine startup (${highestDetail}). ` +
       `Install it with \`nvm install ${REQUIRED_ENGINE_NODE_MAJOR}\` or set MEMORIES_NODE_BIN to an absolute Node ${REQUIRED_ENGINE_NODE_MAJOR} binary path.`,
+  );
+}
+
+export function resolveNpmInvocation(nodeExecutable: string): NpmInvocation {
+  const nodeDirectory = path.dirname(nodeExecutable);
+  const npmWrapper = path.join(nodeDirectory, process.platform === 'win32' ? 'npm.cmd' : 'npm');
+  if (existsSync(npmWrapper)) {
+    return {
+      argsPrefix: [],
+      command: npmWrapper,
+    };
+  }
+
+  const npmCliPath = path.resolve(
+    nodeDirectory,
+    '..',
+    'lib',
+    'node_modules',
+    'npm',
+    'bin',
+    'npm-cli.js',
+  );
+  if (existsSync(npmCliPath)) {
+    return {
+      argsPrefix: [npmCliPath],
+      command: nodeExecutable,
+    };
+  }
+
+  throw new Error(
+    `npm was not found alongside ${nodeExecutable}. Install a full Node ${REQUIRED_ENGINE_NODE_MAJOR}+ distribution or set MEMORIES_NODE_BIN to a Node binary bundled with npm.`,
   );
 }
 

@@ -14284,6 +14284,35 @@ async function appendEngineStderrMarker(engineStderrPath, message) {
 [${(/* @__PURE__ */ new Date()).toISOString()}] ${message}
 `, "utf8");
 }
+async function readLatestEngineStderrSummary(engineStderrPath) {
+  try {
+    const raw = await readFile2(engineStderrPath, "utf8");
+    const lines = raw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index];
+      if (!line) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(line);
+        const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
+        const detail = typeof parsed.data?.error === "string" ? parsed.data.error.trim() : "";
+        const combined = [message, detail].filter(Boolean).join(": ");
+        if (combined) {
+          return combined.replaceAll(/\s+/g, " ").trim();
+        }
+      } catch {
+        return line.replaceAll(/\s+/g, " ").trim();
+      }
+    }
+    return null;
+  } catch (error48) {
+    if (isErrnoException2(error48) && error48.code === "ENOENT") {
+      return null;
+    }
+    throw error48;
+  }
+}
 function normalizeCommand(command) {
   return command.replaceAll("\\", "/").trim();
 }
@@ -14405,7 +14434,10 @@ async function ensureEngine(projectRoot) {
       paths.engineStderrPath,
       `Launching engine for ${projectRoot} via ${nodeRuntime.executable} (v${nodeRuntime.version})`
     );
-    const spawnState = { failure: null };
+    const spawnState = {
+      exit: null,
+      failure: null
+    };
     const stderrFd = openSync(paths.engineStderrPath, "a");
     let child;
     try {
@@ -14424,6 +14456,9 @@ async function ensureEngine(projectRoot) {
     child.once("error", (spawnError) => {
       spawnState.failure = spawnError;
     });
+    child.once("exit", (code, signal) => {
+      spawnState.exit = { code, signal };
+    });
     child.unref();
     while (Date.now() < deadlineMs) {
       if (spawnState.failure) {
@@ -14435,6 +14470,13 @@ async function ensureEngine(projectRoot) {
       if (endpoint) {
         logInfo("Engine process is healthy", { ...endpoint });
         return endpoint;
+      }
+      if (spawnState.exit) {
+        const exitDetail = spawnState.exit.signal ? `signal ${spawnState.exit.signal}` : `exit code ${spawnState.exit.code ?? "unknown"}`;
+        const stderrSummary = await readLatestEngineStderrSummary(paths.engineStderrPath);
+        throw engineUnavailable(
+          `Engine process exited before becoming healthy with ${exitDetail}.${stderrSummary ? ` Last engine log: ${stderrSummary}.` : ""} See ${paths.engineStderrPath}.`
+        );
       }
       await wait(pollMs);
     }

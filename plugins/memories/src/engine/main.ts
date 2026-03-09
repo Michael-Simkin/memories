@@ -14,6 +14,7 @@ import { removeLockIfOwned, writeLockMetadata } from '../shared/lockfile.js';
 import { logError, logInfo, logWarn } from '../shared/logger.js';
 import { isNativeAbiMismatchError, resolveNativeRuntimeRoot } from '../shared/native-runtime.js';
 import { ensureProjectDirectories, resolvePluginRoot, resolveProjectRoot } from '../shared/paths.js';
+import { resolveNpmInvocation } from './node-runtime.js';
 
 const SQLITE_VEC_VERSION = '0.1.7-alpha.2';
 const NATIVE_INSTALL_TIMEOUT_MS = 120_000;
@@ -76,9 +77,10 @@ async function ensureNativeRoot(pluginRoot: string): Promise<string> {
 
 async function installNativePackage(nativeRoot: string, packageSpec: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
+    const npmInvocation = resolveNpmInvocation(process.execPath);
     execFile(
-      'npm',
-      ['install', '--prefix', nativeRoot, packageSpec],
+      npmInvocation.command,
+      [...npmInvocation.argsPrefix, 'install', '--prefix', nativeRoot, packageSpec],
       { timeout: NATIVE_INSTALL_TIMEOUT_MS },
       (error, _stdout, stderr) => {
         if (error) {
@@ -93,9 +95,10 @@ async function installNativePackage(nativeRoot: string, packageSpec: string): Pr
 
 async function rebuildNativePackage(nativeRoot: string, packageName: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
+    const npmInvocation = resolveNpmInvocation(process.execPath);
     execFile(
-      'npm',
-      ['rebuild', '--prefix', nativeRoot, packageName],
+      npmInvocation.command,
+      [...npmInvocation.argsPrefix, 'rebuild', '--prefix', nativeRoot, packageName],
       { timeout: NATIVE_INSTALL_TIMEOUT_MS },
       (error, _stdout, stderr) => {
         if (error) {

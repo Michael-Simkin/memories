@@ -8,14 +8,29 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { writeLockMetadata } from '../shared/lockfile.js';
 import { ensureEngine } from './ensure-engine.js';
+import { REQUIRED_ENGINE_NODE_MAJOR } from './node-runtime.js';
 
 const originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+const originalNodeBin = process.env.MEMORIES_NODE_BIN;
+const originalBootTimeout = process.env.MEMORIES_ENGINE_BOOT_TIMEOUT_MS;
 
 afterEach(() => {
   if (originalPluginRoot === undefined) {
     delete process.env.CLAUDE_PLUGIN_ROOT;
   } else {
     process.env.CLAUDE_PLUGIN_ROOT = originalPluginRoot;
+  }
+
+  if (originalNodeBin === undefined) {
+    delete process.env.MEMORIES_NODE_BIN;
+  } else {
+    process.env.MEMORIES_NODE_BIN = originalNodeBin;
+  }
+
+  if (originalBootTimeout === undefined) {
+    delete process.env.MEMORIES_ENGINE_BOOT_TIMEOUT_MS;
+  } else {
+    process.env.MEMORIES_ENGINE_BOOT_TIMEOUT_MS = originalBootTimeout;
   }
 });
 
@@ -27,6 +42,14 @@ async function createProjectRoot(): Promise<{ lockPath: string; projectRoot: str
     lockPath: path.join(memoriesPath, 'engine.lock.json'),
     projectRoot,
   };
+}
+
+async function createPluginRootWithEngineEntrypoint(contents: string): Promise<string> {
+  const pluginRoot = await mkdtemp(path.join(os.tmpdir(), 'memories-plugin-'));
+  const engineDirectory = path.join(pluginRoot, 'dist', 'engine');
+  await mkdir(engineDirectory, { recursive: true });
+  await writeFile(path.join(engineDirectory, 'main.js'), contents, 'utf8');
+  return pluginRoot;
 }
 
 async function createHealthServer(): Promise<{
@@ -121,5 +144,29 @@ describe('ensureEngine', () => {
     );
 
     await expect(ensureEngine(projectRoot)).rejects.toThrow('Engine entrypoint missing');
+  });
+
+  it('fails fast when the spawned engine exits before becoming healthy', async () => {
+    const currentNodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '', 10);
+    if (!Number.isFinite(currentNodeMajor) || currentNodeMajor < REQUIRED_ENGINE_NODE_MAJOR) {
+      return;
+    }
+
+    const { projectRoot } = await createProjectRoot();
+    const pluginRoot = await createPluginRootWithEngineEntrypoint(
+      [
+        "process.stderr.write(JSON.stringify({ message: 'Engine bootstrap failed', data: { error: 'boom' } }) + '\\n');",
+        'process.exit(1);',
+      ].join('\n'),
+    );
+    process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+    process.env.MEMORIES_NODE_BIN = process.execPath;
+    process.env.MEMORIES_ENGINE_BOOT_TIMEOUT_MS = '30000';
+
+    const startedAt = Date.now();
+    await expect(ensureEngine(projectRoot)).rejects.toThrow(
+      /Engine process exited before becoming healthy.*Engine bootstrap failed: boom/i,
+    );
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
   });
 });

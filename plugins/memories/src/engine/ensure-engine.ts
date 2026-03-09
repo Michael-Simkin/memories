@@ -31,6 +31,11 @@ interface StartupLockMetadata {
   started_at: string;
 }
 
+interface EngineExitState {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
 function parseTimeoutMs(environmentName: string, fallback: number): number {
   const rawValue = process.env[environmentName];
   if (!rawValue) {
@@ -181,6 +186,44 @@ async function appendEngineStderrMarker(engineStderrPath: string, message: strin
   await appendFile(engineStderrPath, `\n[${new Date().toISOString()}] ${message}\n`, 'utf8');
 }
 
+async function readLatestEngineStderrSummary(engineStderrPath: string): Promise<string | null> {
+  try {
+    const raw = await readFile(engineStderrPath, 'utf8');
+    const lines = raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line): line is string => line.length > 0);
+
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index];
+      if (!line) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(line) as {
+          data?: { error?: unknown };
+          message?: unknown;
+        };
+        const message = typeof parsed.message === 'string' ? parsed.message.trim() : '';
+        const detail = typeof parsed.data?.error === 'string' ? parsed.data.error.trim() : '';
+        const combined = [message, detail].filter(Boolean).join(': ');
+        if (combined) {
+          return combined.replaceAll(/\s+/g, ' ').trim();
+        }
+      } catch {
+        return line.replaceAll(/\s+/g, ' ').trim();
+      }
+    }
+
+    return null;
+  } catch (error) {
+    if (isErrnoException(error) && error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+}
+
 function normalizeCommand(command: string): string {
   return command.replaceAll('\\', '/').trim();
 }
@@ -326,7 +369,10 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
       `Launching engine for ${projectRoot} via ${nodeRuntime.executable} (v${nodeRuntime.version})`,
     );
 
-    const spawnState: { failure: Error | null } = { failure: null };
+    const spawnState: { exit: EngineExitState | null; failure: Error | null } = {
+      exit: null,
+      failure: null,
+    };
     const stderrFd = openSync(paths.engineStderrPath, 'a');
     let child: ReturnType<typeof spawn>;
     try {
@@ -346,6 +392,9 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
     child.once('error', (spawnError) => {
       spawnState.failure = spawnError;
     });
+    child.once('exit', (code, signal) => {
+      spawnState.exit = { code, signal };
+    });
     child.unref();
 
     while (Date.now() < deadlineMs) {
@@ -359,6 +408,16 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
       if (endpoint) {
         logInfo('Engine process is healthy', { ...endpoint });
         return endpoint;
+      }
+
+      if (spawnState.exit) {
+        const exitDetail = spawnState.exit.signal
+          ? `signal ${spawnState.exit.signal}`
+          : `exit code ${spawnState.exit.code ?? 'unknown'}`;
+        const stderrSummary = await readLatestEngineStderrSummary(paths.engineStderrPath);
+        throw engineUnavailable(
+          `Engine process exited before becoming healthy with ${exitDetail}.${stderrSummary ? ` Last engine log: ${stderrSummary}.` : ''} See ${paths.engineStderrPath}.`,
+        );
       }
 
       await wait(pollMs);
