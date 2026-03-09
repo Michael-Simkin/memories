@@ -11,11 +11,12 @@ import {
   DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS,
   DEFAULT_BACKGROUND_HOOK_SWEEP_INTERVAL_MS,
   DEFAULT_ENGINE_DRAIN_GRACE_MS,
+  LOOPBACK_HOST,
   OLLAMA_PROFILE_CONFIG,
   resolveOllamaProfile,
 } from '../shared/constants.js';
 import { isPidAlive } from '../shared/fs-utils.js';
-import { updateConnectedSessions } from '../shared/lockfile.js';
+import { readLockMetadata, writeLockMetadata } from '../shared/lockfile.js';
 import { logError, logWarn } from '../shared/logger.js';
 import { appendEventLog, readEventLogs } from '../shared/logs.js';
 import {
@@ -125,10 +126,11 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
   });
   const embeddingClient = new EmbeddingClient();
   const retrieval = new RetrievalService(store, embeddingClient);
-  const activeSessions = new Set<string>();
+  let activeSessions = new Set<string>();
   const activeBackgroundHooks = new Map<string, ActiveBackgroundHook>();
   let drainTriggered = false;
   let drainTimer: ReturnType<typeof setTimeout> | null = null;
+  let sessionMutationQueue: Promise<void> = Promise.resolve();
 
   function clearDrainTimer(): void {
     if (!drainTimer) {
@@ -141,6 +143,88 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
   function cancelDrain(): void {
     clearDrainTimer();
     drainTriggered = false;
+  }
+
+  function setActiveSessions(nextSessionIds: string[]): void {
+    activeSessions = new Set(nextSessionIds);
+  }
+
+  function currentSessionIds(): string[] {
+    return [...activeSessions].sort();
+  }
+
+  function sameSessionSnapshot(nextSessionIds: string[]): boolean {
+    if (activeSessions.size !== nextSessionIds.length) {
+      return false;
+    }
+    return nextSessionIds.every((sessionId) => activeSessions.has(sessionId));
+  }
+
+  function queueSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = sessionMutationQueue.then(operation, operation);
+    sessionMutationQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  async function writeOwnedSessionSnapshot(nextSessionIds: string[]): Promise<string[]> {
+    const currentLock = await readLockMetadata(options.lockPath);
+    if (currentLock && currentLock.pid !== process.pid && isPidAlive(currentLock.pid)) {
+      throw new Error(`Engine lock is owned by another live process (${currentLock.pid})`);
+    }
+
+    const startedAt = currentLock?.pid === process.pid ? currentLock.started_at : new Date(startedAtMs).toISOString();
+    const sessionIds = [...new Set(nextSessionIds.map((sessionId) => sessionId.trim()).filter(Boolean))].sort();
+    await writeLockMetadata(options.lockPath, {
+      host: LOOPBACK_HOST,
+      port: options.port,
+      pid: process.pid,
+      started_at: startedAt,
+      connected_session_ids: sessionIds,
+    });
+    return sessionIds;
+  }
+
+  async function reconcileSessionsWithLock(): Promise<void> {
+    const currentLock = await readLockMetadata(options.lockPath);
+    if (!currentLock) {
+      if (activeSessions.size > 0) {
+        logWarn('Engine lock metadata disappeared; recreating it from active sessions', {
+          sessions: currentSessionIds(),
+        });
+        const restoredSessions = await writeOwnedSessionSnapshot(currentSessionIds());
+        setActiveSessions(restoredSessions);
+      }
+      return;
+    }
+
+    if (currentLock.pid === process.pid) {
+      if (!sameSessionSnapshot(currentLock.connected_session_ids)) {
+        logWarn('Reconciled in-memory sessions from owned lock metadata', {
+          in_memory_sessions: currentSessionIds(),
+          lock_sessions: currentLock.connected_session_ids,
+        });
+        setActiveSessions(currentLock.connected_session_ids);
+      }
+      return;
+    }
+
+    if (!isPidAlive(currentLock.pid)) {
+      const restoredSessions = await writeOwnedSessionSnapshot(currentSessionIds());
+      setActiveSessions(restoredSessions);
+      return;
+    }
+
+    if (activeSessions.size > 0) {
+      logWarn('Detected a second live engine for this project; clearing local ghost sessions', {
+        in_memory_sessions: currentSessionIds(),
+        lock_owner_pid: currentLock.pid,
+        lock_sessions: currentLock.connected_session_ids,
+      });
+      setActiveSessions([]);
+    }
   }
 
   function serializeBackgroundHook(hook: ActiveBackgroundHook): BackgroundHookRecord {
@@ -283,6 +367,10 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
 
   app.get('/stats', async (_request: Request, response: Response) => {
     await sweepExpiredBackgroundHooks();
+    await queueSessionMutation(async () => {
+      await reconcileSessionsWithLock();
+    });
+    await maybeTriggerDrain();
     response.json({
       active_sessions: activeSessions.size,
       active_background_hooks: activeBackgroundHooks.size,
@@ -300,9 +388,15 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
     }
 
     const sessionId = parsed.data.session_id;
-    activeSessions.add(sessionId);
     cancelDrain();
-    await updateConnectedSessions(options.lockPath, (currentSessions) => [...currentSessions, sessionId]);
+    const activeSessionCount = await queueSessionMutation(async () => {
+      await reconcileSessionsWithLock();
+      const nextSessionIds = new Set(currentSessionIds());
+      nextSessionIds.add(sessionId);
+      const persistedSessions = await writeOwnedSessionSnapshot([...nextSessionIds]);
+      setActiveSessions(persistedSessions);
+      return activeSessions.size;
+    });
 
     await appendEventLog(
       options.eventLogPath,
@@ -315,7 +409,7 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
       }),
     );
 
-    return response.json({ active_sessions: activeSessions.size, ok: true });
+    return response.json({ active_sessions: activeSessionCount, ok: true });
   });
 
   app.post('/sessions/disconnect', async (request: Request, response: Response) => {
@@ -325,10 +419,14 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
     }
 
     const sessionId = parsed.data.session_id;
-    activeSessions.delete(sessionId);
-    await updateConnectedSessions(options.lockPath, (currentSessions) =>
-      currentSessions.filter((value) => value !== sessionId),
-    );
+    const activeSessionCount = await queueSessionMutation(async () => {
+      await reconcileSessionsWithLock();
+      const persistedSessions = await writeOwnedSessionSnapshot(
+        currentSessionIds().filter((value) => value !== sessionId),
+      );
+      setActiveSessions(persistedSessions);
+      return activeSessions.size;
+    });
 
     await appendEventLog(
       options.eventLogPath,
@@ -343,7 +441,7 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
 
     await maybeTriggerDrain();
 
-    return response.json({ active_sessions: activeSessions.size, ok: true });
+    return response.json({ active_sessions: activeSessionCount, ok: true });
   });
 
   app.get('/background-hooks', async (_request: Request, response: Response) => {

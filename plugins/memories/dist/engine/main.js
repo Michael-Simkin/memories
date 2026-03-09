@@ -38982,6 +38982,8 @@ var LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, "localhost", "::1"];
 var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
 var MEMORY_DB_FILE = "ai_memory.db";
 var ENGINE_LOCK_FILE = "engine.lock.json";
+var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
+var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
 var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
 var DEFAULT_SEARCH_LIMIT = 10;
 var MAX_SEARCH_LIMIT = 50;
@@ -39645,18 +39647,6 @@ async function writeLockMetadata(lockPath, payload) {
     throw new Error(`Lock host must be loopback, received: ${normalized.host}`);
   }
   await atomicWriteJson(lockPath, normalized);
-}
-async function updateConnectedSessions(lockPath, updater) {
-  const current = await readLockMetadata(lockPath);
-  if (!current) {
-    return null;
-  }
-  const next = {
-    ...current,
-    connected_session_ids: uniqueNonEmpty(updater(current.connected_session_ids))
-  };
-  await writeLockMetadata(lockPath, next);
-  return next;
 }
 async function removeLockIfOwned(lockPath, ownerPid) {
   const current = await readLockMetadata(lockPath);
@@ -40549,10 +40539,11 @@ function createEngineApp(options) {
   });
   const embeddingClient = new EmbeddingClient();
   const retrieval = new RetrievalService(store, embeddingClient);
-  const activeSessions = /* @__PURE__ */ new Set();
+  let activeSessions = /* @__PURE__ */ new Set();
   const activeBackgroundHooks = /* @__PURE__ */ new Map();
   let drainTriggered = false;
   let drainTimer = null;
+  let sessionMutationQueue = Promise.resolve();
   function clearDrainTimer() {
     if (!drainTimer) {
       return;
@@ -40563,6 +40554,78 @@ function createEngineApp(options) {
   function cancelDrain() {
     clearDrainTimer();
     drainTriggered = false;
+  }
+  function setActiveSessions(nextSessionIds) {
+    activeSessions = new Set(nextSessionIds);
+  }
+  function currentSessionIds() {
+    return [...activeSessions].sort();
+  }
+  function sameSessionSnapshot(nextSessionIds) {
+    if (activeSessions.size !== nextSessionIds.length) {
+      return false;
+    }
+    return nextSessionIds.every((sessionId) => activeSessions.has(sessionId));
+  }
+  function queueSessionMutation(operation) {
+    const result = sessionMutationQueue.then(operation, operation);
+    sessionMutationQueue = result.then(
+      () => void 0,
+      () => void 0
+    );
+    return result;
+  }
+  async function writeOwnedSessionSnapshot(nextSessionIds) {
+    const currentLock = await readLockMetadata(options.lockPath);
+    if (currentLock && currentLock.pid !== process.pid && isPidAlive(currentLock.pid)) {
+      throw new Error(`Engine lock is owned by another live process (${currentLock.pid})`);
+    }
+    const startedAt = currentLock?.pid === process.pid ? currentLock.started_at : new Date(startedAtMs).toISOString();
+    const sessionIds = [...new Set(nextSessionIds.map((sessionId) => sessionId.trim()).filter(Boolean))].sort();
+    await writeLockMetadata(options.lockPath, {
+      host: LOOPBACK_HOST,
+      port: options.port,
+      pid: process.pid,
+      started_at: startedAt,
+      connected_session_ids: sessionIds
+    });
+    return sessionIds;
+  }
+  async function reconcileSessionsWithLock() {
+    const currentLock = await readLockMetadata(options.lockPath);
+    if (!currentLock) {
+      if (activeSessions.size > 0) {
+        logWarn("Engine lock metadata disappeared; recreating it from active sessions", {
+          sessions: currentSessionIds()
+        });
+        const restoredSessions = await writeOwnedSessionSnapshot(currentSessionIds());
+        setActiveSessions(restoredSessions);
+      }
+      return;
+    }
+    if (currentLock.pid === process.pid) {
+      if (!sameSessionSnapshot(currentLock.connected_session_ids)) {
+        logWarn("Reconciled in-memory sessions from owned lock metadata", {
+          in_memory_sessions: currentSessionIds(),
+          lock_sessions: currentLock.connected_session_ids
+        });
+        setActiveSessions(currentLock.connected_session_ids);
+      }
+      return;
+    }
+    if (!isPidAlive(currentLock.pid)) {
+      const restoredSessions = await writeOwnedSessionSnapshot(currentSessionIds());
+      setActiveSessions(restoredSessions);
+      return;
+    }
+    if (activeSessions.size > 0) {
+      logWarn("Detected a second live engine for this project; clearing local ghost sessions", {
+        in_memory_sessions: currentSessionIds(),
+        lock_owner_pid: currentLock.pid,
+        lock_sessions: currentLock.connected_session_ids
+      });
+      setActiveSessions([]);
+    }
   }
   function serializeBackgroundHook(hook) {
     return {
@@ -40682,6 +40745,10 @@ function createEngineApp(options) {
   });
   app.get("/stats", async (_request, response) => {
     await sweepExpiredBackgroundHooks();
+    await queueSessionMutation(async () => {
+      await reconcileSessionsWithLock();
+    });
+    await maybeTriggerDrain();
     response.json({
       active_sessions: activeSessions.size,
       active_background_hooks: activeBackgroundHooks.size,
@@ -40697,9 +40764,15 @@ function createEngineApp(options) {
       return sendError(response, 400, "INVALID_SESSION_ID", parsed.error.message);
     }
     const sessionId = parsed.data.session_id;
-    activeSessions.add(sessionId);
     cancelDrain();
-    await updateConnectedSessions(options.lockPath, (currentSessions) => [...currentSessions, sessionId]);
+    const activeSessionCount = await queueSessionMutation(async () => {
+      await reconcileSessionsWithLock();
+      const nextSessionIds = new Set(currentSessionIds());
+      nextSessionIds.add(sessionId);
+      const persistedSessions = await writeOwnedSessionSnapshot([...nextSessionIds]);
+      setActiveSessions(persistedSessions);
+      return activeSessions.size;
+    });
     await appendEventLog(
       options.eventLogPath,
       toEventLog({
@@ -40710,7 +40783,7 @@ function createEngineApp(options) {
         session_id: sessionId
       })
     );
-    return response.json({ active_sessions: activeSessions.size, ok: true });
+    return response.json({ active_sessions: activeSessionCount, ok: true });
   });
   app.post("/sessions/disconnect", async (request, response) => {
     const parsed = sessionsPayloadSchema.safeParse(request.body);
@@ -40718,11 +40791,14 @@ function createEngineApp(options) {
       return sendError(response, 400, "INVALID_SESSION_ID", parsed.error.message);
     }
     const sessionId = parsed.data.session_id;
-    activeSessions.delete(sessionId);
-    await updateConnectedSessions(
-      options.lockPath,
-      (currentSessions) => currentSessions.filter((value) => value !== sessionId)
-    );
+    const activeSessionCount = await queueSessionMutation(async () => {
+      await reconcileSessionsWithLock();
+      const persistedSessions = await writeOwnedSessionSnapshot(
+        currentSessionIds().filter((value) => value !== sessionId)
+      );
+      setActiveSessions(persistedSessions);
+      return activeSessions.size;
+    });
     await appendEventLog(
       options.eventLogPath,
       toEventLog({
@@ -40734,7 +40810,7 @@ function createEngineApp(options) {
       })
     );
     await maybeTriggerDrain();
-    return response.json({ active_sessions: activeSessions.size, ok: true });
+    return response.json({ active_sessions: activeSessionCount, ok: true });
   });
   app.get("/background-hooks", async (_request, response) => {
     await sweepExpiredBackgroundHooks();
@@ -41014,6 +41090,8 @@ function getProjectPaths(projectRoot) {
     memoriesDir,
     dbPath: path4.join(memoriesDir, MEMORY_DB_FILE),
     lockPath: path4.join(memoriesDir, ENGINE_LOCK_FILE),
+    startupLockPath: path4.join(memoriesDir, ENGINE_STARTUP_LOCK_FILE),
+    engineStderrPath: path4.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
     eventLogPath: path4.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
   };
 }

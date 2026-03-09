@@ -35789,6 +35789,8 @@ var LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, "localhost", "::1"];
 var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
 var MEMORY_DB_FILE = "ai_memory.db";
 var ENGINE_LOCK_FILE = "engine.lock.json";
+var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
+var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
 var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
 var DEFAULT_SEARCH_LIMIT = 10;
 var MAX_SEARCH_LIMIT = 50;
@@ -36013,6 +36015,8 @@ function getProjectPaths(projectRoot) {
     memoriesDir,
     dbPath: path2.join(memoriesDir, MEMORY_DB_FILE),
     lockPath: path2.join(memoriesDir, ENGINE_LOCK_FILE),
+    startupLockPath: path2.join(memoriesDir, ENGINE_STARTUP_LOCK_FILE),
+    engineStderrPath: path2.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
     eventLogPath: path2.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
   };
 }
@@ -36221,7 +36225,7 @@ async function runRecall(rawInput) {
 function createRecallMcpServer() {
   const server = new McpServer({
     name: "memories",
-    version: "0.2.21"
+    version: "0.2.22"
   });
   server.registerTool(
     "recall",

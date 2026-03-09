@@ -2,13 +2,21 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ENGINE_LOCK_FILE, MEMORY_DB_FILE, MEMORY_EVENTS_LOG_FILE } from './constants.js';
+import {
+  ENGINE_LOCK_FILE,
+  ENGINE_STARTUP_LOCK_FILE,
+  ENGINE_STDERR_LOG_FILE,
+  MEMORY_DB_FILE,
+  MEMORY_EVENTS_LOG_FILE,
+} from './constants.js';
 
 export interface ProjectPaths {
   projectRoot: string;
   memoriesDir: string;
   dbPath: string;
   lockPath: string;
+  startupLockPath: string;
+  engineStderrPath: string;
   eventLogPath: string;
 }
 
@@ -43,6 +51,8 @@ export function getProjectPaths(projectRoot: string): ProjectPaths {
     memoriesDir,
     dbPath: path.join(memoriesDir, MEMORY_DB_FILE),
     lockPath: path.join(memoriesDir, ENGINE_LOCK_FILE),
+    startupLockPath: path.join(memoriesDir, ENGINE_STARTUP_LOCK_FILE),
+    engineStderrPath: path.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
     eventLogPath: path.join(memoriesDir, MEMORY_EVENTS_LOG_FILE),
   };
 }

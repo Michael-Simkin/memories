@@ -6,13 +6,15 @@ var __export = (target, all) => {
 };
 
 // src/hooks/session-start.ts
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { execFile as execFile2 } from "child_process";
+import { promisify as promisify2 } from "util";
 
 // src/engine/ensure-engine.ts
-import { spawn } from "child_process";
-import { existsSync } from "fs";
+import { execFile, spawn } from "child_process";
+import { closeSync, existsSync, openSync } from "fs";
+import { appendFile as appendFile2, readFile as readFile2, writeFile as writeFile2 } from "fs/promises";
 import { setTimeout as wait } from "timers/promises";
+import { promisify } from "util";
 
 // src/shared/fs-utils.ts
 import { appendFile, readFile, rename, rm, writeFile } from "fs/promises";
@@ -13827,6 +13829,8 @@ var LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, "localhost", "::1"];
 var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
 var MEMORY_DB_FILE = "ai_memory.db";
 var ENGINE_LOCK_FILE = "engine.lock.json";
+var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
+var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
 var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
 var DEFAULT_SEARCH_LIMIT = 10;
 var MAX_SEARCH_LIMIT = 50;
@@ -14000,6 +14004,8 @@ function getProjectPaths(projectRoot) {
     memoriesDir,
     dbPath: path2.join(memoriesDir, MEMORY_DB_FILE),
     lockPath: path2.join(memoriesDir, ENGINE_LOCK_FILE),
+    startupLockPath: path2.join(memoriesDir, ENGINE_STARTUP_LOCK_FILE),
+    engineStderrPath: path2.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
     eventLogPath: path2.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
   };
 }
@@ -14015,6 +14021,10 @@ var REQUIRED_NODE_MAJOR = 20;
 var DEFAULT_HEALTH_TIMEOUT_MS = 1e3;
 var DEFAULT_BOOT_TIMEOUT_MS = 45e3;
 var DEFAULT_BOOT_POLL_MS = 120;
+var DEFAULT_UNHEALTHY_ENGINE_GRACE_MS = 2e3;
+var DEFAULT_ENGINE_TERMINATION_TIMEOUT_MS = 5e3;
+var STARTUP_LOCK_STALE_MULTIPLIER = 2;
+var execFileAsync = promisify(execFile);
 function parseTimeoutMs(environmentName, fallback) {
   const rawValue = process.env[environmentName];
   if (!rawValue) {
@@ -14051,63 +14061,244 @@ async function isEngineHealthy(endpoint) {
     clearTimeout(timeout);
   }
 }
+async function readStartupLockMetadata(startupLockPath) {
+  try {
+    const raw = await readFile2(startupLockPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    const maybeMetadata = parsed;
+    if (typeof maybeMetadata.pid !== "number" || !Number.isInteger(maybeMetadata.pid) || maybeMetadata.pid <= 0 || typeof maybeMetadata.started_at !== "string" || maybeMetadata.started_at.trim().length === 0) {
+      return null;
+    }
+    return {
+      pid: maybeMetadata.pid,
+      started_at: maybeMetadata.started_at
+    };
+  } catch (error48) {
+    if (isErrnoException2(error48) && error48.code === "ENOENT") {
+      return null;
+    }
+    throw error48;
+  }
+}
+async function tryAcquireStartupLock(startupLockPath) {
+  const payload = {
+    pid: process.pid,
+    started_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  try {
+    await writeFile2(startupLockPath, `${JSON.stringify(payload, null, 2)}
+`, {
+      encoding: "utf8",
+      flag: "wx"
+    });
+    return true;
+  } catch (error48) {
+    if (isErrnoException2(error48) && error48.code === "EEXIST") {
+      return false;
+    }
+    throw error48;
+  }
+}
+async function clearStaleStartupLock(startupLockPath, staleAfterMs) {
+  const startupLock = await readStartupLockMetadata(startupLockPath);
+  if (!startupLock) {
+    await removeFileIfExists(startupLockPath);
+    return;
+  }
+  const startedAtMs = Date.parse(startupLock.started_at);
+  const staleByAge = !Number.isFinite(startedAtMs) || Date.now() - startedAtMs > staleAfterMs;
+  if (!isPidAlive(startupLock.pid) || staleByAge) {
+    await removeFileIfExists(startupLockPath);
+  }
+}
+async function readHealthyEndpointFromLock(lockPath) {
+  const lock = await readLockMetadata(lockPath);
+  if (!lock) {
+    return null;
+  }
+  if (!isPidAlive(lock.pid)) {
+    await removeFileIfExists(lockPath);
+    return null;
+  }
+  const endpoint = { host: lock.host, port: lock.port };
+  return await isEngineHealthy(endpoint) ? endpoint : null;
+}
+async function waitForExistingEngineRecovery(lockPath, pid, recoveryWindowMs, pollMs) {
+  const deadlineMs = Date.now() + recoveryWindowMs;
+  while (Date.now() < deadlineMs) {
+    const lock = await readLockMetadata(lockPath);
+    if (!lock || lock.pid !== pid) {
+      return readHealthyEndpointFromLock(lockPath);
+    }
+    const endpoint = await readHealthyEndpointFromLock(lockPath);
+    if (endpoint) {
+      return endpoint;
+    }
+    await wait(pollMs);
+  }
+  return null;
+}
+async function appendEngineStderrMarker(engineStderrPath, message) {
+  await appendFile2(engineStderrPath, `
+[${(/* @__PURE__ */ new Date()).toISOString()}] ${message}
+`, "utf8");
+}
+function normalizeCommand(command) {
+  return command.replaceAll("\\", "/").trim();
+}
+async function isEngineProcess(pid, engineEntrypoint) {
+  if (process.platform === "win32") {
+    return false;
+  }
+  try {
+    const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "command="]);
+    const command = normalizeCommand(String(stdout));
+    const normalizedEntrypoint = normalizeCommand(engineEntrypoint);
+    return command.includes(normalizedEntrypoint) || command.includes("/dist/engine/main.js");
+  } catch {
+    return false;
+  }
+}
+async function waitForPidExit(pid, timeoutMs, pollMs) {
+  const deadlineMs = Date.now() + timeoutMs;
+  while (Date.now() < deadlineMs) {
+    if (!isPidAlive(pid)) {
+      return true;
+    }
+    await wait(Math.max(50, Math.min(250, pollMs)));
+  }
+  return !isPidAlive(pid);
+}
+async function stopUnhealthyEngine(pid, engineEntrypoint, pollMs) {
+  if (!await isEngineProcess(pid, engineEntrypoint)) {
+    return false;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return !isPidAlive(pid);
+  }
+  const terminationTimeoutMs = parseTimeoutMs(
+    "MEMORIES_ENGINE_TERMINATION_TIMEOUT_MS",
+    DEFAULT_ENGINE_TERMINATION_TIMEOUT_MS
+  );
+  return waitForPidExit(pid, terminationTimeoutMs, pollMs);
+}
+function isErrnoException2(error48) {
+  return typeof error48 === "object" && error48 !== null && "code" in error48;
+}
 async function ensureEngine(projectRoot) {
   ensureNodeRuntimeSupported();
   const paths = await ensureProjectDirectories(projectRoot);
   const pluginRoot = resolvePluginRoot();
-  const lock = await readLockMetadata(paths.lockPath);
-  if (lock && isPidAlive(lock.pid)) {
-    const endpoint = { host: lock.host, port: lock.port };
-    if (await isEngineHealthy(endpoint)) {
-      return endpoint;
-    }
-    logWarn("Engine lock exists but endpoint is unhealthy; starting a replacement engine", endpoint);
-  }
-  if (lock && !isPidAlive(lock.pid)) {
-    await removeFileIfExists(paths.lockPath);
-  }
   const engineEntrypoint = `${pluginRoot}/dist/engine/main.js`;
-  if (!existsSync(engineEntrypoint)) {
-    throw engineUnavailable(`Engine entrypoint missing at ${engineEntrypoint}. Run npm run build.`);
-  }
-  const spawnState = { failure: null };
-  const child = spawn(process.execPath, [engineEntrypoint], {
-    detached: true,
-    env: {
-      ...process.env,
-      CLAUDE_PLUGIN_ROOT: pluginRoot,
-      PROJECT_ROOT: projectRoot
-    },
-    stdio: "ignore"
-  });
-  child.once("error", (spawnError) => {
-    spawnState.failure = spawnError;
-  });
-  child.unref();
   const maxWaitMs = parseTimeoutMs("MEMORIES_ENGINE_BOOT_TIMEOUT_MS", DEFAULT_BOOT_TIMEOUT_MS);
   const pollMs = parseTimeoutMs("MEMORIES_ENGINE_BOOT_POLL_MS", DEFAULT_BOOT_POLL_MS);
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < maxWaitMs) {
-    if (spawnState.failure) {
-      throw engineUnavailable(`Failed to spawn engine: ${spawnState.failure.message}`);
+  const deadlineMs = Date.now() + maxWaitMs;
+  const healthyExisting = await readHealthyEndpointFromLock(paths.lockPath);
+  if (healthyExisting) {
+    return healthyExisting;
+  }
+  let startupLockAcquired = false;
+  while (!startupLockAcquired) {
+    const nextHealthyEndpoint = await readHealthyEndpointFromLock(paths.lockPath);
+    if (nextHealthyEndpoint) {
+      return nextHealthyEndpoint;
     }
-    const nextLock = await readLockMetadata(paths.lockPath);
-    if (nextLock && isPidAlive(nextLock.pid)) {
-      const endpoint = {
-        host: nextLock.host,
-        port: nextLock.port
-      };
-      if (await isEngineHealthy(endpoint)) {
-        logInfo("Engine process is healthy", endpoint);
-        return endpoint;
-      }
+    await clearStaleStartupLock(paths.startupLockPath, maxWaitMs * STARTUP_LOCK_STALE_MULTIPLIER);
+    startupLockAcquired = await tryAcquireStartupLock(paths.startupLockPath);
+    if (startupLockAcquired) {
+      break;
+    }
+    if (Date.now() >= deadlineMs) {
+      throw engineUnavailable(
+        `Another engine startup is already in progress and did not become healthy before timeout. See ${paths.engineStderrPath}.`
+      );
     }
     await wait(pollMs);
   }
-  if (spawnState.failure) {
-    throw engineUnavailable(`Failed to spawn engine: ${spawnState.failure.message}`);
+  try {
+    const healthyEndpointAfterLock = await readHealthyEndpointFromLock(paths.lockPath);
+    if (healthyEndpointAfterLock) {
+      return healthyEndpointAfterLock;
+    }
+    if (!existsSync(engineEntrypoint)) {
+      throw engineUnavailable(`Engine entrypoint missing at ${engineEntrypoint}. Run npm run build.`);
+    }
+    const existingLock = await readLockMetadata(paths.lockPath);
+    if (existingLock && isPidAlive(existingLock.pid)) {
+      const recoveredEndpoint = await waitForExistingEngineRecovery(
+        paths.lockPath,
+        existingLock.pid,
+        Math.min(
+          DEFAULT_UNHEALTHY_ENGINE_GRACE_MS,
+          Math.max(pollMs, deadlineMs - Date.now())
+        ),
+        pollMs
+      );
+      if (recoveredEndpoint) {
+        return recoveredEndpoint;
+      }
+      logWarn("Existing engine stayed unhealthy; attempting a verified restart", {
+        engineEntrypoint,
+        pid: existingLock.pid,
+        projectRoot
+      });
+      const stopped = await stopUnhealthyEngine(existingLock.pid, engineEntrypoint, pollMs);
+      if (!stopped) {
+        throw engineUnavailable(
+          `Existing engine pid ${existingLock.pid} is alive but unhealthy; refusing to start a duplicate engine. See ${paths.engineStderrPath}.`
+        );
+      }
+      await removeFileIfExists(paths.lockPath);
+    } else if (existingLock) {
+      await removeFileIfExists(paths.lockPath);
+    }
+    await appendEngineStderrMarker(paths.engineStderrPath, `Launching engine for ${projectRoot}`);
+    const spawnState = { failure: null };
+    const stderrFd = openSync(paths.engineStderrPath, "a");
+    let child;
+    try {
+      child = spawn(process.execPath, [engineEntrypoint], {
+        detached: true,
+        env: {
+          ...process.env,
+          CLAUDE_PLUGIN_ROOT: pluginRoot,
+          PROJECT_ROOT: projectRoot
+        },
+        stdio: ["ignore", "ignore", stderrFd]
+      });
+    } finally {
+      closeSync(stderrFd);
+    }
+    child.once("error", (spawnError) => {
+      spawnState.failure = spawnError;
+    });
+    child.unref();
+    while (Date.now() < deadlineMs) {
+      if (spawnState.failure) {
+        throw engineUnavailable(
+          `Failed to spawn engine: ${spawnState.failure.message}. See ${paths.engineStderrPath}.`
+        );
+      }
+      const endpoint = await readHealthyEndpointFromLock(paths.lockPath);
+      if (endpoint) {
+        logInfo("Engine process is healthy", { ...endpoint });
+        return endpoint;
+      }
+      await wait(pollMs);
+    }
+    throw engineUnavailable(
+      `Engine did not become healthy before timeout. See ${paths.engineStderrPath}.`
+    );
+  } finally {
+    if (startupLockAcquired) {
+      await removeFileIfExists(paths.startupLockPath);
+    }
   }
-  throw engineUnavailable("Engine did not become healthy before timeout.");
 }
 
 // src/shared/hook-io.ts
@@ -14144,7 +14335,7 @@ function writeFailOpenOutput() {
 }
 
 // src/shared/logs.ts
-import { readFile as readFile2 } from "fs/promises";
+import { readFile as readFile3 } from "fs/promises";
 
 // src/shared/types.ts
 var memoryTypeSchema = external_exports.enum(MEMORY_TYPES);
@@ -14454,7 +14645,7 @@ var sessionEndPayloadSchema = external_exports.object({
 }).catchall(external_exports.unknown());
 
 // src/hooks/session-start.ts
-var execFileAsync = promisify(execFile);
+var execFileAsync2 = promisify2(execFile2);
 var GENERIC_STARTUP_FAILURE_MESSAGE = "Memories could not be launched, see details in the logs";
 var MAX_SESSION_START_OLLAMA_TIMEOUT_MS = 2500;
 var defaultDependencies = {
@@ -14535,7 +14726,7 @@ function createOllamaStartupIssue(code, model, detail) {
 }
 async function isOllamaInstalled() {
   try {
-    await execFileAsync("ollama", ["--version"]);
+    await execFileAsync2("ollama", ["--version"]);
     return true;
   } catch (error48) {
     if (error48?.code === "ENOENT") {

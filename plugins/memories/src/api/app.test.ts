@@ -5,7 +5,8 @@ import path from 'node:path';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 
-import { writeLockMetadata } from '../shared/lockfile.js';
+import { removeFileIfExists } from '../shared/fs-utils.js';
+import { readLockMetadata, writeLockMetadata } from '../shared/lockfile.js';
 import { createEngineApp } from './app.js';
 
 async function setupRuntime(): Promise<{
@@ -174,6 +175,46 @@ describe('createEngineApp', () => {
     await api.post('/sessions/connect').send({ session_id: 'session-3' }).expect(200);
     await api.post('/sessions/disconnect').send({ session_id: 'session-3' }).expect(200);
     await api.post('/sessions/disconnect').send({ session_id: 'session-3' }).expect(200);
+
+    await waitForTick();
+    expect(drainCalls()).toBe(1);
+    runtime.close();
+  });
+
+  it('recreates a missing lock file from active sessions when stats are requested', async () => {
+    const { runtime, lockPath } = await setupRuntimeWithOptions();
+    const api = request(runtime.app);
+
+    await api.post('/sessions/connect').send({ session_id: 'session-repair' }).expect(200);
+    await removeFileIfExists(lockPath);
+
+    await api.get('/stats').expect(200).expect(({ body }) => {
+      expect(body.active_sessions).toBe(1);
+    });
+
+    const restoredLock = await readLockMetadata(lockPath);
+    expect(restoredLock?.pid).toBe(process.pid);
+    expect(restoredLock?.connected_session_ids).toEqual(['session-repair']);
+
+    runtime.close();
+  });
+
+  it('reconciles in-memory sessions from owned lock metadata before reporting stats', async () => {
+    const { runtime, lockPath, drainCalls } = await setupRuntimeWithOptions({ drainGraceMs: 0 });
+    const api = request(runtime.app);
+
+    await api.post('/sessions/connect').send({ session_id: 'session-drift' }).expect(200);
+    await writeLockMetadata(lockPath, {
+      host: '127.0.0.1',
+      port: 4321,
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+      connected_session_ids: [],
+    });
+
+    await api.get('/stats').expect(200).expect(({ body }) => {
+      expect(body.active_sessions).toBe(0);
+    });
 
     await waitForTick();
     expect(drainCalls()).toBe(1);

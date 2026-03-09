@@ -298,4 +298,37 @@ describe('hook handlers', () => {
 
     expect(output).toEqual({ continue: true });
   });
+
+  it('SessionEnd records a skipped event when lock metadata is missing', async () => {
+    const payload: SessionEndPayload = {
+      session_id: 'session-missing-lock',
+    };
+    const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
+
+    const output = await handleSessionEnd(payload, {
+      appendEventLogFn,
+      ensureProjectDirectoriesFn: vi.fn().mockResolvedValue({
+        projectRoot: '/tmp',
+        memoriesDir: '/tmp/.memories',
+        dbPath: '/tmp/.memories/ai_memory.db',
+        lockPath: '/tmp/.memories/engine.lock.json',
+        eventLogPath: '/tmp/events.log',
+      }),
+      postEngineJsonFn: vi.fn(),
+      resolveEndpointFromLockFn: vi
+        .fn()
+        .mockRejectedValue(new Error('ENGINE_UNAVAILABLE: lock metadata not found')),
+    });
+
+    expect(output).toEqual({ continue: true });
+    expect(appendEventLogFn).toHaveBeenCalledWith(
+      '/tmp/events.log',
+      expect.objectContaining({
+        detail: 'ENGINE_UNAVAILABLE: lock metadata not found',
+        event: 'SessionEnd',
+        session_id: 'session-missing-lock',
+        status: 'skipped',
+      }),
+    );
+  });
 });

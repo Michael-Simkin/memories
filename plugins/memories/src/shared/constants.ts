@@ -5,6 +5,8 @@ export const MEMORY_TYPES = ['fact', 'rule', 'decision', 'episode'] as const;
 
 export const MEMORY_DB_FILE = 'ai_memory.db';
 export const ENGINE_LOCK_FILE = 'engine.lock.json';
+export const ENGINE_STARTUP_LOCK_FILE = 'engine.startup.lock.json';
+export const ENGINE_STDERR_LOG_FILE = 'engine.stderr.log';
 export const MEMORY_EVENTS_LOG_FILE = 'ai_memory_events.log';
 
 export const DEFAULT_SEARCH_LIMIT = 10;
