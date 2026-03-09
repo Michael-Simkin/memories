@@ -25196,7 +25196,7 @@ var require_picomatch2 = __commonJS({
 // src/engine/main.ts
 import { execFile } from "child_process";
 import { existsSync as existsSync2 } from "fs";
-import { mkdir as mkdir2, writeFile as writeFile2 } from "fs/promises";
+import { mkdir as mkdir2, rm as rm2, writeFile as writeFile2 } from "fs/promises";
 import { createRequire as createRequire2 } from "module";
 import net from "net";
 import os from "os";
@@ -39855,7 +39855,6 @@ function isErrnoException2(error48) {
 
 // src/storage/database.ts
 import { createRequire } from "module";
-import path2 from "path";
 
 // ../../node_modules/ulid/dist/node/index.js
 import crypto from "crypto";
@@ -39952,9 +39951,27 @@ function ulid3(seedTime, prng) {
   return encodeTime(seed, TIME_LEN) + encodeRandom(RANDOM_LEN, currentPRNG);
 }
 
+// src/shared/native-runtime.ts
+import path2 from "path";
+function resolveNativeRuntimeRoot(pluginRoot, identity = {}) {
+  return path2.join(pluginRoot, "native", nativeRuntimeCacheKey(identity));
+}
+function nativeRuntimeCacheKey(identity = {}) {
+  const abi = identity.abi ?? process.versions.modules ?? "unknown";
+  const platform = identity.platform ?? process.platform;
+  const arch = identity.arch ?? process.arch;
+  return `${platform}-${arch}-abi${abi}`;
+}
+function isNativeAbiMismatchError(error48) {
+  if (!(error48 instanceof Error)) {
+    return false;
+  }
+  return error48.message.includes("NODE_MODULE_VERSION") || /compiled against a different Node\.js version/i.test(error48.message);
+}
+
 // src/storage/database.ts
 function loadBetterSqlite3(pluginRoot) {
-  const nativeRoot = path2.join(pluginRoot, "native");
+  const nativeRoot = resolveNativeRuntimeRoot(pluginRoot);
   const requireFromStorage = createRequire(import.meta.url);
   let resolvedPath;
   try {
@@ -41139,7 +41156,7 @@ function resolvePackage(packageName, nativeRoot) {
   }
 }
 async function ensureNativeRoot(pluginRoot) {
-  const nativeRoot = path5.join(pluginRoot, "native");
+  const nativeRoot = resolveNativeRuntimeRoot(pluginRoot);
   await mkdir2(nativeRoot, { recursive: true });
   const packageJsonPath = path5.join(nativeRoot, "package.json");
   if (!existsSync2(packageJsonPath)) {
@@ -41168,6 +41185,37 @@ async function installNativePackage(nativeRoot, packageSpec) {
     );
   });
 }
+async function rebuildNativePackage(nativeRoot, packageName) {
+  await new Promise((resolve, reject) => {
+    execFile(
+      "npm",
+      ["rebuild", "--prefix", nativeRoot, packageName],
+      { timeout: NATIVE_INSTALL_TIMEOUT_MS },
+      (error48, _stdout, stderr) => {
+        if (error48) {
+          reject(new Error(stderr || error48.message));
+          return;
+        }
+        resolve();
+      }
+    );
+  });
+}
+async function removeNativePackage(nativeRoot, packageName) {
+  await rm2(path5.join(nativeRoot, "node_modules", packageName), {
+    force: true,
+    recursive: true
+  });
+}
+function verifyBetterSqlite3Load(resolvedPath) {
+  try {
+    requireFromEngine(resolvedPath);
+  } catch (error48) {
+    throw new Error(
+      `better-sqlite3 failed to load from ${resolvedPath}. ${error48 instanceof Error ? error48.message : String(error48)}`
+    );
+  }
+}
 async function ensureBetterSqlite3(nativeRoot) {
   if (!resolvePackage("better-sqlite3", nativeRoot)) {
     try {
@@ -41178,18 +41226,47 @@ async function ensureBetterSqlite3(nativeRoot) {
       );
     }
   }
-  const resolvedPath = resolvePackage("better-sqlite3", nativeRoot);
+  let resolvedPath = resolvePackage("better-sqlite3", nativeRoot);
   if (!resolvedPath) {
     throw new Error(
       `better-sqlite3 is not resolvable from ${nativeRoot} after installation. Verify native runtime dependencies.`
     );
   }
   try {
-    requireFromEngine(resolvedPath);
+    verifyBetterSqlite3Load(resolvedPath);
   } catch (error48) {
-    throw new Error(
-      `better-sqlite3 failed to load from ${resolvedPath}. ${error48 instanceof Error ? error48.message : String(error48)}`
-    );
+    if (!isNativeAbiMismatchError(error48)) {
+      throw error48;
+    }
+    logWarn("better-sqlite3 ABI mismatch detected; rebuilding runtime dependency", {
+      nativeRoot,
+      nodeAbi: process.versions.modules,
+      nodeVersion: process.versions.node,
+      resolvedPath
+    });
+    try {
+      await rebuildNativePackage(nativeRoot, "better-sqlite3");
+    } catch (rebuildError) {
+      logWarn("better-sqlite3 rebuild failed; reinstalling runtime dependency", {
+        error: rebuildError instanceof Error ? rebuildError.message : String(rebuildError),
+        nativeRoot
+      });
+      await removeNativePackage(nativeRoot, "better-sqlite3");
+      try {
+        await installNativePackage(nativeRoot, "better-sqlite3");
+      } catch (installError) {
+        throw new Error(
+          `Failed to reinstall better-sqlite3 at runtime. Run "npm install --prefix ${nativeRoot} better-sqlite3". ${installError instanceof Error ? installError.message : String(installError)}`
+        );
+      }
+    }
+    resolvedPath = resolvePackage("better-sqlite3", nativeRoot);
+    if (!resolvedPath) {
+      throw new Error(
+        `better-sqlite3 is not resolvable from ${nativeRoot} after rebuild. Verify native runtime dependencies.`
+      );
+    }
+    verifyBetterSqlite3Load(resolvedPath);
   }
 }
 async function ensureSqliteVec(nativeRoot) {

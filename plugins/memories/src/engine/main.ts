@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { createRequire } from 'node:module';
 import net from 'node:net';
@@ -12,6 +12,7 @@ import { createEngineApp } from '../api/app.js';
 import { LOOPBACK_HOST } from '../shared/constants.js';
 import { removeLockIfOwned, writeLockMetadata } from '../shared/lockfile.js';
 import { logError, logInfo, logWarn } from '../shared/logger.js';
+import { isNativeAbiMismatchError, resolveNativeRuntimeRoot } from '../shared/native-runtime.js';
 import { ensureProjectDirectories, resolvePluginRoot, resolveProjectRoot } from '../shared/paths.js';
 
 const SQLITE_VEC_VERSION = '0.1.7-alpha.2';
@@ -58,7 +59,7 @@ function resolvePackage(packageName: string, nativeRoot: string): string | null 
 }
 
 async function ensureNativeRoot(pluginRoot: string): Promise<string> {
-  const nativeRoot = path.join(pluginRoot, 'native');
+  const nativeRoot = resolveNativeRuntimeRoot(pluginRoot);
   await mkdir(nativeRoot, { recursive: true });
 
   const packageJsonPath = path.join(nativeRoot, 'package.json');
@@ -90,6 +91,42 @@ async function installNativePackage(nativeRoot: string, packageSpec: string): Pr
   });
 }
 
+async function rebuildNativePackage(nativeRoot: string, packageName: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      'npm',
+      ['rebuild', '--prefix', nativeRoot, packageName],
+      { timeout: NATIVE_INSTALL_TIMEOUT_MS },
+      (error, _stdout, stderr) => {
+        if (error) {
+          reject(new Error(stderr || error.message));
+          return;
+        }
+        resolve();
+      },
+    );
+  });
+}
+
+async function removeNativePackage(nativeRoot: string, packageName: string): Promise<void> {
+  await rm(path.join(nativeRoot, 'node_modules', packageName), {
+    force: true,
+    recursive: true,
+  });
+}
+
+function verifyBetterSqlite3Load(resolvedPath: string): void {
+  try {
+    requireFromEngine(resolvedPath);
+  } catch (error) {
+    throw new Error(
+      `better-sqlite3 failed to load from ${resolvedPath}. ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 async function ensureBetterSqlite3(nativeRoot: string): Promise<void> {
   if (!resolvePackage('better-sqlite3', nativeRoot)) {
     try {
@@ -103,7 +140,7 @@ async function ensureBetterSqlite3(nativeRoot: string): Promise<void> {
     }
   }
 
-  const resolvedPath = resolvePackage('better-sqlite3', nativeRoot);
+  let resolvedPath = resolvePackage('better-sqlite3', nativeRoot);
   if (!resolvedPath) {
     throw new Error(
       `better-sqlite3 is not resolvable from ${nativeRoot} after installation. Verify native runtime dependencies.`,
@@ -111,13 +148,47 @@ async function ensureBetterSqlite3(nativeRoot: string): Promise<void> {
   }
 
   try {
-    requireFromEngine(resolvedPath);
+    verifyBetterSqlite3Load(resolvedPath);
   } catch (error) {
-    throw new Error(
-      `better-sqlite3 failed to load from ${resolvedPath}. ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    if (!isNativeAbiMismatchError(error)) {
+      throw error;
+    }
+
+    logWarn('better-sqlite3 ABI mismatch detected; rebuilding runtime dependency', {
+      nativeRoot,
+      nodeAbi: process.versions.modules,
+      nodeVersion: process.versions.node,
+      resolvedPath,
+    });
+
+    try {
+      await rebuildNativePackage(nativeRoot, 'better-sqlite3');
+    } catch (rebuildError) {
+      logWarn('better-sqlite3 rebuild failed; reinstalling runtime dependency', {
+        error: rebuildError instanceof Error ? rebuildError.message : String(rebuildError),
+        nativeRoot,
+      });
+
+      await removeNativePackage(nativeRoot, 'better-sqlite3');
+      try {
+        await installNativePackage(nativeRoot, 'better-sqlite3');
+      } catch (installError) {
+        throw new Error(
+          `Failed to reinstall better-sqlite3 at runtime. Run "npm install --prefix ${nativeRoot} better-sqlite3". ${
+            installError instanceof Error ? installError.message : String(installError)
+          }`,
+        );
+      }
+    }
+
+    resolvedPath = resolvePackage('better-sqlite3', nativeRoot);
+    if (!resolvedPath) {
+      throw new Error(
+        `better-sqlite3 is not resolvable from ${nativeRoot} after rebuild. Verify native runtime dependencies.`,
+      );
+    }
+
+    verifyBetterSqlite3Load(resolvedPath);
   }
 }
 

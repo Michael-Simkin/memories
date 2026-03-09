@@ -8,6 +8,7 @@ import { isPidAlive, removeFileIfExists } from '../shared/fs-utils.js';
 import { readLockMetadata } from '../shared/lockfile.js';
 import { logInfo, logWarn } from '../shared/logger.js';
 import { ensureProjectDirectories, resolvePluginRoot } from '../shared/paths.js';
+import { resolveEngineNodeRuntime } from './node-runtime.js';
 
 export interface EngineEndpoint {
   host: string;
@@ -151,21 +152,6 @@ async function readHealthyEndpointFromLock(lockPath: string): Promise<EngineEndp
 
   const endpoint = { host: lock.host, port: lock.port };
   return (await isEngineHealthy(endpoint)) ? endpoint : null;
-}
-
-async function waitForHealthyEngine(
-  lockPath: string,
-  deadlineMs: number,
-  pollMs: number,
-): Promise<EngineEndpoint | null> {
-  while (Date.now() < deadlineMs) {
-    const endpoint = await readHealthyEndpointFromLock(lockPath);
-    if (endpoint) {
-      return endpoint;
-    }
-    await wait(pollMs);
-  }
-  return null;
 }
 
 async function waitForExistingEngineRecovery(
@@ -329,13 +315,22 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
       await removeFileIfExists(paths.lockPath);
     }
 
-    await appendEngineStderrMarker(paths.engineStderrPath, `Launching engine for ${projectRoot}`);
+    let nodeRuntime: Awaited<ReturnType<typeof resolveEngineNodeRuntime>>;
+    try {
+      nodeRuntime = await resolveEngineNodeRuntime();
+    } catch (error) {
+      throw engineUnavailable(error instanceof Error ? error.message : String(error));
+    }
+    await appendEngineStderrMarker(
+      paths.engineStderrPath,
+      `Launching engine for ${projectRoot} via ${nodeRuntime.executable} (v${nodeRuntime.version})`,
+    );
 
     const spawnState: { failure: Error | null } = { failure: null };
     const stderrFd = openSync(paths.engineStderrPath, 'a');
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(process.execPath, [engineEntrypoint], {
+      child = spawn(nodeRuntime.executable, [engineEntrypoint], {
         detached: true,
         env: {
           ...process.env,
@@ -356,7 +351,7 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
     while (Date.now() < deadlineMs) {
       if (spawnState.failure) {
         throw engineUnavailable(
-          `Failed to spawn engine: ${spawnState.failure.message}. See ${paths.engineStderrPath}.`,
+          `Failed to spawn engine via ${nodeRuntime.executable}: ${spawnState.failure.message}. See ${paths.engineStderrPath}.`,
         );
       }
 

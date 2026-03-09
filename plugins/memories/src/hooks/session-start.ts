@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { ensureEngine } from '../engine/ensure-engine.js';
+import { REQUIRED_ENGINE_NODE_MAJOR } from '../engine/node-runtime.js';
 import {
   DEFAULT_OLLAMA_TIMEOUT_MS,
   DEFAULT_OLLAMA_URL,
@@ -37,11 +38,14 @@ type OllamaStartupIssueCode =
   | 'ollama_service_not_running'
   | 'ollama_model_missing';
 
-interface OllamaStartupIssue {
+interface StartupIssue {
   additionalContext: string;
-  code: OllamaStartupIssueCode;
   detail: string;
   systemMessage: string;
+}
+
+interface OllamaStartupIssue extends StartupIssue {
+  code: OllamaStartupIssueCode;
 }
 
 interface SessionStartDependencies {
@@ -145,6 +149,43 @@ function createOllamaStartupIssue(
     code,
     detail,
     systemMessage: renderOllamaSystemMessage(code, model),
+  };
+}
+
+function renderNodeRuntimeSystemMessage(): string {
+  return (
+    `Memories could not be launched because Node ${REQUIRED_ENGINE_NODE_MAJOR} is not available for engine startup. ` +
+    `Run \`nvm install ${REQUIRED_ENGINE_NODE_MAJOR}\` and relaunch Claude, or set \`MEMORIES_NODE_BIN\` to the absolute path of a Node ${REQUIRED_ENGINE_NODE_MAJOR} binary. ` +
+    'Or ask Claude to do it for you.'
+  );
+}
+
+function renderNodeRuntimeAdditionalContext(): string {
+  return [
+    '<memory-setup>',
+    `Memories are unavailable because Node ${REQUIRED_ENGINE_NODE_MAJOR} was not found for engine startup.`,
+    'If the user asks you to fix this, choose one of these options:',
+    `- \`nvm install ${REQUIRED_ENGINE_NODE_MAJOR}\``,
+    `- relaunch Claude from a shell where \`nvm use ${REQUIRED_ENGINE_NODE_MAJOR}\` is active`,
+    `- ask the user for an absolute Node ${REQUIRED_ENGINE_NODE_MAJOR} binary path and set \`MEMORIES_NODE_BIN=/absolute/path/to/node\` before launching Claude`,
+    'Do not run setup commands unless the user asks.',
+    '</memory-setup>',
+  ].join('\n');
+}
+
+function detectNodeRuntimeStartupIssue(error: unknown): StartupIssue | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+
+  if (!error.message.includes(`Node ${REQUIRED_ENGINE_NODE_MAJOR}.x is required for engine startup`)) {
+    return null;
+  }
+
+  return {
+    additionalContext: renderNodeRuntimeAdditionalContext(),
+    detail: error.message,
+    systemMessage: renderNodeRuntimeSystemMessage(),
   };
 }
 
@@ -326,6 +367,26 @@ export async function handleSessionStart(
       },
     };
   } catch (error) {
+    const nodeRuntimeIssue = detectNodeRuntimeStartupIssue(error);
+    if (nodeRuntimeIssue && eventLogPath) {
+      await dependencies.appendEventLogFn(eventLogPath, {
+        at: new Date().toISOString(),
+        event: 'SessionStart',
+        kind: 'hook',
+        status: 'skipped',
+        ...(sessionId ? { session_id: sessionId } : {}),
+        detail: nodeRuntimeIssue.detail,
+      });
+      return {
+        continue: true,
+        systemMessage: nodeRuntimeIssue.systemMessage,
+        hookSpecificOutput: {
+          hookEventName: 'SessionStart',
+          additionalContext: nodeRuntimeIssue.additionalContext,
+        },
+      };
+    }
+
     if (isEngineUnavailableError(error) && eventLogPath) {
       await dependencies.appendEventLogFn(eventLogPath, {
         at: new Date().toISOString(),

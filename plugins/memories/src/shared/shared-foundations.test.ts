@@ -8,6 +8,7 @@ import { normalizePathForMatch } from './fs-utils.js';
 import { readLockMetadata, removeLockIfOwned, writeLockMetadata } from './lockfile.js';
 import { appendEventLog, readEventLogs } from './logs.js';
 import { formatMemoryRecallMarkdown } from './markdown.js';
+import { isNativeAbiMismatchError, nativeRuntimeCacheKey, resolveNativeRuntimeRoot } from './native-runtime.js';
 import type { MemoryEventLog, SearchResult } from './types.js';
 
 describe('shared foundations', () => {
@@ -67,6 +68,34 @@ describe('shared foundations', () => {
     await removeLockIfOwned(lockPath, process.pid + 99_999);
     const lockAfterRightOwner = await readLockMetadata(lockPath);
     expect(lockAfterRightOwner).toBeNull();
+  });
+
+  it('derives runtime-native cache roots from platform, arch, and ABI', () => {
+    expect(
+      nativeRuntimeCacheKey({
+        abi: '137',
+        arch: 'arm64',
+        platform: 'darwin',
+      }),
+    ).toBe('darwin-arm64-abi137');
+    expect(
+      resolveNativeRuntimeRoot('/tmp/plugin', {
+        abi: '127',
+        arch: 'x64',
+        platform: 'linux',
+      }),
+    ).toBe('/tmp/plugin/native/linux-x64-abi127');
+  });
+
+  it('detects native ABI mismatch loader errors', () => {
+    expect(
+      isNativeAbiMismatchError(
+        new Error(
+          'The module was compiled against a different Node.js version using NODE_MODULE_VERSION 127.',
+        ),
+      ),
+    ).toBe(true);
+    expect(isNativeAbiMismatchError(new Error('generic loader failure'))).toBe(false);
   });
 
   it('normalizes relative and windows-like paths', () => {

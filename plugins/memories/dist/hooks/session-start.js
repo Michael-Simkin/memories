@@ -6,15 +6,15 @@ var __export = (target, all) => {
 };
 
 // src/hooks/session-start.ts
-import { execFile as execFile2 } from "child_process";
-import { promisify as promisify2 } from "util";
+import { execFile as execFile3 } from "child_process";
+import { promisify as promisify3 } from "util";
 
 // src/engine/ensure-engine.ts
-import { execFile, spawn } from "child_process";
-import { closeSync, existsSync, openSync } from "fs";
+import { execFile as execFile2, spawn } from "child_process";
+import { closeSync, existsSync as existsSync2, openSync } from "fs";
 import { appendFile as appendFile2, readFile as readFile2, writeFile as writeFile2 } from "fs/promises";
 import { setTimeout as wait } from "timers/promises";
-import { promisify } from "util";
+import { promisify as promisify2 } from "util";
 
 // src/shared/fs-utils.ts
 import { appendFile, readFile, rename, rm, writeFile } from "fs/promises";
@@ -822,10 +822,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path4) {
-  if (!path4)
+function getElementAtPath(obj, path5) {
+  if (!path5)
     return obj;
-  return path4.reduce((acc, key) => acc?.[key], obj);
+  return path5.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -1208,11 +1208,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path4, issues) {
+function prefixIssues(path5, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path4);
+    iss.path.unshift(path5);
     return iss;
   });
 }
@@ -1395,7 +1395,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path4 = []) => {
+  const processError = (error49, path5 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1405,7 +1405,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path4, ...issue2.path];
+        const fullpath = [...path5, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1437,8 +1437,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path4 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path4) {
+  const path5 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path5) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13415,13 +13415,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path4 = ref.slice(1).split("/").filter(Boolean);
-  if (path4.length === 0) {
+  const path5 = ref.slice(1).split("/").filter(Boolean);
+  if (path5.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path4[0] === defsKey) {
-    const key = path4[1];
+  if (path5[0] === defsKey) {
+    const key = path5[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -14015,6 +14015,144 @@ async function ensureProjectDirectories(projectRoot) {
   return projectPaths;
 }
 
+// src/engine/node-runtime.ts
+import { execFile } from "child_process";
+import { existsSync, readdirSync } from "fs";
+import os from "os";
+import path3 from "path";
+import { promisify } from "util";
+var execFileAsync = promisify(execFile);
+var REQUIRED_ENGINE_NODE_MAJOR = 24;
+var NODE_PROBE_TIMEOUT_MS = 1500;
+function parseNodeMajor(version2) {
+  const majorText = version2.trim().replace(/^v/i, "").split(".")[0] ?? "";
+  const major = Number.parseInt(majorText, 10);
+  return Number.isFinite(major) ? major : Number.NaN;
+}
+function selectPreferredNodeRuntime(candidates) {
+  let preferred = null;
+  let fallback = null;
+  for (const candidate of candidates) {
+    const major = parseNodeMajor(candidate.version);
+    if (!Number.isFinite(major)) {
+      continue;
+    }
+    const descriptor = {
+      ...candidate,
+      major
+    };
+    if (major === REQUIRED_ENGINE_NODE_MAJOR) {
+      if (!preferred || compareNodeVersions(descriptor.version, preferred.version) > 0) {
+        preferred = descriptor;
+      }
+      continue;
+    }
+    if (major > REQUIRED_ENGINE_NODE_MAJOR) {
+      if (!fallback || compareNodeVersions(descriptor.version, fallback.version) > 0) {
+        fallback = descriptor;
+      }
+    }
+  }
+  return preferred ?? fallback;
+}
+async function resolveEngineNodeRuntime() {
+  const discovered = [];
+  for (const executable of candidateNodeExecutables()) {
+    const version2 = await probeNodeVersion(executable);
+    if (!version2) {
+      continue;
+    }
+    const major = parseNodeMajor(version2);
+    if (!Number.isFinite(major)) {
+      continue;
+    }
+    discovered.push({
+      executable,
+      version: version2,
+      major
+    });
+  }
+  const preferred = selectPreferredNodeRuntime(discovered);
+  if (preferred) {
+    return preferred;
+  }
+  const highestFound = [...discovered].sort(
+    (left, right) => compareNodeVersions(right.version, left.version)
+  )[0];
+  const highestDetail = highestFound ? `highest discovered runtime is v${highestFound.version} at ${highestFound.executable}` : "no candidate node runtime was discovered";
+  throw new Error(
+    `Node ${REQUIRED_ENGINE_NODE_MAJOR}.x is required for engine startup (${highestDetail}). Install it with \`nvm install ${REQUIRED_ENGINE_NODE_MAJOR}\` or set MEMORIES_NODE_BIN to an absolute Node ${REQUIRED_ENGINE_NODE_MAJOR} binary path.`
+  );
+}
+function compareNodeVersions(left, right) {
+  const leftParts = normalizeVersionParts(left);
+  const rightParts = normalizeVersionParts(right);
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
+}
+function normalizeVersionParts(version2) {
+  return version2.trim().replace(/^v/i, "").split(".").map((part) => Number.parseInt(part, 10)).filter((part) => Number.isFinite(part));
+}
+function dedupeCandidates(values) {
+  const seen = /* @__PURE__ */ new Set();
+  const ordered = [];
+  for (const rawValue of values) {
+    const value = rawValue.trim();
+    if (!value) {
+      continue;
+    }
+    const resolvedValue = path3.resolve(value);
+    if (seen.has(resolvedValue)) {
+      continue;
+    }
+    seen.add(resolvedValue);
+    ordered.push(resolvedValue);
+  }
+  return ordered;
+}
+function listVersionedNodeBins(rootDirectory) {
+  if (!existsSync(rootDirectory)) {
+    return [];
+  }
+  const versions = readdirSync(rootDirectory, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort((left, right) => compareNodeVersions(right, left));
+  return versions.map((version2) => path3.join(rootDirectory, version2, "bin", "node"));
+}
+function candidateNodeExecutables() {
+  const homeDirectory = os.homedir();
+  const nvmDirectory = process.env.NVM_DIR || path3.join(homeDirectory, ".nvm");
+  return dedupeCandidates([
+    process.env.MEMORIES_NODE_BIN ?? "",
+    "/opt/homebrew/opt/node@24/bin/node",
+    "/usr/local/opt/node@24/bin/node",
+    process.env.NVM_BIN ? path3.join(process.env.NVM_BIN, "node") : "",
+    ...listVersionedNodeBins(path3.join(nvmDirectory, "versions", "node")),
+    ...listVersionedNodeBins(path3.join(homeDirectory, ".asdf", "installs", "nodejs")),
+    ...listVersionedNodeBins(path3.join(homeDirectory, ".volta", "tools", "image", "node")),
+    process.execPath,
+    "/opt/homebrew/bin/node",
+    "/usr/local/bin/node"
+  ]);
+}
+async function probeNodeVersion(executable) {
+  if (!existsSync(executable)) {
+    return null;
+  }
+  try {
+    const { stdout } = await execFileAsync(executable, ["-p", "process.versions.node"], {
+      timeout: NODE_PROBE_TIMEOUT_MS
+    });
+    const version2 = String(stdout).trim();
+    return version2 || null;
+  } catch {
+    return null;
+  }
+}
+
 // src/engine/ensure-engine.ts
 var ENGINE_UNAVAILABLE_PREFIX = "ENGINE_UNAVAILABLE";
 var REQUIRED_NODE_MAJOR = 20;
@@ -14024,7 +14162,7 @@ var DEFAULT_BOOT_POLL_MS = 120;
 var DEFAULT_UNHEALTHY_ENGINE_GRACE_MS = 2e3;
 var DEFAULT_ENGINE_TERMINATION_TIMEOUT_MS = 5e3;
 var STARTUP_LOCK_STALE_MULTIPLIER = 2;
-var execFileAsync = promisify(execFile);
+var execFileAsync2 = promisify2(execFile2);
 function parseTimeoutMs(environmentName, fallback) {
   const rawValue = process.env[environmentName];
   if (!rawValue) {
@@ -14154,7 +14292,7 @@ async function isEngineProcess(pid, engineEntrypoint) {
     return false;
   }
   try {
-    const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "command="]);
+    const { stdout } = await execFileAsync2("ps", ["-p", String(pid), "-o", "command="]);
     const command = normalizeCommand(String(stdout));
     const normalizedEntrypoint = normalizeCommand(engineEntrypoint);
     return command.includes(normalizedEntrypoint) || command.includes("/dist/engine/main.js");
@@ -14225,7 +14363,7 @@ async function ensureEngine(projectRoot) {
     if (healthyEndpointAfterLock) {
       return healthyEndpointAfterLock;
     }
-    if (!existsSync(engineEntrypoint)) {
+    if (!existsSync2(engineEntrypoint)) {
       throw engineUnavailable(`Engine entrypoint missing at ${engineEntrypoint}. Run npm run build.`);
     }
     const existingLock = await readLockMetadata(paths.lockPath);
@@ -14257,12 +14395,21 @@ async function ensureEngine(projectRoot) {
     } else if (existingLock) {
       await removeFileIfExists(paths.lockPath);
     }
-    await appendEngineStderrMarker(paths.engineStderrPath, `Launching engine for ${projectRoot}`);
+    let nodeRuntime;
+    try {
+      nodeRuntime = await resolveEngineNodeRuntime();
+    } catch (error48) {
+      throw engineUnavailable(error48 instanceof Error ? error48.message : String(error48));
+    }
+    await appendEngineStderrMarker(
+      paths.engineStderrPath,
+      `Launching engine for ${projectRoot} via ${nodeRuntime.executable} (v${nodeRuntime.version})`
+    );
     const spawnState = { failure: null };
     const stderrFd = openSync(paths.engineStderrPath, "a");
     let child;
     try {
-      child = spawn(process.execPath, [engineEntrypoint], {
+      child = spawn(nodeRuntime.executable, [engineEntrypoint], {
         detached: true,
         env: {
           ...process.env,
@@ -14281,7 +14428,7 @@ async function ensureEngine(projectRoot) {
     while (Date.now() < deadlineMs) {
       if (spawnState.failure) {
         throw engineUnavailable(
-          `Failed to spawn engine: ${spawnState.failure.message}. See ${paths.engineStderrPath}.`
+          `Failed to spawn engine via ${nodeRuntime.executable}: ${spawnState.failure.message}. See ${paths.engineStderrPath}.`
         );
       }
       const endpoint = await readHealthyEndpointFromLock(paths.lockPath);
@@ -14581,12 +14728,12 @@ function groupByMemoryType(results) {
 }
 
 // src/hooks/common.ts
-import path3 from "path";
+import path4 from "path";
 function resolveHookProjectRoot(payload) {
-  if (payload.project_root && path3.isAbsolute(payload.project_root)) {
+  if (payload.project_root && path4.isAbsolute(payload.project_root)) {
     return payload.project_root;
   }
-  if (payload.cwd && path3.isAbsolute(payload.cwd)) {
+  if (payload.cwd && path4.isAbsolute(payload.cwd)) {
     return payload.cwd;
   }
   return resolveProjectRoot();
@@ -14645,7 +14792,7 @@ var sessionEndPayloadSchema = external_exports.object({
 }).catchall(external_exports.unknown());
 
 // src/hooks/session-start.ts
-var execFileAsync2 = promisify2(execFile2);
+var execFileAsync3 = promisify3(execFile3);
 var GENERIC_STARTUP_FAILURE_MESSAGE = "Memories could not be launched, see details in the logs";
 var MAX_SESSION_START_OLLAMA_TIMEOUT_MS = 2500;
 var defaultDependencies = {
@@ -14724,9 +14871,37 @@ function createOllamaStartupIssue(code, model, detail) {
     systemMessage: renderOllamaSystemMessage(code, model)
   };
 }
+function renderNodeRuntimeSystemMessage() {
+  return `Memories could not be launched because Node ${REQUIRED_ENGINE_NODE_MAJOR} is not available for engine startup. Run \`nvm install ${REQUIRED_ENGINE_NODE_MAJOR}\` and relaunch Claude, or set \`MEMORIES_NODE_BIN\` to the absolute path of a Node ${REQUIRED_ENGINE_NODE_MAJOR} binary. Or ask Claude to do it for you.`;
+}
+function renderNodeRuntimeAdditionalContext() {
+  return [
+    "<memory-setup>",
+    `Memories are unavailable because Node ${REQUIRED_ENGINE_NODE_MAJOR} was not found for engine startup.`,
+    "If the user asks you to fix this, choose one of these options:",
+    `- \`nvm install ${REQUIRED_ENGINE_NODE_MAJOR}\``,
+    `- relaunch Claude from a shell where \`nvm use ${REQUIRED_ENGINE_NODE_MAJOR}\` is active`,
+    `- ask the user for an absolute Node ${REQUIRED_ENGINE_NODE_MAJOR} binary path and set \`MEMORIES_NODE_BIN=/absolute/path/to/node\` before launching Claude`,
+    "Do not run setup commands unless the user asks.",
+    "</memory-setup>"
+  ].join("\n");
+}
+function detectNodeRuntimeStartupIssue(error48) {
+  if (!(error48 instanceof Error)) {
+    return null;
+  }
+  if (!error48.message.includes(`Node ${REQUIRED_ENGINE_NODE_MAJOR}.x is required for engine startup`)) {
+    return null;
+  }
+  return {
+    additionalContext: renderNodeRuntimeAdditionalContext(),
+    detail: error48.message,
+    systemMessage: renderNodeRuntimeSystemMessage()
+  };
+}
 async function isOllamaInstalled() {
   try {
-    await execFileAsync2("ollama", ["--version"]);
+    await execFileAsync3("ollama", ["--version"]);
     return true;
   } catch (error48) {
     if (error48?.code === "ENOENT") {
@@ -14878,6 +15053,25 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
       }
     };
   } catch (error48) {
+    const nodeRuntimeIssue = detectNodeRuntimeStartupIssue(error48);
+    if (nodeRuntimeIssue && eventLogPath) {
+      await dependencies.appendEventLogFn(eventLogPath, {
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        event: "SessionStart",
+        kind: "hook",
+        status: "skipped",
+        ...sessionId ? { session_id: sessionId } : {},
+        detail: nodeRuntimeIssue.detail
+      });
+      return {
+        continue: true,
+        systemMessage: nodeRuntimeIssue.systemMessage,
+        hookSpecificOutput: {
+          hookEventName: "SessionStart",
+          additionalContext: nodeRuntimeIssue.additionalContext
+        }
+      };
+    }
     if (isEngineUnavailableError(error48) && eventLogPath) {
       await dependencies.appendEventLogFn(eventLogPath, {
         at: (/* @__PURE__ */ new Date()).toISOString(),

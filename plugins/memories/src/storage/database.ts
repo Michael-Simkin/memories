@@ -1,9 +1,9 @@
 import { createRequire } from 'node:module';
-import path from 'node:path';
 
 import { ulid } from 'ulid';
 
 import { logWarn } from '../shared/logger.js';
+import { resolveNativeRuntimeRoot } from '../shared/native-runtime.js';
 import type {
   AddMemoryInput,
   MemoryRecord,
@@ -70,7 +70,7 @@ interface MemoryPathMatcherRow {
 }
 
 function loadBetterSqlite3(pluginRoot: string): BetterSqlite3Constructor {
-  const nativeRoot = path.join(pluginRoot, 'native');
+  const nativeRoot = resolveNativeRuntimeRoot(pluginRoot);
   const requireFromStorage = createRequire(import.meta.url);
 
   let resolvedPath: string;

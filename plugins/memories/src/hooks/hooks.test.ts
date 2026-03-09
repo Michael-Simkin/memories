@@ -211,6 +211,51 @@ describe('hook handlers', () => {
     });
   });
 
+  it('SessionStart surfaces Node 24 setup guidance when the runtime is missing', async () => {
+    const payload: SessionStartPayload = {
+      session_id: 'session-node-runtime',
+    };
+    const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
+    const detail =
+      'ENGINE_UNAVAILABLE: Node 24.x is required for engine startup (highest discovered runtime is v22.14.0 at /tmp/node). Install it with `nvm install 24` or set MEMORIES_NODE_BIN to an absolute Node 24 binary path.';
+
+    const output = await handleSessionStart(
+      payload,
+      createSessionStartDependencies({
+        appendEventLogFn,
+        ensureEngineFn: vi.fn().mockRejectedValue(new Error(detail)),
+      }),
+    );
+
+    expect(output).toEqual({
+      continue: true,
+      systemMessage:
+        'Memories could not be launched because Node 24 is not available for engine startup. Run `nvm install 24` and relaunch Claude, or set `MEMORIES_NODE_BIN` to the absolute path of a Node 24 binary. Or ask Claude to do it for you.',
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+        additionalContext: [
+          '<memory-setup>',
+          'Memories are unavailable because Node 24 was not found for engine startup.',
+          'If the user asks you to fix this, choose one of these options:',
+          '- `nvm install 24`',
+          '- relaunch Claude from a shell where `nvm use 24` is active',
+          '- ask the user for an absolute Node 24 binary path and set `MEMORIES_NODE_BIN=/absolute/path/to/node` before launching Claude',
+          'Do not run setup commands unless the user asks.',
+          '</memory-setup>',
+        ].join('\n'),
+      },
+    });
+    expect(appendEventLogFn).toHaveBeenCalledWith(
+      '/tmp/events.log',
+      expect.objectContaining({
+        detail,
+        event: 'SessionStart',
+        session_id: 'session-node-runtime',
+        status: 'skipped',
+      }),
+    );
+  });
+
   it('Stop returns immediately and spawns detached worker handoff', async () => {
     const payload: StopPayload = {
       transcript_path: '/tmp/transcript.jsonl',
