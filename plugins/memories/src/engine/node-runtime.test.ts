@@ -45,26 +45,36 @@ describe('node runtime selection', () => {
     });
   });
 
-  it('resolves npm from the same runtime directory as the selected node', async () => {
+  it('prefers npm-cli.js via the selected node even when an npm wrapper exists', async () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'memories-node-runtime-'));
     const binDirectory = path.join(tempRoot, 'bin');
+    const npmCliDirectory =
+      process.platform === 'win32'
+        ? path.join(tempRoot, 'node_modules', 'npm', 'bin')
+        : path.join(tempRoot, 'lib', 'node_modules', 'npm', 'bin');
     await mkdir(binDirectory, { recursive: true });
+    await mkdir(npmCliDirectory, { recursive: true });
 
     const nodeExecutable = path.join(binDirectory, 'node');
-    const npmExecutable = path.join(binDirectory, 'npm');
+    const npmExecutable = path.join(binDirectory, process.platform === 'win32' ? 'npm.cmd' : 'npm');
+    const npmCliPath = path.join(npmCliDirectory, 'npm-cli.js');
     await writeFile(nodeExecutable, '', 'utf8');
     await writeFile(npmExecutable, '', 'utf8');
+    await writeFile(npmCliPath, '', 'utf8');
 
     expect(resolveNpmInvocation(nodeExecutable)).toEqual({
-      argsPrefix: [],
-      command: npmExecutable,
+      argsPrefix: [npmCliPath],
+      command: nodeExecutable,
     });
   });
 
   it('falls back to npm-cli.js when the npm wrapper is missing', async () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'memories-node-runtime-'));
     const binDirectory = path.join(tempRoot, 'bin');
-    const npmCliDirectory = path.join(tempRoot, 'lib', 'node_modules', 'npm', 'bin');
+    const npmCliDirectory =
+      process.platform === 'win32'
+        ? path.join(tempRoot, 'node_modules', 'npm', 'bin')
+        : path.join(tempRoot, 'lib', 'node_modules', 'npm', 'bin');
     await mkdir(binDirectory, { recursive: true });
     await mkdir(npmCliDirectory, { recursive: true });
 

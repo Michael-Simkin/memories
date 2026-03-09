@@ -41128,31 +41128,29 @@ var execFileAsync = promisify(execFile);
 var REQUIRED_ENGINE_NODE_MAJOR = 24;
 function resolveNpmInvocation(nodeExecutable) {
   const nodeDirectory = path5.dirname(nodeExecutable);
-  const npmWrapper = path5.join(nodeDirectory, process.platform === "win32" ? "npm.cmd" : "npm");
-  if (existsSync2(npmWrapper)) {
-    return {
-      argsPrefix: [],
-      command: npmWrapper
-    };
-  }
-  const npmCliPath = path5.resolve(
-    nodeDirectory,
-    "..",
-    "lib",
-    "node_modules",
-    "npm",
-    "bin",
-    "npm-cli.js"
-  );
-  if (existsSync2(npmCliPath)) {
-    return {
-      argsPrefix: [npmCliPath],
-      command: nodeExecutable
-    };
+  for (const npmCliPath of candidateNpmCliPaths(nodeDirectory)) {
+    if (existsSync2(npmCliPath)) {
+      return {
+        argsPrefix: [npmCliPath],
+        command: nodeExecutable
+      };
+    }
   }
   throw new Error(
     `npm was not found alongside ${nodeExecutable}. Install a full Node ${REQUIRED_ENGINE_NODE_MAJOR}+ distribution or set MEMORIES_NODE_BIN to a Node binary bundled with npm.`
   );
+}
+function candidateNpmCliPaths(nodeDirectory) {
+  if (process.platform === "win32") {
+    return [
+      path5.resolve(nodeDirectory, "node_modules", "npm", "bin", "npm-cli.js"),
+      path5.resolve(nodeDirectory, "..", "node_modules", "npm", "bin", "npm-cli.js")
+    ];
+  }
+  return [
+    path5.resolve(nodeDirectory, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+    path5.resolve(nodeDirectory, "..", "node_modules", "npm", "bin", "npm-cli.js")
+  ];
 }
 
 // src/engine/main.ts
