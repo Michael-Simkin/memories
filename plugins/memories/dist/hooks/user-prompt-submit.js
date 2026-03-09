@@ -13809,6 +13809,9 @@ config(en_default());
 // src/hooks/schemas.ts
 var sessionStartPayloadSchema = external_exports.object({
   cwd: external_exports.string().optional(),
+  source: external_exports.string().trim().min(1).optional(),
+  model: external_exports.string().trim().min(1).optional(),
+  agent_type: external_exports.string().trim().min(1).optional(),
   project_root: external_exports.string().optional(),
   session_id: external_exports.string().optional()
 }).catchall(external_exports.unknown());
@@ -13829,6 +13832,7 @@ var stopPayloadSchema = external_exports.object({
 var sessionEndPayloadSchema = external_exports.object({
   cwd: external_exports.string().optional(),
   project_root: external_exports.string().optional(),
+  reason: external_exports.string().trim().min(1).optional(),
   session_id: external_exports.string().trim().min(1)
 }).catchall(external_exports.unknown());
 

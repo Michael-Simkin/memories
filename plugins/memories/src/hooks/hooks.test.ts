@@ -50,6 +50,8 @@ function createSessionStartDependencies(
       ],
     }),
     postEngineJsonFn: vi.fn().mockResolvedValue({ ok: true }),
+    readEventLogsFn: vi.fn().mockResolvedValue([]),
+    readLockMetadataFn: vi.fn().mockResolvedValue(null),
     ...overrides,
   };
 }
@@ -58,6 +60,7 @@ describe('hook handlers', () => {
   it('SessionStart emits systemMessage and additionalContext markdown', async () => {
     const payload: SessionStartPayload = {
       session_id: 'session-abc',
+      source: 'startup',
     };
     const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
     const postEngineJsonFn = vi.fn().mockResolvedValue({ ok: true });
@@ -89,6 +92,136 @@ describe('hook handlers', () => {
       { host: '127.0.0.1', port: 4312 },
       '/sessions/connect',
       { session_id: 'session-abc' },
+    );
+  });
+
+  it('SessionStart does not register another live session on compact', async () => {
+    const payload: SessionStartPayload = {
+      session_id: 'session-compact',
+      source: 'compact',
+    };
+    const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
+    const postEngineJsonFn = vi.fn().mockResolvedValue({ ok: true });
+
+    const output = await handleSessionStart(
+      payload,
+      createSessionStartDependencies({
+        appendEventLogFn,
+        postEngineJsonFn,
+      }),
+    );
+
+    expect(output.continue).toBe(true);
+    expect(output.systemMessage).toContain('Memory UI:');
+    expect(postEngineJsonFn).not.toHaveBeenCalled();
+    expect(appendEventLogFn).toHaveBeenCalledWith(
+      '/tmp/events.log',
+      expect.objectContaining({
+        detail: expect.stringContaining('source=compact; ui=http://127.0.0.1:4312/ui'),
+        event: 'SessionStart',
+        session_id: 'session-compact',
+        status: 'ok',
+        data: { source: 'compact' },
+      }),
+    );
+  });
+
+  it('SessionStart skips bootstrap resume connect when startup session is already connected', async () => {
+    const payload: SessionStartPayload = {
+      session_id: 'session-resume',
+      source: 'resume',
+    };
+    const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
+    const postEngineJsonFn = vi.fn().mockResolvedValue({ ok: true });
+    const now = new Date().toISOString();
+
+    const output = await handleSessionStart(
+      payload,
+      createSessionStartDependencies({
+        appendEventLogFn,
+        postEngineJsonFn,
+        readLockMetadataFn: vi.fn().mockResolvedValue({
+          host: '127.0.0.1',
+          port: 4312,
+          pid: 999,
+          started_at: now,
+          connected_session_ids: ['session-startup'],
+        }),
+      }),
+    );
+
+    expect(output.continue).toBe(true);
+    expect(postEngineJsonFn).not.toHaveBeenCalled();
+    expect(appendEventLogFn).toHaveBeenCalledWith(
+      '/tmp/events.log',
+      expect.objectContaining({
+        detail: expect.stringContaining('skipped_resume_bootstrap_connect=true'),
+        event: 'SessionStart',
+        session_id: 'session-resume',
+        status: 'ok',
+        data: {
+          source: 'resume',
+          skipped_resume_bootstrap_connect: true,
+        },
+      }),
+    );
+  });
+
+  it('SessionStart evicts a bootstrap resume session when startup follows continue', async () => {
+    const payload: SessionStartPayload = {
+      session_id: 'session-startup',
+      source: 'startup',
+    };
+    const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
+    const postEngineJsonFn = vi.fn().mockResolvedValue({ ok: true });
+    const now = new Date().toISOString();
+
+    const output = await handleSessionStart(
+      payload,
+      createSessionStartDependencies({
+        appendEventLogFn,
+        postEngineJsonFn,
+        readEventLogsFn: vi.fn().mockResolvedValue([
+          {
+            at: now,
+            event: 'SessionStart',
+            kind: 'hook',
+            status: 'ok',
+            session_id: 'session-resume',
+            data: { source: 'resume' },
+          },
+        ]),
+        readLockMetadataFn: vi.fn().mockResolvedValue({
+          host: '127.0.0.1',
+          port: 4312,
+          pid: 999,
+          started_at: now,
+          connected_session_ids: ['session-resume', 'session-startup'],
+        }),
+      }),
+    );
+
+    expect(output.continue).toBe(true);
+    expect(postEngineJsonFn.mock.calls).toEqual([
+      [{ host: '127.0.0.1', port: 4312 }, '/sessions/connect', { session_id: 'session-startup' }],
+      [
+        { host: '127.0.0.1', port: 4312 },
+        '/sessions/disconnect',
+        { session_id: 'session-resume' },
+      ],
+    ]);
+    expect(appendEventLogFn).toHaveBeenCalledWith(
+      '/tmp/events.log',
+      expect.objectContaining({
+        detail: expect.stringContaining('evicted_resume_sessions=session-resume'),
+        event: 'SessionStart',
+        session_id: 'session-startup',
+        status: 'ok',
+        data: {
+          source: 'startup',
+          evicted_resume_session_ids: ['session-resume'],
+        },
+      }),
     );
   });
 

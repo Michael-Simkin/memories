@@ -14692,6 +14692,30 @@ async function appendEventLog(logPath, event) {
   const validated = memoryEventLogSchema.parse(event);
   await appendJsonLine(logPath, redactSecrets(validated));
 }
+async function readEventLogs(logPath, limit = 200) {
+  try {
+    const raw = await readFile3(logPath, "utf8");
+    const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+    const selected = lines.slice(Math.max(0, lines.length - limit));
+    return selected.flatMap((line) => {
+      try {
+        const parsed = JSON.parse(line);
+        const validated = memoryEventLogSchema.safeParse(parsed);
+        return validated.success ? [validated.data] : [];
+      } catch {
+        return [];
+      }
+    });
+  } catch (error48) {
+    if (isErrnoException3(error48) && error48.code === "ENOENT") {
+      return [];
+    }
+    throw error48;
+  }
+}
+function isErrnoException3(error48) {
+  return typeof error48 === "object" && error48 !== null && "code" in error48;
+}
 
 // src/shared/markdown.ts
 var MEMORY_SECTION_ORDER = ["fact", "rule", "decision", "episode"];
@@ -14810,6 +14834,9 @@ async function getEngineJson(endpoint, route) {
 // src/hooks/schemas.ts
 var sessionStartPayloadSchema = external_exports.object({
   cwd: external_exports.string().optional(),
+  source: external_exports.string().trim().min(1).optional(),
+  model: external_exports.string().trim().min(1).optional(),
+  agent_type: external_exports.string().trim().min(1).optional(),
   project_root: external_exports.string().optional(),
   session_id: external_exports.string().optional()
 }).catchall(external_exports.unknown());
@@ -14830,6 +14857,7 @@ var stopPayloadSchema = external_exports.object({
 var sessionEndPayloadSchema = external_exports.object({
   cwd: external_exports.string().optional(),
   project_root: external_exports.string().optional(),
+  reason: external_exports.string().trim().min(1).optional(),
   session_id: external_exports.string().trim().min(1)
 }).catchall(external_exports.unknown());
 
@@ -14837,13 +14865,16 @@ var sessionEndPayloadSchema = external_exports.object({
 var execFileAsync3 = promisify3(execFile3);
 var GENERIC_STARTUP_FAILURE_MESSAGE = "Memories could not be launched, see details in the logs";
 var MAX_SESSION_START_OLLAMA_TIMEOUT_MS = 2500;
+var RECENT_RESUME_BOOTSTRAP_WINDOW_MS = 5e3;
 var defaultDependencies = {
   appendEventLogFn: appendEventLog,
   diagnoseOllamaFn: diagnoseOllamaStartupIssue,
   ensureEngineFn: ensureEngine,
   ensureProjectDirectoriesFn: ensureProjectDirectories,
   getEngineJsonFn: getEngineJson,
-  postEngineJsonFn: postEngineJson
+  postEngineJsonFn: postEngineJson,
+  readEventLogsFn: readEventLogs,
+  readLockMetadataFn: readLockMetadata
 };
 var OllamaServiceNotRunningError = class extends Error {
 };
@@ -15040,9 +15071,83 @@ async function diagnoseOllamaStartupIssue() {
   }
   return null;
 }
+function normalizeSessionStartSource(rawSource) {
+  const source = rawSource?.trim();
+  switch (source) {
+    case "startup":
+    case "resume":
+    case "clear":
+    case "compact":
+      return source;
+    default:
+      return void 0;
+  }
+}
+function shouldRegisterLiveSession(source) {
+  return source !== "compact";
+}
+function parseEventTimestamp(at) {
+  const timestamp = Date.parse(at);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+async function shouldSkipResumeBootstrapConnect(currentSessionId, dependencies, paths) {
+  const lock = await dependencies.readLockMetadataFn(paths.lockPath);
+  if (!lock) {
+    return false;
+  }
+  return lock.connected_session_ids.some((sessionId) => sessionId !== currentSessionId);
+}
+async function disconnectRecentResumeBootstrapSessions(currentSessionId, endpoint, dependencies, paths) {
+  const lock = await dependencies.readLockMetadataFn(paths.lockPath);
+  if (!lock) {
+    return [];
+  }
+  const connectedOtherSessions = lock.connected_session_ids.filter((sessionId) => sessionId !== currentSessionId);
+  if (connectedOtherSessions.length === 0) {
+    return [];
+  }
+  const recentEvents = await dependencies.readEventLogsFn(paths.eventLogPath, 100);
+  const latestResumeStartAt = /* @__PURE__ */ new Map();
+  const latestSessionEndAt = /* @__PURE__ */ new Map();
+  const nowMs = Date.now();
+  const cutoffMs = nowMs - RECENT_RESUME_BOOTSTRAP_WINDOW_MS;
+  for (const event of recentEvents) {
+    if (!event.session_id) {
+      continue;
+    }
+    const eventAtMs = parseEventTimestamp(event.at);
+    if (eventAtMs === null) {
+      continue;
+    }
+    if (event.event === "SessionStart" && event.status === "ok" && event.data?.source === "resume" && eventAtMs >= cutoffMs) {
+      latestResumeStartAt.set(event.session_id, eventAtMs);
+      continue;
+    }
+    if (event.event === "SessionEnd") {
+      latestSessionEndAt.set(event.session_id, eventAtMs);
+    }
+  }
+  const bootstrapResumeSessionIds = connectedOtherSessions.filter((sessionId) => {
+    const resumeStartAt = latestResumeStartAt.get(sessionId);
+    if (resumeStartAt === void 0) {
+      return false;
+    }
+    const sessionEndAt = latestSessionEndAt.get(sessionId) ?? Number.NEGATIVE_INFINITY;
+    return sessionEndAt < resumeStartAt;
+  });
+  const lockStartedAtMs = parseEventTimestamp(lock.started_at);
+  const shouldFallbackToRecentSiblings = bootstrapResumeSessionIds.length === 0 && lockStartedAtMs !== null && nowMs - lockStartedAtMs <= RECENT_RESUME_BOOTSTRAP_WINDOW_MS;
+  const fallbackBootstrapSessionIds = shouldFallbackToRecentSiblings ? connectedOtherSessions : [];
+  const targetsToDisconnect = bootstrapResumeSessionIds.length > 0 ? bootstrapResumeSessionIds : fallbackBootstrapSessionIds;
+  for (const sessionId of targetsToDisconnect) {
+    await dependencies.postEngineJsonFn(endpoint, "/sessions/disconnect", { session_id: sessionId });
+  }
+  return targetsToDisconnect;
+}
 async function handleSessionStart(payload, dependencies = defaultDependencies) {
   const projectRoot = resolveHookProjectRoot(payload);
   const sessionId = payload.session_id?.trim();
+  const source = normalizeSessionStartSource(payload.source);
   let eventLogPath = null;
   try {
     const paths = await dependencies.ensureProjectDirectoriesFn(projectRoot);
@@ -15055,6 +15160,7 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
         kind: "hook",
         status: "skipped",
         ...sessionId ? { session_id: sessionId } : {},
+        ...source ? { data: { source } } : {},
         detail: ollamaIssue.detail
       });
       return {
@@ -15067,9 +15173,13 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
       };
     }
     const endpoint = await dependencies.ensureEngineFn(projectRoot);
-    if (sessionId) {
-      await dependencies.postEngineJsonFn(endpoint, "/sessions/connect", { session_id: sessionId });
+    const skippedResumeBootstrapConnect = source === "resume" && sessionId ? await shouldSkipResumeBootstrapConnect(sessionId, dependencies, paths) : false;
+    if (sessionId && shouldRegisterLiveSession(source)) {
+      if (!skippedResumeBootstrapConnect) {
+        await dependencies.postEngineJsonFn(endpoint, "/sessions/connect", { session_id: sessionId });
+      }
     }
+    const evictedResumeSessionIds = source === "startup" && sessionId ? await disconnectRecentResumeBootstrapSessions(sessionId, endpoint, dependencies, paths) : [];
     const pinned = await dependencies.getEngineJsonFn(endpoint, "/memories/pinned");
     const markdown = formatMemoryRecallMarkdown({
       query: "session-start:pinned",
@@ -15084,7 +15194,14 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
       kind: "hook",
       status: "ok",
       ...sessionId ? { session_id: sessionId } : {},
-      detail: `ui=${memoryUiUrl}`
+      ...source || evictedResumeSessionIds.length > 0 || skippedResumeBootstrapConnect ? {
+        data: {
+          ...source ? { source } : {},
+          ...evictedResumeSessionIds.length > 0 ? { evicted_resume_session_ids: evictedResumeSessionIds } : {},
+          ...skippedResumeBootstrapConnect ? { skipped_resume_bootstrap_connect: true } : {}
+        }
+      } : {},
+      detail: `${source ? `source=${source}; ` : ""}ui=${memoryUiUrl}${evictedResumeSessionIds.length > 0 ? `; evicted_resume_sessions=${evictedResumeSessionIds.join(",")}` : ""}${skippedResumeBootstrapConnect ? "; skipped_resume_bootstrap_connect=true" : ""}`
     });
     return {
       continue: true,
@@ -15103,6 +15220,7 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
         kind: "hook",
         status: "skipped",
         ...sessionId ? { session_id: sessionId } : {},
+        ...source ? { data: { source } } : {},
         detail: nodeRuntimeIssue.detail
       });
       return {
@@ -15121,6 +15239,7 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
         kind: "hook",
         status: "skipped",
         ...sessionId ? { session_id: sessionId } : {},
+        ...source ? { data: { source } } : {},
         detail: error48 instanceof Error ? error48.message : String(error48)
       });
       return {
@@ -15135,6 +15254,7 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
         kind: "hook",
         status: "error",
         ...sessionId ? { session_id: sessionId } : {},
+        ...source ? { data: { source } } : {},
         detail: error48 instanceof Error ? error48.message : String(error48)
       });
     }

@@ -3,6 +3,9 @@ import { z } from 'zod';
 export const sessionStartPayloadSchema = z
   .object({
     cwd: z.string().optional(),
+    source: z.string().trim().min(1).optional(),
+    model: z.string().trim().min(1).optional(),
+    agent_type: z.string().trim().min(1).optional(),
     project_root: z.string().optional(),
     session_id: z.string().optional(),
   })
@@ -38,6 +41,7 @@ export const sessionEndPayloadSchema = z
   .object({
     cwd: z.string().optional(),
     project_root: z.string().optional(),
+    reason: z.string().trim().min(1).optional(),
     session_id: z.string().trim().min(1),
   })
   .catchall(z.unknown());
