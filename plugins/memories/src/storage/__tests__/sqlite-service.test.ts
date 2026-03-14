@@ -7,7 +7,7 @@ import {
   createTempDirectory,
   removePath,
 } from "../../shared/__tests__/helpers.js";
-import { SqliteService } from "../services/sqlite-service.js";
+import { SqliteService } from "../sqlite-service.js";
 
 describe("SqliteService", () => {
   it("creates the database parent directory and supports basic SQL operations", async (testContext) => {

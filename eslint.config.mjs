@@ -22,6 +22,18 @@ export default tseslint.config(
     },
   },
   {
+    files: ["plugins/memories/src/**/repositories/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-extraneous-class": "off",
+    },
+  },
+  {
+    files: ["plugins/memories/src/storage/sqlite-service.ts"],
+    rules: {
+      "@typescript-eslint/no-extraneous-class": "off",
+    },
+  },
+  {
     files: ["plugins/memories/src/**/__tests__/**/*.ts"],
     rules: {
       "@typescript-eslint/no-floating-promises": "off",
