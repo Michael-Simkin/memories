@@ -28,8 +28,16 @@ describe("SqliteService", () => {
       const row = database
         .prepare("select count(*) as count from memories")
         .get() as { count: number };
+      const foreignKeys = database.prepare("pragma foreign_keys;").get() as {
+        foreign_keys: number;
+      };
+      const journalMode = database.prepare("pragma journal_mode;").get() as {
+        journal_mode: string;
+      };
 
       assert.equal(row.count, 1);
+      assert.equal(foreignKeys.foreign_keys, 1);
+      assert.equal(journalMode.journal_mode, "wal");
       await access(databasePath);
     } finally {
       database.close();
