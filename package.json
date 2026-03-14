@@ -12,7 +12,7 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "npm run typecheck --workspace @claude-memory/memories",
-    "test": "tsx --test plugins/memories/src/shared/__tests__/*.test.ts"
+    "test": "tsx --test plugins/memories/src/shared/__tests__/*.test.ts plugins/memories/src/storage/__tests__/*.test.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
