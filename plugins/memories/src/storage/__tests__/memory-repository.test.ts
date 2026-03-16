@@ -152,6 +152,24 @@ describe("MemoryRepository", () => {
     }
   });
 
+  it("normalizes noisy path matchers before storing them", () => {
+    const { bootstrapResult, touchResult } = createSpace();
+
+    try {
+      const memory = MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "memory-path-noise",
+        spaceId: touchResult.space.id,
+        memoryType: "fact",
+        content: "Normalize path matcher noise before storage.",
+        pathMatchers: ["./src/feature.ts:18", "src/feature.ts#L20-L30"],
+      });
+
+      assert.deepEqual(memory.path_matchers, ["src/feature.ts"]);
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
   it("indexes tags in memory_fts but does not index main memory content", () => {
     const { bootstrapResult, touchResult } = createSpace();
 
@@ -235,6 +253,45 @@ describe("MemoryRepository", () => {
             pathMatchers: ["/tmp/file.ts"],
           }),
         /Path matchers must be relative/,
+      );
+
+      const counts = bootstrapResult.database
+        .prepare(
+          "select (select count(*) from memories) as memory_count, (select count(*) from memory_path_matchers) as matcher_count, (select count(*) from memory_fts) as fts_count;",
+        )
+        .get() as { fts_count: number; matcher_count: number; memory_count: number };
+
+      assert.deepEqual(
+        {
+          fts_count: counts.fts_count,
+          memory_count: counts.memory_count,
+          matcher_count: counts.matcher_count,
+        },
+        {
+          fts_count: 0,
+          memory_count: 0,
+          matcher_count: 0,
+        },
+      );
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
+  it("rejects broad catch-all path matchers and rolls back the write", () => {
+    const { bootstrapResult, touchResult } = createSpace();
+
+    try {
+      assert.throws(
+        () =>
+          MemoryRepository.createMemory(bootstrapResult.database, {
+            id: "memory-5",
+            spaceId: touchResult.space.id,
+            memoryType: "episode",
+            content: "This write should also fail.",
+            pathMatchers: ["**/*"],
+          }),
+        /too broad/u,
       );
 
       const counts = bootstrapResult.database

@@ -40,6 +40,12 @@ export interface SearchMemoriesByTagsOptions {
   limit?: number | undefined;
 }
 
+export interface SearchMemoriesByPathsOptions {
+  relatedPaths: string[];
+  spaceId: string;
+  limit?: number | undefined;
+}
+
 export interface DeleteMemoryOptions {
   memoryId: string;
 }

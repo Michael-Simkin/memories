@@ -190,4 +190,89 @@ describe("MemoryRepository retrieval", () => {
       bootstrapResult.database.close();
     }
   });
+
+  it("searches path matchers and ranks exact file above dir and glob matches", () => {
+    const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
+      databasePath: ":memory:",
+    });
+
+    try {
+      const primarySpace = touchSpace(
+        bootstrapResult.database,
+        "/workspace/project-a",
+        "2026-03-14T10:00:00.000Z",
+      );
+      const secondarySpace = touchSpace(
+        bootstrapResult.database,
+        "/workspace/project-b",
+        "2026-03-14T10:01:00.000Z",
+      );
+
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "exact-file",
+        spaceId: primarySpace.space.id,
+        memoryType: "rule",
+        content: "Exact file match should win.",
+        pathMatchers: ["src/features/feature.ts"],
+        updatedAt: "2026-03-14T10:10:00.000Z",
+      });
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "exact-dir",
+        spaceId: primarySpace.space.id,
+        memoryType: "rule",
+        content: "Exact directory match should come next.",
+        pathMatchers: ["src/features"],
+        updatedAt: "2026-03-14T10:11:00.000Z",
+      });
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "single-glob",
+        spaceId: primarySpace.space.id,
+        memoryType: "rule",
+        content: "Single-glob match should follow the directory.",
+        pathMatchers: ["src/features/*.ts"],
+        updatedAt: "2026-03-14T10:12:00.000Z",
+      });
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "deep-glob",
+        spaceId: primarySpace.space.id,
+        memoryType: "rule",
+        content: "Deep-glob match should rank last despite being pinned.",
+        isPinned: true,
+        pathMatchers: ["src/**/*.ts"],
+        updatedAt: "2026-03-14T10:13:00.000Z",
+      });
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "wrong-space-path",
+        spaceId: secondarySpace.space.id,
+        memoryType: "rule",
+        content: "This path match belongs to another space.",
+        pathMatchers: ["src/features/feature.ts"],
+      });
+
+      const pathResult = MemoryRepository.searchMemoriesByPaths(
+        bootstrapResult.database,
+        {
+          spaceId: primarySpace.space.id,
+          relatedPaths: ["./src/features/feature.ts:44"],
+        },
+      );
+      const firstResult = pathResult.results[0];
+
+      assert.deepEqual(
+        pathResult.results.map((result) => result.id),
+        ["exact-file", "exact-dir", "single-glob", "deep-glob"],
+      );
+      assert.ok(firstResult);
+      assert.equal(firstResult.source, "path");
+      assert.deepEqual(firstResult.matched_by, ["path"]);
+      assert.equal(firstResult.lexical_score, null);
+      assert.equal(firstResult.semantic_score, null);
+      assert.equal(typeof firstResult.path_score, "number");
+      assert.ok((pathResult.results[0]?.path_score ?? 0) > (pathResult.results[1]?.path_score ?? 0));
+      assert.ok((pathResult.results[1]?.path_score ?? 0) > (pathResult.results[2]?.path_score ?? 0));
+      assert.ok((pathResult.results[2]?.path_score ?? 0) > (pathResult.results[3]?.path_score ?? 0));
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
 });

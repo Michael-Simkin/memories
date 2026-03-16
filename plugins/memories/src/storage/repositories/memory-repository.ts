@@ -10,11 +10,17 @@ import type {
   PersistedMemoryRecord,
   PersistedMemorySearchResponse,
   PersistedPinnedMemoriesResult,
+  SearchMemoriesByPathsOptions,
   SearchMemoriesByTagsOptions,
   UpdateMemoryInput,
 } from "../types/memory.js";
 import { normalizeNonEmptyString } from "../../shared/utils/strings.js";
 import type { SpaceMetadata } from "../../shared/types/space.js";
+import {
+  normalizePathMatchers,
+  normalizeRelatedPaths,
+  scorePathMatchers,
+} from "../../shared/utils/path-matchers.js";
 
 interface MemoryRow {
   id: string;
@@ -52,7 +58,7 @@ export class MemoryRepository {
   }
 
   private static escapeFtsToken(token: string): string {
-    return `"${token.replaceAll("\"", "\"\"")}"`;
+    return `"${token.replaceAll('"', '""')}"`;
   }
 
   private static buildLexicalMatchExpression(query: string): string {
@@ -68,10 +74,14 @@ export class MemoryRepository {
       .filter((token): token is string => token !== undefined);
 
     if (tokens.length === 0) {
-      throw new Error("Search query must contain at least one searchable token.");
+      throw new Error(
+        "Search query must contain at least one searchable token."
+      );
     }
 
-    return tokens.map((token) => MemoryRepository.escapeFtsToken(token)).join(" OR ");
+    return tokens
+      .map((token) => MemoryRepository.escapeFtsToken(token))
+      .join(" OR ");
   }
 
   private static normalizeSearchLimit(limit: number | undefined): number {
@@ -80,7 +90,9 @@ export class MemoryRepository {
     }
 
     if (!Number.isInteger(limit) || limit <= 0 || limit > 100) {
-      throw new Error("Search limit must be a positive integer no greater than 100.");
+      throw new Error(
+        "Search limit must be a positive integer no greater than 100."
+      );
     }
 
     return limit;
@@ -103,7 +115,7 @@ export class MemoryRepository {
   }
 
   private static hydrateSpaceMetadataRow(
-    row: Record<string, unknown>,
+    row: Record<string, unknown>
   ): SpaceMetadata {
     return {
       space_id: row["space_id"] as string,
@@ -114,7 +126,7 @@ export class MemoryRepository {
   }
 
   private static hydrateLexicalSearchRow(
-    row: Record<string, unknown>,
+    row: Record<string, unknown>
   ): LexicalSearchRow {
     return {
       ...MemoryRepository.hydrateMemoryRow(row),
@@ -137,32 +149,14 @@ export class MemoryRepository {
       new Set(
         (tags ?? [])
           .map((tag) => normalizeNonEmptyString(tag))
-          .filter((tag): tag is string => tag !== undefined),
-      ),
+          .filter((tag): tag is string => tag !== undefined)
+      )
     );
-  }
-
-  private static normalizePathMatchers(pathMatchers: string[] | undefined): string[] {
-    const normalizedPathMatchers = Array.from(
-      new Set(
-        (pathMatchers ?? [])
-          .map((pathMatcher) => normalizeNonEmptyString(pathMatcher))
-          .filter((pathMatcher): pathMatcher is string => pathMatcher !== undefined),
-      ),
-    );
-
-    for (const pathMatcher of normalizedPathMatchers) {
-      if (pathMatcher.startsWith("/")) {
-        throw new Error("Path matchers must be relative to the owning memory space root.");
-      }
-    }
-
-    return normalizedPathMatchers;
   }
 
   private static mapMemoryRow(
     row: MemoryRow,
-    pathMatchers: string[],
+    pathMatchers: string[]
   ): PersistedMemoryRecord {
     return {
       id: row.id,
@@ -182,7 +176,7 @@ export class MemoryRepository {
 
   private static mapLexicalSearchRow(
     row: LexicalSearchRow,
-    pathMatchers: string[],
+    pathMatchers: string[]
   ): PersistedMemorySearchResponse["results"][number] {
     return {
       ...MemoryRepository.mapMemoryRow(row, pathMatchers),
@@ -195,9 +189,24 @@ export class MemoryRepository {
     };
   }
 
+  private static mapPathSearchResult(
+    memory: PersistedMemoryRecord,
+    pathScore: number
+  ): PersistedMemorySearchResponse["results"][number] {
+    return {
+      ...memory,
+      score: pathScore,
+      source: "path",
+      matched_by: ["path"],
+      path_score: pathScore,
+      lexical_score: null,
+      semantic_score: null,
+    };
+  }
+
   private static resolveUpdatedContent(
     existingContent: string,
-    nextContent: string | undefined,
+    nextContent: string | undefined
   ): string {
     if (nextContent === undefined) {
       return existingContent;
@@ -208,7 +217,7 @@ export class MemoryRepository {
 
   private static resolveUpdatedTags(
     existingTagsJson: string,
-    nextTags: string[] | undefined,
+    nextTags: string[] | undefined
   ): string[] {
     if (nextTags === undefined) {
       return MemoryRepository.parseTagsJson(existingTagsJson);
@@ -219,7 +228,7 @@ export class MemoryRepository {
 
   private static resolveUpdatedIsPinned(
     existingIsPinned: number,
-    nextIsPinned: boolean | undefined,
+    nextIsPinned: boolean | undefined
   ): number {
     if (nextIsPinned === undefined) {
       return existingIsPinned;
@@ -228,7 +237,10 @@ export class MemoryRepository {
     return MemoryRepository.toSqliteBoolean(nextIsPinned);
   }
 
-  private static readMemoryRow(database: DatabaseSync, memoryId: string): MemoryRow | null {
+  private static readMemoryRow(
+    database: DatabaseSync,
+    memoryId: string
+  ): MemoryRow | null {
     const row = database
       .prepare(
         `SELECT
@@ -245,20 +257,25 @@ export class MemoryRepository {
           memories.updated_at
         FROM memories
         INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
-        WHERE memories.id = ?`,
+        WHERE memories.id = ?`
       )
       .get(memoryId);
 
-    return row ? MemoryRepository.hydrateMemoryRow(row as Record<string, unknown>) : null;
+    return row
+      ? MemoryRepository.hydrateMemoryRow(row as Record<string, unknown>)
+      : null;
   }
 
-  private static readPathMatchers(database: DatabaseSync, memoryId: string): string[] {
+  private static readPathMatchers(
+    database: DatabaseSync,
+    memoryId: string
+  ): string[] {
     return database
       .prepare(
         `SELECT path_matcher
         FROM memory_path_matchers
         WHERE memory_id = ?
-        ORDER BY created_at, path_matcher`,
+        ORDER BY created_at, path_matcher`
       )
       .all(memoryId)
       .map((row) => (row as { path_matcher: string }).path_matcher);
@@ -266,7 +283,7 @@ export class MemoryRepository {
 
   private static readSpaceMetadata(
     database: DatabaseSync,
-    spaceId: string,
+    spaceId: string
   ): SpaceMetadata | null {
     const row = database
       .prepare(
@@ -276,7 +293,7 @@ export class MemoryRepository {
           display_name AS space_display_name,
           origin_url_normalized
         FROM memory_spaces
-        WHERE id = ?`,
+        WHERE id = ?`
       )
       .get(spaceId);
 
@@ -284,10 +301,15 @@ export class MemoryRepository {
       return null;
     }
 
-    return MemoryRepository.hydrateSpaceMetadataRow(row as Record<string, unknown>);
+    return MemoryRepository.hydrateSpaceMetadataRow(
+      row as Record<string, unknown>
+    );
   }
 
-  private static requireMemory(database: DatabaseSync, memoryId: string): MemoryRow {
+  private static requireMemory(
+    database: DatabaseSync,
+    memoryId: string
+  ): MemoryRow {
     const row = MemoryRepository.readMemoryRow(database, memoryId);
 
     if (!row) {
@@ -299,7 +321,7 @@ export class MemoryRepository {
 
   private static requireSpaceMetadata(
     database: DatabaseSync,
-    spaceId: string,
+    spaceId: string
   ): SpaceMetadata {
     const spaceMetadata = MemoryRepository.readSpaceMetadata(database, spaceId);
 
@@ -312,7 +334,7 @@ export class MemoryRepository {
 
   private static readMemoryRecord(
     database: DatabaseSync,
-    memoryId: string,
+    memoryId: string
   ): PersistedMemoryRecord {
     const row = MemoryRepository.requireMemory(database, memoryId);
     const pathMatchers = MemoryRepository.readPathMatchers(database, memoryId);
@@ -324,9 +346,11 @@ export class MemoryRepository {
     database: DatabaseSync,
     memoryId: string,
     pathMatchers: string[],
-    createdAt: string,
+    createdAt: string
   ): void {
-    database.prepare("DELETE FROM memory_path_matchers WHERE memory_id = ?").run(memoryId);
+    database
+      .prepare("DELETE FROM memory_path_matchers WHERE memory_id = ?")
+      .run(memoryId);
 
     const insertPathMatcherStatement = database.prepare(
       `INSERT INTO memory_path_matchers (
@@ -334,18 +358,23 @@ export class MemoryRepository {
         memory_id,
         path_matcher,
         created_at
-      ) VALUES (?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?)`
     );
 
     for (const pathMatcher of pathMatchers) {
-      insertPathMatcherStatement.run(randomUUID(), memoryId, pathMatcher, createdAt);
+      insertPathMatcherStatement.run(
+        randomUUID(),
+        memoryId,
+        pathMatcher,
+        createdAt
+      );
     }
   }
 
   private static replaceMemoryFtsRow(
     database: DatabaseSync,
     memoryId: string,
-    tags: string[],
+    tags: string[]
   ): void {
     database.prepare("DELETE FROM memory_fts WHERE id = ?").run(memoryId);
 
@@ -360,7 +389,7 @@ export class MemoryRepository {
 
   static createMemory(
     database: DatabaseSync,
-    input: CreateMemoryInput,
+    input: CreateMemoryInput
   ): PersistedMemoryRecord {
     return SqliteService.transaction(database, () => {
       const memoryId = input.id ?? randomUUID();
@@ -368,7 +397,7 @@ export class MemoryRepository {
       const updatedAt = input.updatedAt ?? createdAt;
       const content = MemoryRepository.normalizeContent(input.content);
       const tags = MemoryRepository.normalizeTags(input.tags);
-      const pathMatchers = MemoryRepository.normalizePathMatchers(input.pathMatchers);
+      const pathMatchers = normalizePathMatchers(input.pathMatchers);
 
       database
         .prepare(
@@ -381,7 +410,7 @@ export class MemoryRepository {
             is_pinned,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           memoryId,
@@ -391,7 +420,7 @@ export class MemoryRepository {
           JSON.stringify(tags),
           MemoryRepository.toSqliteBoolean(input.isPinned ?? false),
           createdAt,
-          updatedAt,
+          updatedAt
         );
 
       MemoryRepository.replaceMemoryFtsRow(database, memoryId, tags);
@@ -399,7 +428,7 @@ export class MemoryRepository {
         database,
         memoryId,
         pathMatchers,
-        createdAt,
+        createdAt
       );
 
       return MemoryRepository.readMemoryRecord(database, memoryId);
@@ -408,7 +437,7 @@ export class MemoryRepository {
 
   static getMemoryById(
     database: DatabaseSync,
-    memoryId: string,
+    memoryId: string
   ): PersistedMemoryRecord | null {
     const row = MemoryRepository.readMemoryRow(database, memoryId);
 
@@ -418,13 +447,13 @@ export class MemoryRepository {
 
     return MemoryRepository.mapMemoryRow(
       row,
-      MemoryRepository.readPathMatchers(database, memoryId),
+      MemoryRepository.readPathMatchers(database, memoryId)
     );
   }
 
   static listMemories(
     database: DatabaseSync,
-    options: ListMemoriesOptions,
+    options: ListMemoriesOptions
   ): PersistedMemoryRecord[] {
     const rows = database
       .prepare(
@@ -443,23 +472,26 @@ export class MemoryRepository {
         FROM memories
         INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
         WHERE memories.space_id = ?
-        ORDER BY memories.updated_at DESC, memories.id ASC`,
+        ORDER BY memories.updated_at DESC, memories.id ASC`
       )
       .all(options.spaceId) as Record<string, unknown>[];
 
     return rows.map((row) =>
       MemoryRepository.mapMemoryRow(
         MemoryRepository.hydrateMemoryRow(row),
-        MemoryRepository.readPathMatchers(database, row["id"] as string),
-      ),
+        MemoryRepository.readPathMatchers(database, row["id"] as string)
+      )
     );
   }
 
   static listPinnedMemories(
     database: DatabaseSync,
-    options: ListPinnedMemoriesOptions,
+    options: ListPinnedMemoriesOptions
   ): PersistedPinnedMemoriesResult {
-    const space = MemoryRepository.requireSpaceMetadata(database, options.spaceId);
+    const space = MemoryRepository.requireSpaceMetadata(
+      database,
+      options.spaceId
+    );
     const rows = database
       .prepare(
         `SELECT
@@ -477,7 +509,7 @@ export class MemoryRepository {
         FROM memories
         INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
         WHERE memories.space_id = ? AND memories.is_pinned = 1
-        ORDER BY memories.updated_at DESC, memories.id ASC`,
+        ORDER BY memories.updated_at DESC, memories.id ASC`
       )
       .all(options.spaceId) as Record<string, unknown>[];
 
@@ -486,19 +518,22 @@ export class MemoryRepository {
       memories: rows.map((row) =>
         MemoryRepository.mapMemoryRow(
           MemoryRepository.hydrateMemoryRow(row),
-          MemoryRepository.readPathMatchers(database, row["id"] as string),
-        ),
+          MemoryRepository.readPathMatchers(database, row["id"] as string)
+        )
       ),
     };
   }
 
   static searchMemoriesByTags(
     database: DatabaseSync,
-    options: SearchMemoriesByTagsOptions,
+    options: SearchMemoriesByTagsOptions
   ): PersistedMemorySearchResponse {
-    const space = MemoryRepository.requireSpaceMetadata(database, options.spaceId);
+    const space = MemoryRepository.requireSpaceMetadata(
+      database,
+      options.spaceId
+    );
     const matchExpression = MemoryRepository.buildLexicalMatchExpression(
-      options.query,
+      options.query
     );
     const limit = MemoryRepository.normalizeSearchLimit(options.limit);
     const rows = database
@@ -521,7 +556,7 @@ export class MemoryRepository {
         INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
         WHERE memories.space_id = ? AND memory_fts MATCH ?
         ORDER BY lexical_score DESC, memories.is_pinned DESC, memories.updated_at DESC, memories.id ASC
-        LIMIT ${String(limit)}`,
+        LIMIT ${String(limit)}`
       )
       .all(options.spaceId, matchExpression) as Record<string, unknown>[];
 
@@ -530,44 +565,115 @@ export class MemoryRepository {
       results: rows.map((row) =>
         MemoryRepository.mapLexicalSearchRow(
           MemoryRepository.hydrateLexicalSearchRow(row),
-          MemoryRepository.readPathMatchers(database, row["id"] as string),
-        ),
+          MemoryRepository.readPathMatchers(database, row["id"] as string)
+        )
+      ),
+    };
+  }
+
+  static searchMemoriesByPaths(
+    database: DatabaseSync,
+    options: SearchMemoriesByPathsOptions
+  ): PersistedMemorySearchResponse {
+    const space = MemoryRepository.requireSpaceMetadata(
+      database,
+      options.spaceId
+    );
+    const relatedPaths = normalizeRelatedPaths(options.relatedPaths);
+    const limit = MemoryRepository.normalizeSearchLimit(options.limit);
+
+    if (relatedPaths.length === 0) {
+      return {
+        space,
+        results: [],
+      };
+    }
+
+    const rankedMatches = MemoryRepository.listMemories(database, {
+      spaceId: options.spaceId,
+    })
+      .map((memory) => ({
+        memory,
+        pathScore: scorePathMatchers(memory.path_matchers, relatedPaths),
+      }))
+      .filter(
+        (
+          candidate
+        ): candidate is {
+          memory: PersistedMemoryRecord;
+          pathScore: number;
+        } => candidate.pathScore !== null
+      )
+      .sort((leftCandidate, rightCandidate) => {
+        if (leftCandidate.pathScore !== rightCandidate.pathScore) {
+          return rightCandidate.pathScore - leftCandidate.pathScore;
+        }
+
+        if (
+          leftCandidate.memory.is_pinned !== rightCandidate.memory.is_pinned
+        ) {
+          return leftCandidate.memory.is_pinned ? -1 : 1;
+        }
+
+        if (
+          leftCandidate.memory.updated_at !== rightCandidate.memory.updated_at
+        ) {
+          return leftCandidate.memory.updated_at <
+            rightCandidate.memory.updated_at
+            ? 1
+            : -1;
+        }
+
+        return leftCandidate.memory.id.localeCompare(rightCandidate.memory.id);
+      })
+      .slice(0, limit);
+
+    return {
+      space,
+      results: rankedMatches.map((candidate) =>
+        MemoryRepository.mapPathSearchResult(
+          candidate.memory,
+          candidate.pathScore
+        )
       ),
     };
   }
 
   static updateMemory(
     database: DatabaseSync,
-    input: UpdateMemoryInput,
+    input: UpdateMemoryInput
   ): PersistedMemoryRecord {
     return SqliteService.transaction(database, () => {
-      const existingMemory = MemoryRepository.requireMemory(database, input.memoryId);
+      const existingMemory = MemoryRepository.requireMemory(
+        database,
+        input.memoryId
+      );
       const updatedAt = input.updatedAt ?? new Date().toISOString();
       const nextContent = MemoryRepository.resolveUpdatedContent(
         existingMemory.content,
-        input.content,
+        input.content
       );
       const nextTags = MemoryRepository.resolveUpdatedTags(
         existingMemory.tags_json,
-        input.tags,
+        input.tags
       );
       const nextIsPinned = MemoryRepository.resolveUpdatedIsPinned(
         existingMemory.is_pinned,
-        input.isPinned,
+        input.isPinned
       );
 
       database
         .prepare(
           `UPDATE memories
           SET content = ?, tags_json = ?, is_pinned = ?, updated_at = ?
-          WHERE id = ?`,
+          WHERE id = ?`
         )
         .run(
           nextContent,
           JSON.stringify(nextTags),
           nextIsPinned,
           updatedAt,
-          input.memoryId,
+          input.memoryId
         );
 
       MemoryRepository.replaceMemoryFtsRow(database, input.memoryId, nextTags);
@@ -576,8 +682,8 @@ export class MemoryRepository {
         MemoryRepository.replacePathMatchers(
           database,
           input.memoryId,
-          MemoryRepository.normalizePathMatchers(input.pathMatchers),
-          updatedAt,
+          normalizePathMatchers(input.pathMatchers),
+          updatedAt
         );
       }
 
@@ -585,14 +691,21 @@ export class MemoryRepository {
     });
   }
 
-  static deleteMemory(database: DatabaseSync, options: DeleteMemoryOptions): void {
+  static deleteMemory(
+    database: DatabaseSync,
+    options: DeleteMemoryOptions
+  ): void {
     SqliteService.transaction(database, () => {
       MemoryRepository.requireMemory(database, options.memoryId);
-      database.prepare("DELETE FROM memory_fts WHERE id = ?").run(options.memoryId);
-      database.prepare("DELETE FROM memory_path_matchers WHERE memory_id = ?").run(
-        options.memoryId,
-      );
-      database.prepare("DELETE FROM memories WHERE id = ?").run(options.memoryId);
+      database
+        .prepare("DELETE FROM memory_fts WHERE id = ?")
+        .run(options.memoryId);
+      database
+        .prepare("DELETE FROM memory_path_matchers WHERE memory_id = ?")
+        .run(options.memoryId);
+      database
+        .prepare("DELETE FROM memories WHERE id = ?")
+        .run(options.memoryId);
     });
   }
 }
