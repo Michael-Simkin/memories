@@ -25,7 +25,7 @@ describe("DatabaseBootstrapRepository", () => {
     try {
       const tableRows = bootstrapResult.database
         .prepare(
-          "select name, type from sqlite_master where name in ('memory_spaces', 'space_roots', 'memories', 'memory_path_matchers', 'idx_space_roots_space_id_root_path') order by type, name;",
+          "select name, type from sqlite_master where name in ('memory_spaces', 'space_roots', 'memories', 'memory_path_matchers', 'memory_fts', 'idx_space_roots_space_id_root_path') order by type, name;",
         )
         .all()
         .map((row) => ({
@@ -37,11 +37,12 @@ describe("DatabaseBootstrapRepository", () => {
         bootstrapResult.databasePath,
         path.join(tempDirectory, "memory.db"),
       );
-      assert.equal(bootstrapResult.schemaVersion, 2);
-      assert.equal(SqliteService.readUserVersion(bootstrapResult.database), 2);
+      assert.equal(bootstrapResult.schemaVersion, 3);
+      assert.equal(SqliteService.readUserVersion(bootstrapResult.database), 3);
       assert.deepEqual(tableRows, [
         { name: "idx_space_roots_space_id_root_path", type: "index" },
         { name: "memories", type: "table" },
+        { name: "memory_fts", type: "table" },
         { name: "memory_path_matchers", type: "table" },
         { name: "memory_spaces", type: "table" },
         { name: "space_roots", type: "table" },
@@ -102,7 +103,7 @@ describe("DatabaseBootstrapRepository", () => {
         .prepare("select count(*) as count from memory_spaces;")
         .get() as { count: number };
 
-      assert.equal(secondBootstrap.schemaVersion, 2);
+      assert.equal(secondBootstrap.schemaVersion, 3);
       assert.equal(row.count, 1);
     } finally {
       secondBootstrap.database.close();

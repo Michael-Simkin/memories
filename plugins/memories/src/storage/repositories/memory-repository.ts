@@ -38,6 +38,10 @@ export class MemoryRepository {
     return 0;
   }
 
+  private static serializeTagsForFts(tags: string[]): string {
+    return tags.join("\n");
+  }
+
   private static hydrateMemoryRow(row: Record<string, unknown>): MemoryRow {
     return {
       id: row["id"] as string,
@@ -223,6 +227,22 @@ export class MemoryRepository {
     }
   }
 
+  private static replaceMemoryFtsRow(
+    database: DatabaseSync,
+    memoryId: string,
+    tags: string[],
+  ): void {
+    database.prepare("DELETE FROM memory_fts WHERE id = ?").run(memoryId);
+
+    if (tags.length === 0) {
+      return;
+    }
+
+    database
+      .prepare("INSERT INTO memory_fts (id, tags_text) VALUES (?, ?)")
+      .run(memoryId, MemoryRepository.serializeTagsForFts(tags));
+  }
+
   static createMemory(
     database: DatabaseSync,
     input: CreateMemoryInput,
@@ -259,6 +279,7 @@ export class MemoryRepository {
           updatedAt,
         );
 
+      MemoryRepository.replaceMemoryFtsRow(database, memoryId, tags);
       MemoryRepository.replacePathMatchers(
         database,
         memoryId,
@@ -353,6 +374,8 @@ export class MemoryRepository {
           input.memoryId,
         );
 
+      MemoryRepository.replaceMemoryFtsRow(database, input.memoryId, nextTags);
+
       if (input.pathMatchers !== undefined) {
         MemoryRepository.replacePathMatchers(
           database,
@@ -369,6 +392,7 @@ export class MemoryRepository {
   static deleteMemory(database: DatabaseSync, options: DeleteMemoryOptions): void {
     SqliteService.transaction(database, () => {
       MemoryRepository.requireMemory(database, options.memoryId);
+      database.prepare("DELETE FROM memory_fts WHERE id = ?").run(options.memoryId);
       database.prepare("DELETE FROM memory_path_matchers WHERE memory_id = ?").run(
         options.memoryId,
       );

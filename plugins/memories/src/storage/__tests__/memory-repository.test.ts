@@ -68,6 +68,15 @@ describe("MemoryRepository", () => {
       const listedMemories = MemoryRepository.listMemories(bootstrapResult.database, {
         spaceId: touchResult.space.id,
       });
+      const rawFtsRow = bootstrapResult.database
+        .prepare("select id, tags_text from memory_fts where id = ?;")
+        .get("memory-1") as { id: string; tags_text: string } | undefined;
+      const ftsRow = rawFtsRow
+        ? {
+            id: rawFtsRow.id,
+            tags_text: rawFtsRow.tags_text,
+          }
+        : undefined;
 
       assert.deepEqual(memory, {
         id: "memory-1",
@@ -82,6 +91,10 @@ describe("MemoryRepository", () => {
         path_matchers: ["docs/**/*.md", "src/**"],
         created_at: "2026-03-14T03:15:00.000Z",
         updated_at: "2026-03-14T03:15:00.000Z",
+      });
+      assert.deepEqual(ftsRow, {
+        id: "memory-1",
+        tags_text: "release\nchecklist",
       });
       assert.deepEqual(listedMemories, [memory]);
     } finally {
@@ -117,6 +130,10 @@ describe("MemoryRepository", () => {
         )
         .all("memory-2")
         .map((row) => (row as { path_matcher: string }).path_matcher);
+      const ftsMatches = bootstrapResult.database
+        .prepare("select id from memory_fts where memory_fts match ? order by id;")
+        .all("transactions")
+        .map((row) => (row as { id: string }).id);
 
       assert.equal(updatedMemory.space_id, touchResult.space.id);
       assert.equal(updatedMemory.created_at, "2026-03-14T04:00:00.000Z");
@@ -129,6 +146,35 @@ describe("MemoryRepository", () => {
       assert.equal(updatedMemory.is_pinned, true);
       assert.deepEqual(updatedMemory.path_matchers, ["src/storage/repositories/**"]);
       assert.deepEqual(storedPathMatchers, ["src/storage/repositories/**"]);
+      assert.deepEqual(ftsMatches, ["memory-2"]);
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
+  it("indexes tags in memory_fts but does not index main memory content", () => {
+    const { bootstrapResult, touchResult } = createSpace();
+
+    try {
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "memory-fts-1",
+        spaceId: touchResult.space.id,
+        memoryType: "fact",
+        content: "Ship the deployment checklist before Friday.",
+        tags: ["release", "deploy"],
+      });
+
+      const tagMatches = bootstrapResult.database
+        .prepare("select id from memory_fts where memory_fts match ? order by id;")
+        .all("release")
+        .map((row) => (row as { id: string }).id);
+      const contentMatches = bootstrapResult.database
+        .prepare("select id from memory_fts where memory_fts match ? order by id;")
+        .all("friday")
+        .map((row) => (row as { id: string }).id);
+
+      assert.deepEqual(tagMatches, ["memory-fts-1"]);
+      assert.deepEqual(contentMatches, []);
     } finally {
       bootstrapResult.database.close();
     }
@@ -143,6 +189,7 @@ describe("MemoryRepository", () => {
         spaceId: touchResult.space.id,
         memoryType: "decision",
         content: "Use one global engine.",
+        tags: ["architecture"],
         pathMatchers: ["plugins/memories/**"],
       });
 
@@ -152,17 +199,19 @@ describe("MemoryRepository", () => {
 
       const counts = bootstrapResult.database
         .prepare(
-          "select (select count(*) from memories) as memory_count, (select count(*) from memory_path_matchers) as matcher_count;",
+          "select (select count(*) from memories) as memory_count, (select count(*) from memory_path_matchers) as matcher_count, (select count(*) from memory_fts) as fts_count;",
         )
-        .get() as { matcher_count: number; memory_count: number };
+        .get() as { fts_count: number; matcher_count: number; memory_count: number };
 
       assert.equal(MemoryRepository.getMemoryById(bootstrapResult.database, "memory-3"), null);
       assert.deepEqual(
         {
+          fts_count: counts.fts_count,
           memory_count: counts.memory_count,
           matcher_count: counts.matcher_count,
         },
         {
+          fts_count: 0,
           memory_count: 0,
           matcher_count: 0,
         },
@@ -190,16 +239,18 @@ describe("MemoryRepository", () => {
 
       const counts = bootstrapResult.database
         .prepare(
-          "select (select count(*) from memories) as memory_count, (select count(*) from memory_path_matchers) as matcher_count;",
+          "select (select count(*) from memories) as memory_count, (select count(*) from memory_path_matchers) as matcher_count, (select count(*) from memory_fts) as fts_count;",
         )
-        .get() as { matcher_count: number; memory_count: number };
+        .get() as { fts_count: number; matcher_count: number; memory_count: number };
 
       assert.deepEqual(
         {
+          fts_count: counts.fts_count,
           memory_count: counts.memory_count,
           matcher_count: counts.matcher_count,
         },
         {
+          fts_count: 0,
           memory_count: 0,
           matcher_count: 0,
         },
