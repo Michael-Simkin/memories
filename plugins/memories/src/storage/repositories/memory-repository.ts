@@ -6,10 +6,15 @@ import type {
   CreateMemoryInput,
   DeleteMemoryOptions,
   ListMemoriesOptions,
+  ListPinnedMemoriesOptions,
   PersistedMemoryRecord,
+  PersistedMemorySearchResponse,
+  PersistedPinnedMemoriesResult,
+  SearchMemoriesByTagsOptions,
   UpdateMemoryInput,
 } from "../types/memory.js";
 import { normalizeNonEmptyString } from "../../shared/utils/strings.js";
+import type { SpaceMetadata } from "../../shared/types/space.js";
 
 interface MemoryRow {
   id: string;
@@ -23,6 +28,10 @@ interface MemoryRow {
   is_pinned: number;
   created_at: string;
   updated_at: string;
+}
+
+interface LexicalSearchRow extends MemoryRow {
+  lexical_score: number;
 }
 
 export class MemoryRepository {
@@ -42,6 +51,41 @@ export class MemoryRepository {
     return tags.join("\n");
   }
 
+  private static escapeFtsToken(token: string): string {
+    return `"${token.replaceAll("\"", "\"\"")}"`;
+  }
+
+  private static buildLexicalMatchExpression(query: string): string {
+    const normalizedQuery = normalizeNonEmptyString(query);
+
+    if (!normalizedQuery) {
+      throw new Error("Search query must be a non-empty string.");
+    }
+
+    const tokens = normalizedQuery
+      .split(/\s+/u)
+      .map((token) => normalizeNonEmptyString(token))
+      .filter((token): token is string => token !== undefined);
+
+    if (tokens.length === 0) {
+      throw new Error("Search query must contain at least one searchable token.");
+    }
+
+    return tokens.map((token) => MemoryRepository.escapeFtsToken(token)).join(" OR ");
+  }
+
+  private static normalizeSearchLimit(limit: number | undefined): number {
+    if (limit === undefined) {
+      return 10;
+    }
+
+    if (!Number.isInteger(limit) || limit <= 0 || limit > 100) {
+      throw new Error("Search limit must be a positive integer no greater than 100.");
+    }
+
+    return limit;
+  }
+
   private static hydrateMemoryRow(row: Record<string, unknown>): MemoryRow {
     return {
       id: row["id"] as string,
@@ -55,6 +99,26 @@ export class MemoryRepository {
       is_pinned: row["is_pinned"] as number,
       created_at: row["created_at"] as string,
       updated_at: row["updated_at"] as string,
+    };
+  }
+
+  private static hydrateSpaceMetadataRow(
+    row: Record<string, unknown>,
+  ): SpaceMetadata {
+    return {
+      space_id: row["space_id"] as string,
+      space_kind: row["space_kind"] as SpaceMetadata["space_kind"],
+      space_display_name: row["space_display_name"] as string,
+      origin_url_normalized: row["origin_url_normalized"] as string | null,
+    };
+  }
+
+  private static hydrateLexicalSearchRow(
+    row: Record<string, unknown>,
+  ): LexicalSearchRow {
+    return {
+      ...MemoryRepository.hydrateMemoryRow(row),
+      lexical_score: row["lexical_score"] as number,
     };
   }
 
@@ -113,6 +177,21 @@ export class MemoryRepository {
       path_matchers: pathMatchers,
       created_at: row.created_at,
       updated_at: row.updated_at,
+    };
+  }
+
+  private static mapLexicalSearchRow(
+    row: LexicalSearchRow,
+    pathMatchers: string[],
+  ): PersistedMemorySearchResponse["results"][number] {
+    return {
+      ...MemoryRepository.mapMemoryRow(row, pathMatchers),
+      score: row.lexical_score,
+      source: "lexical",
+      matched_by: ["lexical"],
+      path_score: null,
+      lexical_score: row.lexical_score,
+      semantic_score: null,
     };
   }
 
@@ -185,6 +264,29 @@ export class MemoryRepository {
       .map((row) => (row as { path_matcher: string }).path_matcher);
   }
 
+  private static readSpaceMetadata(
+    database: DatabaseSync,
+    spaceId: string,
+  ): SpaceMetadata | null {
+    const row = database
+      .prepare(
+        `SELECT
+          id AS space_id,
+          space_kind,
+          display_name AS space_display_name,
+          origin_url_normalized
+        FROM memory_spaces
+        WHERE id = ?`,
+      )
+      .get(spaceId);
+
+    if (!row) {
+      return null;
+    }
+
+    return MemoryRepository.hydrateSpaceMetadataRow(row as Record<string, unknown>);
+  }
+
   private static requireMemory(database: DatabaseSync, memoryId: string): MemoryRow {
     const row = MemoryRepository.readMemoryRow(database, memoryId);
 
@@ -193,6 +295,19 @@ export class MemoryRepository {
     }
 
     return row;
+  }
+
+  private static requireSpaceMetadata(
+    database: DatabaseSync,
+    spaceId: string,
+  ): SpaceMetadata {
+    const spaceMetadata = MemoryRepository.readSpaceMetadata(database, spaceId);
+
+    if (!spaceMetadata) {
+      throw new Error(`Unable to find memory space "${spaceId}".`);
+    }
+
+    return spaceMetadata;
   }
 
   private static readMemoryRecord(
@@ -338,6 +453,87 @@ export class MemoryRepository {
         MemoryRepository.readPathMatchers(database, row["id"] as string),
       ),
     );
+  }
+
+  static listPinnedMemories(
+    database: DatabaseSync,
+    options: ListPinnedMemoriesOptions,
+  ): PersistedPinnedMemoriesResult {
+    const space = MemoryRepository.requireSpaceMetadata(database, options.spaceId);
+    const rows = database
+      .prepare(
+        `SELECT
+          memories.id,
+          memories.space_id,
+          memory_spaces.space_kind,
+          memory_spaces.display_name AS space_display_name,
+          memory_spaces.origin_url_normalized,
+          memories.memory_type,
+          memories.content,
+          memories.tags_json,
+          memories.is_pinned,
+          memories.created_at,
+          memories.updated_at
+        FROM memories
+        INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
+        WHERE memories.space_id = ? AND memories.is_pinned = 1
+        ORDER BY memories.updated_at DESC, memories.id ASC`,
+      )
+      .all(options.spaceId) as Record<string, unknown>[];
+
+    return {
+      space,
+      memories: rows.map((row) =>
+        MemoryRepository.mapMemoryRow(
+          MemoryRepository.hydrateMemoryRow(row),
+          MemoryRepository.readPathMatchers(database, row["id"] as string),
+        ),
+      ),
+    };
+  }
+
+  static searchMemoriesByTags(
+    database: DatabaseSync,
+    options: SearchMemoriesByTagsOptions,
+  ): PersistedMemorySearchResponse {
+    const space = MemoryRepository.requireSpaceMetadata(database, options.spaceId);
+    const matchExpression = MemoryRepository.buildLexicalMatchExpression(
+      options.query,
+    );
+    const limit = MemoryRepository.normalizeSearchLimit(options.limit);
+    const rows = database
+      .prepare(
+        `SELECT
+          memories.id,
+          memories.space_id,
+          memory_spaces.space_kind,
+          memory_spaces.display_name AS space_display_name,
+          memory_spaces.origin_url_normalized,
+          memories.memory_type,
+          memories.content,
+          memories.tags_json,
+          memories.is_pinned,
+          memories.created_at,
+          memories.updated_at,
+          CAST(-bm25(memory_fts) AS REAL) AS lexical_score
+        FROM memory_fts
+        INNER JOIN memories ON memories.id = memory_fts.id
+        INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
+        WHERE memories.space_id = ? AND memory_fts MATCH ?
+        ORDER BY lexical_score DESC, memories.is_pinned DESC, memories.updated_at DESC, memories.id ASC
+        LIMIT ${String(limit)}`,
+      )
+      .all(options.spaceId, matchExpression) as Record<string, unknown>[];
+
+    return {
+      space,
+      results: rows.map((row) =>
+        MemoryRepository.mapLexicalSearchRow(
+          MemoryRepository.hydrateLexicalSearchRow(row),
+          MemoryRepository.readPathMatchers(database, row["id"] as string),
+        ),
+      ),
+    };
   }
 
   static updateMemory(
