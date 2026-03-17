@@ -1,3 +1,5 @@
-import { runNoopHook } from "./hook-runtime.js";
+import { isMainModule, runNoopHook } from "./hook-runtime.js";
 
-void runNoopHook();
+if (isMainModule(import.meta.url)) {
+  void runNoopHook();
+}
