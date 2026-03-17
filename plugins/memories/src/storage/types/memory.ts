@@ -4,6 +4,7 @@ import type {
   MemoryType,
   PinnedMemoriesResult,
 } from "../../shared/types/memory.js";
+import type { CurrentContext } from "../../shared/types/space.js";
 
 export interface CreateMemoryInput {
   id?: string | undefined;
@@ -43,6 +44,26 @@ export interface SearchMemoriesByTagsOptions {
 export interface SearchMemoriesByPathsOptions {
   relatedPaths: string[];
   spaceId: string;
+  limit?: number | undefined;
+}
+
+export interface SearchMemoriesOptions {
+  query?: string | undefined;
+  relatedPaths?: string[] | undefined;
+  spaceId: string;
+  limit?: number | undefined;
+}
+
+export interface ResolveActiveSpaceOptions {
+  spaceId?: string | undefined;
+  context?: CurrentContext | undefined;
+}
+
+export type ListActivePinnedMemoriesOptions = ResolveActiveSpaceOptions;
+
+export interface SearchActiveMemoriesOptions extends ResolveActiveSpaceOptions {
+  query?: string | undefined;
+  relatedPaths?: string[] | undefined;
   limit?: number | undefined;
 }
 
