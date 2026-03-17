@@ -6,7 +6,16 @@
   "engines": {
     "node": "24.x"
   },
+  "files": [
+    "dist/**",
+    "vendor/**",
+    ".claude-plugin/**",
+    ".mcp.json",
+    "hooks/**",
+    "package.json"
+  ],
   "scripts": {
+    "build": "tsup --config tsup.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

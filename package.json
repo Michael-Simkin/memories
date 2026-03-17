@@ -10,7 +10,9 @@
     "plugins/*"
   ],
   "scripts": {
+    "build": "npm run build --workspace @claude-memory/memories",
     "lint": "eslint .",
+    "pack:memories:dry-run": "npm pack --dry-run --json --workspace @claude-memory/memories",
     "typecheck": "npm run typecheck --workspace @claude-memory/memories",
     "test": "tsx --test plugins/memories/src/shared/__tests__/*.test.ts plugins/memories/src/storage/__tests__/*.test.ts"
   },
@@ -18,6 +20,7 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.0",
     "eslint": "^10.0.3",
+    "tsup": "^8.5.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.57.0"

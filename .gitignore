@@ -1,4 +1,6 @@
 node_modules/
 dist/
+!plugins/memories/dist/
+!plugins/memories/dist/**
 coverage/
 .DS_Store
