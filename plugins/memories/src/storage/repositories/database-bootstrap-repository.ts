@@ -78,7 +78,7 @@ export class DatabaseBootstrapRepository {
     const databasePath =
       options.databasePath ??
       StoragePathsService.resolveMemoryStoragePaths(options).databasePath;
-    const database = SqliteService.openDatabase(databasePath);
+    const database = SqliteService.openDatabase(databasePath, options);
 
     try {
       const schemaVersion = DatabaseBootstrapRepository.migrateDatabase(database);
