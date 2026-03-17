@@ -99,6 +99,35 @@ export class SpaceRegistryRepository {
     return SpaceRegistryRepository.mapPersistedMemorySpace(row);
   }
 
+  private static readSpaceById(
+    database: DatabaseSync,
+    spaceId: string,
+  ): PersistedMemorySpace | null {
+    const row = database
+      .prepare(
+        `SELECT
+          id,
+          space_key,
+          space_kind,
+          display_name,
+          last_seen_root_path,
+          origin_url,
+          origin_url_normalized,
+          created_at,
+          updated_at,
+          last_seen_at
+        FROM memory_spaces
+        WHERE id = ?`,
+      )
+      .get(spaceId);
+
+    if (!row) {
+      return null;
+    }
+
+    return SpaceRegistryRepository.mapPersistedMemorySpace(row);
+  }
+
   private static readSpaceRoot(
     database: DatabaseSync,
     spaceId: string,
@@ -229,5 +258,12 @@ export class SpaceRegistryRepository {
         root,
       };
     });
+  }
+
+  static getSpaceById(
+    database: DatabaseSync,
+    spaceId: string,
+  ): PersistedMemorySpace | null {
+    return SpaceRegistryRepository.readSpaceById(database, spaceId);
   }
 }
