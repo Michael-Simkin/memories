@@ -11,6 +11,12 @@ import {
 import { DatabaseBootstrapRepository } from "../../storage/repositories/database-bootstrap-repository.js";
 import { LearningJobRepository } from "../../storage/repositories/learning-job-repository.js";
 import { handleStopHook } from "../stop.js";
+import {
+  ENGINE_NODE_ARGUMENTS,
+  SOURCE_ENGINE_ENTRYPOINT,
+  TEST_PLUGIN_ROOT,
+  stopRunningEngine,
+} from "./helpers.js";
 import type { StopHookInput } from "../types/stop.js";
 
 function createStopHookInput(
@@ -42,6 +48,7 @@ describe("handleStopHook", () => {
     await writeFile(transcriptPath, '{"event":"assistant"}\n', "utf8");
 
     testContext.after(async () => {
+      await stopRunningEngine(claudeMemoryHome);
       await removePath(claudeMemoryHome);
       await removePath(workspacePath);
     });
@@ -49,7 +56,11 @@ describe("handleStopHook", () => {
     const hookResult = await handleStopHook(
       createStopHookInput(workspacePath, transcriptPath),
       {
+        bootTimeoutMs: 10_000,
         claudeMemoryHome,
+        engineEntrypoint: SOURCE_ENGINE_ENTRYPOINT,
+        engineNodeArguments: ENGINE_NODE_ARGUMENTS,
+        pluginRoot: TEST_PLUGIN_ROOT,
       },
     );
     const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
@@ -89,6 +100,7 @@ describe("handleStopHook", () => {
     await writeFile(transcriptPath, '{"event":"assistant"}\n', "utf8");
 
     testContext.after(async () => {
+      await stopRunningEngine(claudeMemoryHome);
       await removePath(claudeMemoryHome);
       await removePath(workspacePath);
     });
@@ -98,7 +110,11 @@ describe("handleStopHook", () => {
         stop_hook_active: true,
       }),
       {
+        bootTimeoutMs: 10_000,
         claudeMemoryHome,
+        engineEntrypoint: SOURCE_ENGINE_ENTRYPOINT,
+        engineNodeArguments: ENGINE_NODE_ARGUMENTS,
+        pluginRoot: TEST_PLUGIN_ROOT,
       },
     );
     const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
@@ -133,6 +149,7 @@ describe("handleStopHook", () => {
     await createDirectory(transcriptDirectoryPath);
 
     testContext.after(async () => {
+      await stopRunningEngine(claudeMemoryHome);
       await removePath(claudeMemoryHome);
       await removePath(workspacePath);
     });
@@ -140,7 +157,11 @@ describe("handleStopHook", () => {
     const hookResult = await handleStopHook(
       createStopHookInput(workspacePath, transcriptPath),
       {
+        bootTimeoutMs: 10_000,
         claudeMemoryHome,
+        engineEntrypoint: SOURCE_ENGINE_ENTRYPOINT,
+        engineNodeArguments: ENGINE_NODE_ARGUMENTS,
+        pluginRoot: TEST_PLUGIN_ROOT,
       },
     );
     const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({

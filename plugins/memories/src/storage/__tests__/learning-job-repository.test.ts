@@ -198,4 +198,116 @@ describe("LearningJobRepository", () => {
       bootstrapResult.database.close();
     }
   });
+
+  it("leases the oldest pending job and increments the attempt count", () => {
+    const { bootstrapResult, touchResult } = createSpace();
+
+    try {
+      LearningJobRepository.enqueueLearningJob(bootstrapResult.database, {
+        id: "job-lease-first",
+        spaceId: touchResult.space.id,
+        rootPath: "/workspace/project",
+        transcriptPath: "/tmp/transcript-lease-first.md",
+        enqueuedAt: "2026-03-14T06:40:00.000Z",
+      });
+      LearningJobRepository.enqueueLearningJob(bootstrapResult.database, {
+        id: "job-lease-second",
+        spaceId: touchResult.space.id,
+        rootPath: "/workspace/project",
+        transcriptPath: "/tmp/transcript-lease-second.md",
+        enqueuedAt: "2026-03-14T06:41:00.000Z",
+      });
+
+      const leasedJob = LearningJobRepository.leaseNextLearningJob(
+        bootstrapResult.database,
+        {
+          leaseOwner: "worker-lease-1",
+          leaseDurationMs: 60_000,
+          leasedAt: "2026-03-14T06:45:00.000Z",
+        },
+      );
+
+      assert.ok(leasedJob);
+      assert.equal(leasedJob.id, "job-lease-first");
+      assert.equal(leasedJob.state, "leased");
+      assert.equal(leasedJob.lease_owner, "worker-lease-1");
+      assert.equal(leasedJob.lease_expires_at, "2026-03-14T06:46:00.000Z");
+      assert.equal(leasedJob.attempt_count, 1);
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
+  it("does not lease a new job while another live lease exists", () => {
+    const { bootstrapResult, touchResult } = createSpace();
+
+    try {
+      LearningJobRepository.enqueueLearningJob(bootstrapResult.database, {
+        id: "job-live-lease",
+        spaceId: touchResult.space.id,
+        rootPath: "/workspace/project",
+        transcriptPath: "/tmp/transcript-live-lease.md",
+        state: "leased",
+        leaseOwner: "worker-1",
+        leaseExpiresAt: "2026-03-14T06:55:00.000Z",
+        attemptCount: 1,
+        enqueuedAt: "2026-03-14T06:50:00.000Z",
+      });
+      LearningJobRepository.enqueueLearningJob(bootstrapResult.database, {
+        id: "job-pending-lease",
+        spaceId: touchResult.space.id,
+        rootPath: "/workspace/project",
+        transcriptPath: "/tmp/transcript-pending-lease.md",
+        enqueuedAt: "2026-03-14T06:51:00.000Z",
+      });
+
+      const leasedJob = LearningJobRepository.leaseNextLearningJob(
+        bootstrapResult.database,
+        {
+          leaseOwner: "worker-2",
+          leaseDurationMs: 60_000,
+          leasedAt: "2026-03-14T06:54:00.000Z",
+        },
+      );
+
+      assert.equal(leasedJob, null);
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
+  it("reclaims stale leased jobs when their lease has expired", () => {
+    const { bootstrapResult, touchResult } = createSpace();
+
+    try {
+      LearningJobRepository.enqueueLearningJob(bootstrapResult.database, {
+        id: "job-stale-lease",
+        spaceId: touchResult.space.id,
+        rootPath: "/workspace/project",
+        transcriptPath: "/tmp/transcript-stale-lease.md",
+        state: "leased",
+        leaseOwner: "worker-old",
+        leaseExpiresAt: "2026-03-14T06:59:00.000Z",
+        attemptCount: 1,
+        enqueuedAt: "2026-03-14T06:55:00.000Z",
+      });
+
+      const leasedJob = LearningJobRepository.leaseNextLearningJob(
+        bootstrapResult.database,
+        {
+          leaseOwner: "worker-new",
+          leaseDurationMs: 120_000,
+          leasedAt: "2026-03-14T07:00:00.000Z",
+        },
+      );
+
+      assert.ok(leasedJob);
+      assert.equal(leasedJob.id, "job-stale-lease");
+      assert.equal(leasedJob.lease_owner, "worker-new");
+      assert.equal(leasedJob.lease_expires_at, "2026-03-14T07:02:00.000Z");
+      assert.equal(leasedJob.attempt_count, 2);
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
 });

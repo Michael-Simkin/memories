@@ -1,7 +1,20 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { z } from "zod";
+
+import {
+  DEFAULT_ENGINE_REQUEST_TIMEOUT_MS,
+  postEngineJson,
+} from "../engine/engine-client.js";
+import {
+  ensureEngine,
+  type EnsureEngineOptions,
+} from "../engine/ensure-engine.js";
 import { CLAUDE_MEMORY_VERSION } from "../shared/constants/version.js";
+import { currentContextSchema } from "../shared/schemas/space.js";
+import type { MemorySearchResponse } from "../shared/types/memory.js";
+import { recallToolArgumentsSchema } from "./schemas/recall.js";
 
 const DEFAULT_PROTOCOL_VERSION = "2025-11-25";
 const RECALL_TOOL_NAME = "recall";
@@ -11,6 +24,7 @@ const SERVER_INFO = {
 };
 
 type JsonRpcId = number | string | null;
+type RecallToolArguments = z.infer<typeof recallToolArgumentsSchema>;
 
 interface JsonRpcErrorObject {
   code: number;
@@ -30,6 +44,10 @@ interface JsonRpcResultResponse {
 }
 
 type JsonRpcResponse = JsonRpcErrorResponse | JsonRpcResultResponse;
+
+interface SearchServerOptions extends EnsureEngineOptions {
+  requestTimeoutMs?: number | undefined;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -69,6 +87,22 @@ function createResultResponse(
   };
 }
 
+function createToolTextResult(
+  id: JsonRpcId,
+  text: string,
+  isError = false,
+): JsonRpcResultResponse {
+  return createResultResponse(id, {
+    content: [
+      {
+        type: "text",
+        text,
+      },
+    ],
+    isError,
+  });
+}
+
 function resolveProtocolVersion(message: Record<string, unknown>): string {
   const params = message["params"];
 
@@ -78,9 +112,11 @@ function resolveProtocolVersion(message: Record<string, unknown>): string {
 
   const protocolVersion = params["protocolVersion"];
 
-  return typeof protocolVersion === "string"
-    ? protocolVersion
-    : DEFAULT_PROTOCOL_VERSION;
+  if (typeof protocolVersion === "string") {
+    return protocolVersion;
+  }
+
+  return DEFAULT_PROTOCOL_VERSION;
 }
 
 function listToolsResult(): { tools: Array<Record<string, unknown>> } {
@@ -89,13 +125,20 @@ function listToolsResult(): { tools: Array<Record<string, unknown>> } {
       {
         name: RECALL_TOOL_NAME,
         description:
-          "Search memories for the current active memory space. This rebuild stub is not implemented yet.",
+          "Use `recall` before acting on non-trivial work, and use it again when project context changes. Pinned startup context is only a subset. This searches only the current active memory space.",
         inputSchema: {
           type: "object",
           properties: {
             query: {
               type: "string",
               minLength: 1,
+            },
+            related_paths: {
+              type: "array",
+              items: {
+                type: "string",
+                minLength: 1,
+              },
             },
           },
           required: ["query"],
@@ -106,7 +149,69 @@ function listToolsResult(): { tools: Array<Record<string, unknown>> } {
   };
 }
 
-function callToolResult(message: Record<string, unknown>): JsonRpcResponse {
+function formatSpaceMetadata(space: MemorySearchResponse["space"]): string[] {
+  const lines = [
+    `Active space kind: \`${space.space_kind}\``,
+    `Active space: \`${space.space_display_name}\``,
+  ];
+
+  if (space.origin_url_normalized) {
+    lines.push(`Normalized origin: \`${space.origin_url_normalized}\``);
+  }
+
+  return lines;
+}
+
+function buildRecallMarkdown(
+  searchResponse: MemorySearchResponse,
+  arguments_: RecallToolArguments,
+): string {
+  const lines = [
+    "# Claude Memory Recall",
+    "",
+    `Query: \`${arguments_.query}\``,
+    ...formatSpaceMetadata(searchResponse.space),
+    "",
+  ];
+
+  if (searchResponse.results.length === 0) {
+    lines.push("_No matching memories found in the current active space._");
+    return lines.join("\n");
+  }
+
+  lines.push("## Results", "");
+
+  searchResponse.results.forEach((result, index) => {
+    lines.push(
+      `### ${String(index + 1)}. \`${result.memory_type}\` via ${result.matched_by
+        .map((matchedBy) => `\`${matchedBy}\``)
+        .join(", ")}`,
+    );
+    lines.push(result.content);
+
+    if (result.tags.length > 0) {
+      lines.push("", `Tags: ${result.tags.map((tag) => `\`${tag}\``).join(", ")}`);
+    }
+
+    if (result.path_matchers.length > 0) {
+      lines.push(
+        "",
+        `Path matchers: ${result.path_matchers
+          .map((matcher) => `\`${matcher}\``)
+          .join(", ")}`,
+      );
+    }
+
+    lines.push("");
+  });
+
+  return lines.join("\n").trimEnd();
+}
+
+async function callToolResult(
+  message: Record<string, unknown>,
+  options: SearchServerOptions,
+): Promise<JsonRpcResponse> {
   const params = message["params"];
 
   if (!isRecord(params) || params["name"] !== RECALL_TOOL_NAME) {
@@ -117,18 +222,56 @@ function callToolResult(message: Record<string, unknown>): JsonRpcResponse {
     );
   }
 
-  return createResultResponse(toJsonRpcId(message["id"]), {
-    content: [
+  const parsedArguments = recallToolArgumentsSchema.safeParse(params["arguments"]);
+
+  if (!parsedArguments.success) {
+    const firstIssue = parsedArguments.error.issues[0];
+
+    return createErrorResponse(
+      toJsonRpcId(message["id"]),
+      -32602,
+      firstIssue?.message ?? "Invalid recall arguments.",
+    );
+  }
+
+  try {
+    const currentContext = currentContextSchema.parse({
+      project_root: process.env["CLAUDE_PROJECT_DIR"],
+      cwd: process.cwd(),
+    });
+    const requestTimeoutMs =
+      options.requestTimeoutMs ?? DEFAULT_ENGINE_REQUEST_TIMEOUT_MS;
+    const ensuredEngine = await ensureEngine(options);
+    const searchResponse = await postEngineJson<MemorySearchResponse>(
+      ensuredEngine.connection,
+      "/memories/search",
       {
-        type: "text",
-        text: "Claude Memory recall is not implemented yet in this rebuild.",
+        context: currentContext,
+        query: parsedArguments.data.query,
+        related_paths: parsedArguments.data.related_paths,
       },
-    ],
-    isError: true,
-  });
+      requestTimeoutMs,
+    );
+
+    return createToolTextResult(
+      toJsonRpcId(message["id"]),
+      buildRecallMarkdown(searchResponse, parsedArguments.data),
+    );
+  } catch (error) {
+    return createToolTextResult(
+      toJsonRpcId(message["id"]),
+      `Claude Memory recall failed: ${
+        error instanceof Error ? error.message : "Unknown recall error."
+      }`,
+      true,
+    );
+  }
 }
 
-export function handleJsonRpcMessage(message: unknown): JsonRpcResponse | null {
+export async function handleJsonRpcMessage(
+  message: unknown,
+  options: SearchServerOptions = {},
+): Promise<JsonRpcResponse | null> {
   if (!isRecord(message)) {
     return createErrorResponse(null, -32600, "Invalid JSON-RPC request.");
   }
@@ -167,7 +310,7 @@ export function handleJsonRpcMessage(message: unknown): JsonRpcResponse | null {
   }
 
   if (method === "tools/call") {
-    return callToolResult(message);
+    return callToolResult(message, options);
   }
 
   return createErrorResponse(id, -32601, `Method "${method}" is not supported.`);
@@ -223,37 +366,39 @@ function writeResponse(response: JsonRpcResponse): void {
   process.stdout.write(serializeJsonRpcMessage(response));
 }
 
-export function startMcpServer(): void {
-  let frameBuffer = Buffer.alloc(0) as Buffer;
+export function startMcpServer(options: SearchServerOptions = {}): void {
+  let frameBuffer: Buffer = Buffer.alloc(0);
 
   process.stdin.on("data", (chunk: Buffer | string) => {
-    const chunkBuffer =
-      typeof chunk === "string" ? Buffer.from(chunk, "utf8") : Buffer.from(chunk);
+    void (async () => {
+      const chunkBuffer =
+        typeof chunk === "string" ? Buffer.from(chunk, "utf8") : Buffer.from(chunk);
 
-    frameBuffer = Buffer.concat([frameBuffer, chunkBuffer]) as Buffer;
+      frameBuffer = Buffer.concat([frameBuffer, chunkBuffer]);
 
-    try {
-      const consumedFrameResult = consumeFrameBuffer(frameBuffer);
-      frameBuffer = consumedFrameResult.remainingBuffer;
+      try {
+        const consumedFrameResult = consumeFrameBuffer(frameBuffer);
+        frameBuffer = consumedFrameResult.remainingBuffer;
 
-      for (const message of consumedFrameResult.messages) {
-        const response = handleJsonRpcMessage(message);
+        for (const message of consumedFrameResult.messages) {
+          const response = await handleJsonRpcMessage(message, options);
 
-        if (response) {
-          writeResponse(response);
+          if (response) {
+            writeResponse(response);
+          }
         }
-      }
-    } catch (error) {
-      frameBuffer = Buffer.alloc(0);
+      } catch (error) {
+        frameBuffer = Buffer.alloc(0);
 
-      writeResponse(
-        createErrorResponse(
-          null,
-          -32700,
-          error instanceof Error ? error.message : "Invalid JSON-RPC payload.",
-        ),
-      );
-    }
+        writeResponse(
+          createErrorResponse(
+            null,
+            -32700,
+            error instanceof Error ? error.message : "Invalid JSON-RPC payload.",
+          ),
+        );
+      }
+    })();
   });
 
   process.stdin.resume();

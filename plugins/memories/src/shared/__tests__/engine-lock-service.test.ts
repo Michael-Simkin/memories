@@ -86,6 +86,41 @@ describe("EngineLockService", () => {
     assert.deepEqual(readLock, writtenLock);
   });
 
+  it("acquires the engine startup lock exclusively", async (testContext) => {
+    const storageRoot = await createTempDirectory(
+      "claude-memory-engine-startup-acquire-",
+    );
+
+    testContext.after(async () => {
+      await removePath(storageRoot);
+    });
+
+    const firstLock = await EngineLockService.acquireEngineStartupLock(
+      {
+        pid: 50125,
+        acquired_at: "2026-03-14T16:11:00.000Z",
+        version: "0.0.0",
+      },
+      {
+        claudeMemoryHome: storageRoot,
+      },
+    );
+    const secondLock = await EngineLockService.acquireEngineStartupLock(
+      {
+        pid: 50126,
+        acquired_at: "2026-03-14T16:12:00.000Z",
+        version: "0.0.0",
+      },
+      {
+        claudeMemoryHome: storageRoot,
+      },
+    );
+
+    assert.ok(firstLock);
+    assert.equal(firstLock.pid, 50125);
+    assert.equal(secondLock, null);
+  });
+
   it("returns null when the engine lock files do not exist yet", async (testContext) => {
     const storageRoot = await createTempDirectory("claude-memory-engine-empty-");
 

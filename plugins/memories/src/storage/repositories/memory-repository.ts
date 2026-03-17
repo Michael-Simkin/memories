@@ -11,9 +11,11 @@ import type {
   PersistedMemorySearchResponse,
   PersistedPinnedMemoriesResult,
   SearchMemoriesByPathsOptions,
+  SearchMemoriesBySemanticOptions,
   SearchMemoriesByTagsOptions,
   UpdateMemoryInput,
 } from "../types/memory.js";
+import { serializeSemanticEmbedding } from "../../shared/utils/embeddings.js";
 import { normalizeNonEmptyString } from "../../shared/utils/strings.js";
 import type { SpaceMetadata } from "../../shared/types/space.js";
 import {
@@ -38,6 +40,15 @@ interface MemoryRow {
 
 interface LexicalSearchRow extends MemoryRow {
   lexical_score: number;
+}
+
+interface SemanticSearchRow extends MemoryRow {
+  semantic_score: number;
+}
+
+interface SemanticEmbeddingUpdateAction {
+  embedding?: number[] | undefined;
+  kind: "delete" | "keep" | "replace";
 }
 
 export class MemoryRepository {
@@ -134,6 +145,15 @@ export class MemoryRepository {
     };
   }
 
+  private static hydrateSemanticSearchRow(
+    row: Record<string, unknown>
+  ): SemanticSearchRow {
+    return {
+      ...MemoryRepository.hydrateMemoryRow(row),
+      semantic_score: row["semantic_score"] as number,
+    };
+  }
+
   private static normalizeContent(content: string): string {
     const normalizedContent = normalizeNonEmptyString(content);
 
@@ -204,6 +224,21 @@ export class MemoryRepository {
     };
   }
 
+  private static mapSemanticSearchRow(
+    row: SemanticSearchRow,
+    pathMatchers: string[]
+  ): PersistedMemorySearchResponse["results"][number] {
+    return {
+      ...MemoryRepository.mapMemoryRow(row, pathMatchers),
+      score: row.semantic_score,
+      source: "semantic",
+      matched_by: ["semantic"],
+      path_score: null,
+      lexical_score: null,
+      semantic_score: row.semantic_score,
+    };
+  }
+
   private static resolveUpdatedContent(
     existingContent: string,
     nextContent: string | undefined
@@ -213,6 +248,17 @@ export class MemoryRepository {
     }
 
     return MemoryRepository.normalizeContent(nextContent);
+  }
+
+  private static resolveUpdatedMemoryType(
+    existingMemoryType: PersistedMemoryRecord["memory_type"],
+    nextMemoryType: PersistedMemoryRecord["memory_type"] | undefined,
+  ): PersistedMemoryRecord["memory_type"] {
+    if (nextMemoryType === undefined) {
+      return existingMemoryType;
+    }
+
+    return nextMemoryType;
   }
 
   private static resolveUpdatedTags(
@@ -235,6 +281,35 @@ export class MemoryRepository {
     }
 
     return MemoryRepository.toSqliteBoolean(nextIsPinned);
+  }
+
+  private static resolveSemanticEmbeddingUpdateAction(
+    existingContent: string,
+    nextContent: string,
+    input: UpdateMemoryInput
+  ): SemanticEmbeddingUpdateAction {
+    if (Object.hasOwn(input, "semanticEmbedding")) {
+      if (input.semanticEmbedding === null) {
+        return {
+          kind: "delete",
+        };
+      }
+
+      return {
+        kind: "replace",
+        embedding: input.semanticEmbedding,
+      };
+    }
+
+    if (nextContent !== existingContent) {
+      return {
+        kind: "delete",
+      };
+    }
+
+    return {
+      kind: "keep",
+    };
   }
 
   private static readMemoryRow(
@@ -387,6 +462,22 @@ export class MemoryRepository {
       .run(memoryId, MemoryRepository.serializeTagsForFts(tags));
   }
 
+  private static replaceMemoryVectorRow(
+    database: DatabaseSync,
+    memoryId: string,
+    semanticEmbedding: number[] | null | undefined
+  ): void {
+    database.prepare("DELETE FROM vec_memory WHERE memory_id = ?").run(memoryId);
+
+    if (!semanticEmbedding) {
+      return;
+    }
+
+    database
+      .prepare("INSERT INTO vec_memory (memory_id, embedding) VALUES (?, ?)")
+      .run(memoryId, serializeSemanticEmbedding(semanticEmbedding));
+  }
+
   static createMemory(
     database: DatabaseSync,
     input: CreateMemoryInput
@@ -430,6 +521,11 @@ export class MemoryRepository {
         pathMatchers,
         createdAt
       );
+      MemoryRepository.replaceMemoryVectorRow(
+        database,
+        memoryId,
+        input.semanticEmbedding ?? undefined
+      );
 
       return MemoryRepository.readMemoryRecord(database, memoryId);
     });
@@ -455,26 +551,45 @@ export class MemoryRepository {
     database: DatabaseSync,
     options: ListMemoriesOptions
   ): PersistedMemoryRecord[] {
-    const rows = database
-      .prepare(
-        `SELECT
-          memories.id,
-          memories.space_id,
-          memory_spaces.space_kind,
-          memory_spaces.display_name AS space_display_name,
-          memory_spaces.origin_url_normalized,
-          memories.memory_type,
-          memories.content,
-          memories.tags_json,
-          memories.is_pinned,
-          memories.created_at,
-          memories.updated_at
-        FROM memories
-        INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
-        WHERE memories.space_id = ?
-        ORDER BY memories.updated_at DESC, memories.id ASC`
-      )
-      .all(options.spaceId) as Record<string, unknown>[];
+    const normalizedSpaceId = normalizeNonEmptyString(options.spaceId);
+    let limit: number | undefined;
+
+    if (options.limit !== undefined) {
+      limit = MemoryRepository.normalizeSearchLimit(options.limit);
+    }
+    let query = `
+      SELECT
+        memories.id,
+        memories.space_id,
+        memory_spaces.space_kind,
+        memory_spaces.display_name AS space_display_name,
+        memory_spaces.origin_url_normalized,
+        memories.memory_type,
+        memories.content,
+        memories.tags_json,
+        memories.is_pinned,
+        memories.created_at,
+        memories.updated_at
+      FROM memories
+      INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
+    `;
+    const parameters: string[] = [];
+
+    if (normalizedSpaceId) {
+      query += " WHERE memories.space_id = ?";
+      parameters.push(normalizedSpaceId);
+    }
+
+    query += " ORDER BY memories.updated_at DESC, memories.id ASC";
+
+    if (limit !== undefined) {
+      query += ` LIMIT ${String(limit)}`;
+    }
+
+    const rows = database.prepare(query).all(...parameters) as Record<
+      string,
+      unknown
+    >[];
 
     return rows.map((row) =>
       MemoryRepository.mapMemoryRow(
@@ -571,6 +686,54 @@ export class MemoryRepository {
     };
   }
 
+  static searchMemoriesBySemantic(
+    database: DatabaseSync,
+    options: SearchMemoriesBySemanticOptions
+  ): PersistedMemorySearchResponse {
+    const space = MemoryRepository.requireSpaceMetadata(
+      database,
+      options.spaceId
+    );
+    const limit = MemoryRepository.normalizeSearchLimit(options.limit);
+    const rows = database
+      .prepare(
+        `SELECT
+          memories.id,
+          memories.space_id,
+          memory_spaces.space_kind,
+          memory_spaces.display_name AS space_display_name,
+          memory_spaces.origin_url_normalized,
+          memories.memory_type,
+          memories.content,
+          memories.tags_json,
+          memories.is_pinned,
+          memories.created_at,
+          memories.updated_at,
+          CAST(1.0 - distance AS REAL) AS semantic_score
+        FROM vec_memory
+        INNER JOIN memories ON memories.id = vec_memory.memory_id
+        INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
+        WHERE memories.space_id = ?
+          AND vec_memory.embedding MATCH ?
+          AND k = ${String(limit)}
+        ORDER BY distance ASC, memories.is_pinned DESC, memories.updated_at DESC, memories.id ASC`
+      )
+      .all(
+        options.spaceId,
+        serializeSemanticEmbedding(options.queryEmbedding)
+      ) as Record<string, unknown>[];
+
+    return {
+      space,
+      results: rows.map((row) =>
+        MemoryRepository.mapSemanticSearchRow(
+          MemoryRepository.hydrateSemanticSearchRow(row),
+          MemoryRepository.readPathMatchers(database, row["id"] as string)
+        )
+      ),
+    };
+  }
+
   static searchMemoriesByPaths(
     database: DatabaseSync,
     options: SearchMemoriesByPathsOptions
@@ -649,6 +812,10 @@ export class MemoryRepository {
         input.memoryId
       );
       const updatedAt = input.updatedAt ?? new Date().toISOString();
+      const nextMemoryType = MemoryRepository.resolveUpdatedMemoryType(
+        existingMemory.memory_type,
+        input.memoryType
+      );
       const nextContent = MemoryRepository.resolveUpdatedContent(
         existingMemory.content,
         input.content
@@ -661,14 +828,21 @@ export class MemoryRepository {
         existingMemory.is_pinned,
         input.isPinned
       );
+      const semanticEmbeddingUpdateAction =
+        MemoryRepository.resolveSemanticEmbeddingUpdateAction(
+          existingMemory.content,
+          nextContent,
+          input
+        );
 
       database
         .prepare(
           `UPDATE memories
-          SET content = ?, tags_json = ?, is_pinned = ?, updated_at = ?
+          SET memory_type = ?, content = ?, tags_json = ?, is_pinned = ?, updated_at = ?
           WHERE id = ?`
         )
         .run(
+          nextMemoryType,
           nextContent,
           JSON.stringify(nextTags),
           nextIsPinned,
@@ -687,6 +861,16 @@ export class MemoryRepository {
         );
       }
 
+      if (semanticEmbeddingUpdateAction.kind !== "keep") {
+        MemoryRepository.replaceMemoryVectorRow(
+          database,
+          input.memoryId,
+          semanticEmbeddingUpdateAction.kind === "replace"
+            ? semanticEmbeddingUpdateAction.embedding
+            : null
+        );
+      }
+
       return MemoryRepository.readMemoryRecord(database, input.memoryId);
     });
   }
@@ -699,6 +883,9 @@ export class MemoryRepository {
       MemoryRepository.requireMemory(database, options.memoryId);
       database
         .prepare("DELETE FROM memory_fts WHERE id = ?")
+        .run(options.memoryId);
+      database
+        .prepare("DELETE FROM vec_memory WHERE memory_id = ?")
         .run(options.memoryId);
       database
         .prepare("DELETE FROM memory_path_matchers WHERE memory_id = ?")

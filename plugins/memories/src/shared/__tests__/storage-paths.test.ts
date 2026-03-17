@@ -32,6 +32,27 @@ describe("resolveMemoryStorageRoot", () => {
 
     assert.equal(rootPath, "/Users/tester/.claude/memories");
   });
+
+  it("uses the CLAUDE_MEMORY_HOME environment variable when no explicit override is passed", () => {
+    const originalClaudeMemoryHome = process.env["CLAUDE_MEMORY_HOME"];
+
+    try {
+      process.env["CLAUDE_MEMORY_HOME"] = "./env-memory-home";
+
+      const rootPath = StoragePathsService.resolveMemoryStorageRoot({
+        currentWorkingDirectory: "/workspace/project",
+        userHomeDirectory: "/Users/tester",
+      });
+
+      assert.equal(rootPath, "/workspace/project/env-memory-home");
+    } finally {
+      if (originalClaudeMemoryHome === undefined) {
+        delete process.env["CLAUDE_MEMORY_HOME"];
+      } else {
+        process.env["CLAUDE_MEMORY_HOME"] = originalClaudeMemoryHome;
+      }
+    }
+  });
 });
 
 describe("resolveMemoryStoragePaths", () => {

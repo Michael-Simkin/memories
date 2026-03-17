@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile, rename } from "node:fs/promises";
+import { mkdir, open, readFile, rm, writeFile, rename } from "node:fs/promises";
 import path from "node:path";
 
 import { engineLockSchema, engineStartupLockSchema } from "../schemas/engine.js";
@@ -55,6 +55,35 @@ export class EngineLockService {
       await rename(tempPath, targetPath);
     } finally {
       await rm(tempPath, { force: true });
+    }
+  }
+
+  private static async writeJsonFileExclusively(
+    targetPath: string,
+    value: unknown,
+  ): Promise<boolean> {
+    const targetDirectoryPath = path.dirname(targetPath);
+
+    await mkdir(targetDirectoryPath, { recursive: true });
+
+    try {
+      const fileHandle = await open(targetPath, "wx");
+
+      try {
+        await fileHandle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+      } finally {
+        await fileHandle.close();
+      }
+
+      return true;
+    } catch (error) {
+      if (EngineLockService.hasErrorCode(error, "EEXIST")) {
+        return false;
+      }
+
+      throw new Error(`Failed to write lock file at "${targetPath}".`, {
+        cause: error,
+      });
     }
   }
 
@@ -222,6 +251,27 @@ export class EngineLockService {
       storagePaths.engineStartupLockPath,
       engineStartupLock,
     );
+
+    return engineStartupLock;
+  }
+
+  static async acquireEngineStartupLock(
+    input: WriteEngineStartupLockInput,
+    options: ResolveStoragePathsOptions = {},
+  ): Promise<EngineStartupLock | null> {
+    const storagePaths = StoragePathsService.resolveMemoryStoragePaths(options);
+    const engineStartupLock = engineStartupLockSchema.parse({
+      ...input,
+      storage_root: storagePaths.rootPath,
+    });
+    const wasWritten = await EngineLockService.writeJsonFileExclusively(
+      storagePaths.engineStartupLockPath,
+      engineStartupLock,
+    );
+
+    if (!wasWritten) {
+      return null;
+    }
 
     return engineStartupLock;
   }

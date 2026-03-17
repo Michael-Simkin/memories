@@ -14,6 +14,7 @@ export interface CreateMemoryInput {
   tags?: string[] | undefined;
   isPinned?: boolean | undefined;
   pathMatchers?: string[] | undefined;
+  semanticEmbedding?: number[] | null | undefined;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 }
@@ -25,30 +26,36 @@ export interface CreateActiveMemoryInput extends ResolveActiveSpaceOptions {
   tags?: string[] | undefined;
   isPinned?: boolean | undefined;
   pathMatchers?: string[] | undefined;
+  semanticEmbedding?: number[] | null | undefined;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 }
 
 export interface UpdateMemoryInput {
   memoryId: string;
+  memoryType?: MemoryType | undefined;
   content?: string | undefined;
   tags?: string[] | undefined;
   isPinned?: boolean | undefined;
   pathMatchers?: string[] | undefined;
+  semanticEmbedding?: number[] | null | undefined;
   updatedAt?: string | undefined;
 }
 
 export interface UpdateActiveMemoryInput extends ResolveActiveSpaceOptions {
   memoryId: string;
+  memoryType?: MemoryType | undefined;
   content?: string | undefined;
   tags?: string[] | undefined;
   isPinned?: boolean | undefined;
   pathMatchers?: string[] | undefined;
+  semanticEmbedding?: number[] | null | undefined;
   updatedAt?: string | undefined;
 }
 
 export interface ListMemoriesOptions {
-  spaceId: string;
+  spaceId?: string | undefined;
+  limit?: number | undefined;
 }
 
 export interface ListPinnedMemoriesOptions {
@@ -67,8 +74,15 @@ export interface SearchMemoriesByPathsOptions {
   limit?: number | undefined;
 }
 
+export interface SearchMemoriesBySemanticOptions {
+  queryEmbedding: number[];
+  spaceId: string;
+  limit?: number | undefined;
+}
+
 export interface SearchMemoriesOptions {
   query?: string | undefined;
+  queryEmbedding?: number[] | undefined;
   relatedPaths?: string[] | undefined;
   spaceId: string;
   limit?: number | undefined;
@@ -83,6 +97,7 @@ export type ListActivePinnedMemoriesOptions = ResolveActiveSpaceOptions;
 
 export interface SearchActiveMemoriesOptions extends ResolveActiveSpaceOptions {
   query?: string | undefined;
+  queryEmbedding?: number[] | undefined;
   relatedPaths?: string[] | undefined;
   limit?: number | undefined;
 }

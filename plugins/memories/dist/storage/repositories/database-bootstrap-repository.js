@@ -51,8 +51,12 @@ class DatabaseBootstrapRepository {
     return appliedSchemaVersion;
   }
   static bootstrapDatabase(options = {}) {
+    const loadVectorExtension = options.loadVectorExtension ?? true;
     const databasePath = options.databasePath ?? StoragePathsService.resolveMemoryStoragePaths(options).databasePath;
-    const database = SqliteService.openDatabase(databasePath, options);
+    const database = SqliteService.openDatabase(databasePath, {
+      ...options,
+      loadVectorExtension
+    });
     try {
       const schemaVersion = DatabaseBootstrapRepository.migrateDatabase(database);
       return {

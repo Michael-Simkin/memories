@@ -8,6 +8,7 @@ import {
 import { SqliteService } from "../sqlite-service.js";
 import type {
   EnqueueLearningJobInput,
+  LeaseLearningJobInput,
   ListLearningJobsOptions,
   PersistedLearningJob,
   UpdateLearningJobInput,
@@ -101,6 +102,33 @@ export class LearningJobRepository {
     return attemptCount;
   }
 
+  private static normalizeLeaseDurationMs(leaseDurationMs: number): number {
+    if (!Number.isInteger(leaseDurationMs) || leaseDurationMs <= 0) {
+      throw new Error("leaseDurationMs must be a positive integer.");
+    }
+
+    return leaseDurationMs;
+  }
+
+  private static normalizeTimestamp(
+    value: string | undefined,
+    fieldName: string
+  ): string {
+    const timestamp = value ?? new Date().toISOString();
+
+    if (Number.isNaN(Date.parse(timestamp))) {
+      throw new Error(`${fieldName} must be a valid ISO timestamp.`);
+    }
+
+    return timestamp;
+  }
+
+  private static addMilliseconds(timestamp: string, milliseconds: number): string {
+    const date = new Date(timestamp);
+
+    return new Date(date.getTime() + milliseconds).toISOString();
+  }
+
   private static normalizeLimit(limit: number | undefined): number {
     if (limit === undefined) {
       return 100;
@@ -168,6 +196,73 @@ export class LearningJobRepository {
   ): PersistedLearningJob {
     return LearningJobRepository.mapLearningJobRow(
       LearningJobRepository.requireLearningJob(database, jobId)
+    );
+  }
+
+  private static hasActiveLiveLease(
+    database: DatabaseSync,
+    leasedAt: string
+  ): boolean {
+    const row = database
+      .prepare(
+        `SELECT count(*) AS count
+        FROM learning_jobs
+        WHERE state IN ('leased', 'running')
+          AND lease_expires_at IS NOT NULL
+          AND lease_expires_at > ?`
+      )
+      .get(leasedAt) as { count: number };
+
+    return row.count > 0;
+  }
+
+  private static readNextLeasableJobRow(
+    database: DatabaseSync,
+    leasedAt: string
+  ): LearningJobRow | null {
+    const row = database
+      .prepare(
+        `SELECT
+          id,
+          space_id,
+          root_path,
+          transcript_path,
+          last_assistant_message,
+          session_id,
+          state,
+          lease_owner,
+          lease_expires_at,
+          attempt_count,
+          error_text,
+          enqueued_at,
+          started_at,
+          finished_at,
+          updated_at
+        FROM learning_jobs
+        WHERE state = 'pending'
+          OR (
+            state IN ('leased', 'running')
+            AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+          )
+        ORDER BY
+          CASE state
+            WHEN 'pending' THEN 0
+            WHEN 'leased' THEN 1
+            WHEN 'running' THEN 2
+            ELSE 3
+          END,
+          enqueued_at ASC,
+          id ASC
+        LIMIT 1`
+      )
+      .get(leasedAt);
+
+    if (!row) {
+      return null;
+    }
+
+    return LearningJobRepository.hydrateLearningJobRow(
+      row as Record<string, unknown>
     );
   }
 
@@ -302,6 +397,64 @@ export class LearningJobRepository {
         LearningJobRepository.hydrateLearningJobRow(row)
       )
     );
+  }
+
+  static leaseNextLearningJob(
+    database: DatabaseSync,
+    input: LeaseLearningJobInput
+  ): PersistedLearningJob | null {
+    return SqliteService.transaction(database, () => {
+      const leaseOwner = LearningJobRepository.normalizeRequiredText(
+        input.leaseOwner,
+        "leaseOwner"
+      );
+      const leaseDurationMs = LearningJobRepository.normalizeLeaseDurationMs(
+        input.leaseDurationMs
+      );
+      const leasedAt = LearningJobRepository.normalizeTimestamp(
+        input.leasedAt,
+        "leasedAt"
+      );
+
+      if (LearningJobRepository.hasActiveLiveLease(database, leasedAt)) {
+        return null;
+      }
+
+      const nextJob = LearningJobRepository.readNextLeasableJobRow(
+        database,
+        leasedAt
+      );
+
+      if (!nextJob) {
+        return null;
+      }
+
+      const leaseExpiresAt = LearningJobRepository.addMilliseconds(
+        leasedAt,
+        leaseDurationMs
+      );
+
+      database
+        .prepare(
+          `UPDATE learning_jobs
+          SET
+            state = 'leased',
+            lease_owner = ?,
+            lease_expires_at = ?,
+            attempt_count = ?,
+            updated_at = ?
+          WHERE id = ?`
+        )
+        .run(
+          leaseOwner,
+          leaseExpiresAt,
+          nextJob.attempt_count + 1,
+          leasedAt,
+          nextJob.id
+        );
+
+      return LearningJobRepository.readLearningJob(database, nextJob.id);
+    });
   }
 
   static updateLearningJob(

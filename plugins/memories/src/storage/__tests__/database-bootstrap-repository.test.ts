@@ -15,6 +15,13 @@ const TEST_PLUGIN_ROOT = path.resolve(
   "../../..",
 );
 
+function createUnitVector(index: number): number[] {
+  const embedding = Array.from({ length: 1024 }, () => 0);
+  embedding[index] = 1;
+
+  return embedding;
+}
+
 describe("DatabaseBootstrapRepository", () => {
   it("bootstraps the global database and applies migrations through the current schema version", async (testContext) => {
     const tempDirectory = await createTempDirectory("claude-memory-bootstrap-");
@@ -26,12 +33,13 @@ describe("DatabaseBootstrapRepository", () => {
     const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
       claudeMemoryHome: tempDirectory,
       currentWorkingDirectory: "/unused/current-working-directory",
+      pluginRoot: TEST_PLUGIN_ROOT,
     });
 
     try {
       const tableRows = bootstrapResult.database
         .prepare(
-          "select name, type from sqlite_master where name in ('memory_spaces', 'space_roots', 'memories', 'memory_path_matchers', 'memory_fts', 'learning_jobs', 'events', 'idx_space_roots_space_id_root_path') order by type, name;",
+          "select name, type from sqlite_master where name in ('memory_spaces', 'space_roots', 'memories', 'memory_path_matchers', 'memory_fts', 'learning_jobs', 'events', 'vec_memory', 'idx_space_roots_space_id_root_path') order by type, name;",
         )
         .all()
         .map((row) => ({
@@ -43,8 +51,8 @@ describe("DatabaseBootstrapRepository", () => {
         bootstrapResult.databasePath,
         path.join(tempDirectory, "memory.db"),
       );
-      assert.equal(bootstrapResult.schemaVersion, 4);
-      assert.equal(SqliteService.readUserVersion(bootstrapResult.database), 4);
+      assert.equal(bootstrapResult.schemaVersion, 5);
+      assert.equal(SqliteService.readUserVersion(bootstrapResult.database), 5);
       assert.deepEqual(tableRows, [
         { name: "idx_space_roots_space_id_root_path", type: "index" },
         { name: "events", type: "table" },
@@ -54,6 +62,7 @@ describe("DatabaseBootstrapRepository", () => {
         { name: "memory_path_matchers", type: "table" },
         { name: "memory_spaces", type: "table" },
         { name: "space_roots", type: "table" },
+        { name: "vec_memory", type: "table" },
       ]);
     } finally {
       bootstrapResult.database.close();
@@ -72,19 +81,15 @@ describe("DatabaseBootstrapRepository", () => {
         .prepare("select vec_version() as version;")
         .get() as { version: string };
 
-      bootstrapResult.database.exec(`
-        CREATE VIRTUAL TABLE vec_memory USING vec0(
-          memory_id text primary key,
-          embedding float[4] distance_metric=cosine
-        );
-      `);
-
+      bootstrapResult.database
+        .prepare("DELETE FROM vec_memory;")
+        .run();
       bootstrapResult.database
         .prepare("INSERT INTO vec_memory(memory_id, embedding) VALUES (?, ?);")
-        .run("memory-a", JSON.stringify([1, 0, 0, 0]));
+        .run("memory-a", JSON.stringify(createUnitVector(0)));
       bootstrapResult.database
         .prepare("INSERT INTO vec_memory(memory_id, embedding) VALUES (?, ?);")
-        .run("memory-b", JSON.stringify([0, 1, 0, 0]));
+        .run("memory-b", JSON.stringify(createUnitVector(1)));
 
       const nearestRows = bootstrapResult.database
         .prepare(`
@@ -93,7 +98,7 @@ describe("DatabaseBootstrapRepository", () => {
           WHERE embedding MATCH ? AND k = 2
           ORDER BY distance ASC;
         `)
-        .all(JSON.stringify([1, 0, 0, 0]))
+        .all(JSON.stringify(createUnitVector(0)))
         .map((row) => ({
           memory_id: (row as { memory_id: string }).memory_id,
           distance: (row as { distance: number }).distance,
@@ -134,6 +139,7 @@ describe("DatabaseBootstrapRepository", () => {
     const firstBootstrap = DatabaseBootstrapRepository.bootstrapDatabase({
       claudeMemoryHome: tempDirectory,
       currentWorkingDirectory: "/unused/current-working-directory",
+      pluginRoot: TEST_PLUGIN_ROOT,
     });
 
     testContext.after(async () => {
@@ -173,6 +179,7 @@ describe("DatabaseBootstrapRepository", () => {
     const secondBootstrap = DatabaseBootstrapRepository.bootstrapDatabase({
       claudeMemoryHome: tempDirectory,
       currentWorkingDirectory: "/unused/current-working-directory",
+      pluginRoot: TEST_PLUGIN_ROOT,
     });
 
     try {
@@ -180,7 +187,7 @@ describe("DatabaseBootstrapRepository", () => {
         .prepare("select count(*) as count from memory_spaces;")
         .get() as { count: number };
 
-      assert.equal(secondBootstrap.schemaVersion, 4);
+      assert.equal(secondBootstrap.schemaVersion, 5);
       assert.equal(row.count, 1);
     } finally {
       secondBootstrap.database.close();
@@ -206,6 +213,7 @@ describe("DatabaseBootstrapRepository", () => {
       () =>
         DatabaseBootstrapRepository.bootstrapDatabase({
           databasePath,
+          pluginRoot: TEST_PLUGIN_ROOT,
         }),
       /newer than supported version/u,
     );
@@ -216,6 +224,7 @@ describe("DatabaseBootstrapRepository", () => {
     const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
       claudeMemoryHome: tempDirectory,
       currentWorkingDirectory: "/unused/current-working-directory",
+      pluginRoot: TEST_PLUGIN_ROOT,
     });
 
     testContext.after(async () => {

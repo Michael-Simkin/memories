@@ -89,6 +89,7 @@ export class ActiveSpaceMemoryRepository {
       tags: input.tags,
       isPinned: input.isPinned,
       pathMatchers: input.pathMatchers,
+      semanticEmbedding: input.semanticEmbedding,
       createdAt: input.createdAt,
       updatedAt: input.updatedAt,
     });
@@ -120,6 +121,7 @@ export class ActiveSpaceMemoryRepository {
     return MemoryRetrievalRepository.searchMemories(database, {
       spaceId,
       query: options.query,
+      queryEmbedding: options.queryEmbedding,
       relatedPaths: options.relatedPaths,
       limit: options.limit,
     });
@@ -142,10 +144,12 @@ export class ActiveSpaceMemoryRepository {
 
     return MemoryRepository.updateMemory(database, {
       memoryId: input.memoryId,
+      memoryType: input.memoryType,
       content: input.content,
       tags: input.tags,
       isPinned: input.isPinned,
       pathMatchers: input.pathMatchers,
+      semanticEmbedding: input.semanticEmbedding,
       updatedAt: input.updatedAt,
     });
   }

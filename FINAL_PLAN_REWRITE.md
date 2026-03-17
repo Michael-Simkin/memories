@@ -3,14 +3,6 @@
 This file is the authoritative plan for the rewrite that replaces the current proof-of-concept
 architecture.
 
-`implementation-stages/FINAL_PLAN.md` remains useful only as historical context. For the rewrite,
-follow this file instead.
-
-Until the stage docs are regenerated from this rewrite plan, all sibling stage files in
-`implementation-stages/` other than `FINAL_PLAN_REWRITE.md` must be treated as archived. They
-describe the previous repo-local, session-managed architecture and must not be used as
-implementation instructions.
-
 The current repository is valuable as a concept and behavior reference, but it should not be
 treated as architecture to preserve. Several core parts are explicitly being removed because they
 are fragile, hard to reason about, or wrong for worktree-heavy usage.
@@ -21,10 +13,10 @@ are fragile, hard to reason about, or wrong for worktree-heavy usage.
 
 This repository remains a Claude Code plugin marketplace that publishes one plugin:
 
-- `memories`: local memory for Claude Code with global scope, repo scope, memory retrieval, queued
-  learning, and a local UI.
+- `memories`: local memory for Claude Code with remote-repo or directory-scoped memory spaces,
+  memory retrieval, queued learning, and a local UI.
 
-The rewrite keeps the product local-only:
+The rebuild keeps the product local-only:
 
 - one marketplace repo
 - one plugin
@@ -32,20 +24,160 @@ The rewrite keeps the product local-only:
 - loopback-only runtime services
 - one read-only MCP tool (`recall`)
 
-The rewrite changes the storage and lifecycle model:
+The rebuilt system uses:
 
 - one global engine process
 - one global SQLite database
-- repo identity based on the actual Git repository, not the current working directory path
+- remote-scoped memory identity for Git repos with an `origin` remote
+- directory-scoped memory identity outside Git, or inside Git when `origin` is unavailable
 - no session-managed engine lifetime
 - idle-based cleanup instead of session-based cleanup
+- no global memory mode
+
+### Memory Model
+
+There is no global memory scope anymore.
+
+Every memory belongs to exactly one active memory space:
+
+- `remote_repo`
+- `directory`
+
+Memory resolution rules:
+
+- if the current working context is inside a Git repo with a usable `origin` remote, use a
+  remote-scoped memory space derived from the normalized `origin` URL
+- if the current working context is not inside Git, use a directory-scoped memory space rooted at
+  the resolved directory
+- if the current working context is inside Git but has no usable `origin` remote, fall back to a
+  directory-scoped memory space rooted at the Git top-level directory
+
+This means:
+
+- multiple worktrees of the same clone share memory when they share the same `origin`
+- multiple separate clones of the same remote share memory when their normalized `origin` URLs match
+- unrelated directories or repos do not share memory
+- there is no cross-project global rule pool
+
+### Supported Platform
+
+V1 supports macOS only.
+
+Required runtime target:
+
+- `darwin-arm64`
+
+Out of scope for V1:
+
+- `darwin-x64`
+- Linux
+- Windows
+
+If Intel Mac support is ever needed later, it must be added as an explicit follow-up stage with its
+own vendored binary, packaging checks, and validation.
+
+### Authoritative Repository Layout
+
+This plan is self-sufficient. The rebuilt repo should follow this structure unless a later approved
+change updates this file.
+
+```text
+claude-memory/
+  FINAL_PLAN_REWRITE.md
+  .claude-plugin/
+    marketplace.json
+  package.json
+  tsconfig.base.json
+  eslint.config.mjs
+  .prettierrc.json
+
+  plugins/
+    memories/
+      .claude-plugin/
+        plugin.json
+      .mcp.json
+      hooks/
+        hooks.json
+      package.json
+      tsconfig.json
+      tsup.config.ts
+
+      src/
+        api/
+        engine/
+        extraction/
+        hooks/
+        mcp/
+        retrieval/
+        shared/
+        storage/
+
+      vendor/
+        sqlite-vec/
+          darwin-arm64/
+            vec0.dylib
+
+      web/
+        src/
+        vite.config.ts
+
+      dist/
+```
+
+### Required Manifest And Entrypoint Contract
+
+The rebuild must preserve the Claude plugin/marketplace contract explicitly:
+
+- root marketplace manifest: `.claude-plugin/marketplace.json`
+- plugin manifest: `plugins/memories/.claude-plugin/plugin.json`
+- hook wiring: `plugins/memories/hooks/hooks.json`
+- MCP wiring: `plugins/memories/.mcp.json`
+
+Required runtime entrypoints:
+
+- `dist/engine/main.js`
+- `dist/hooks/session-start.js`
+- `dist/hooks/user-prompt-submit.js`
+- `dist/hooks/stop.js`
+- `dist/mcp/search-server.js`
+
+`SessionEnd` is not part of the steady-state architecture. If temporarily retained for rollout
+compatibility, it must be explicitly marked compatibility-only and must not own lifecycle.
+
+Manifest rules:
+
+- the marketplace manifest publishes exactly one plugin from `./plugins/memories`
+- the plugin manifest describes exactly one plugin named `memories`
+- hook wiring must use Claude's matcher-group shape with nested `hooks` arrays
+- each command hook item uses an explicit `{ "type": "command", "command": "..." }` shape
+- steady-state hook wiring includes `SessionStart`, `UserPromptSubmit`, and `Stop`
+- `.mcp.json` registers exactly one stdio MCP server named `memories`
+- hook and MCP command paths must use quoted `${CLAUDE_PLUGIN_ROOT}` values
+- plugin startup must work from committed `dist` artifacts
+- the vendored `sqlite-vec` binary must be included in the shipped plugin package
+
+Hook behavior contract at the manifest level:
+
+- steady-state hook wiring must not include `SessionEnd`
+- if `SessionEnd` is temporarily kept for compatibility while shipping, it must be documented as
+  compatibility-only and must not be relied on for lifecycle, shutdown, or cleanup
+
+### Authoritative External References
+
+These references are supplementary only. They must not be needed to understand the architecture in
+this file.
+
+- [Claude Code plugin marketplaces](https://docs.anthropic.com/en/docs/claude-code/plugin-marketplaces)
+- [Claude Code plugins reference](https://docs.anthropic.com/en/docs/claude-code/plugins-reference)
+- [Claude Code hooks reference](https://docs.anthropic.com/en/docs/claude-code/hooks)
+- [MCP transport specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 ---
 
-## 2) Current Repo Learnings
+## 2) Prior Implementation Learnings
 
-The current repo is a useful POC. It proves the feature set is worth building, but it also proves
-that the current architecture is too fragile and too implicit.
+The deleted proof-of-concept implementation was useful. It proved the feature set is worth building,
+but it also proved that the prior architecture was too fragile and too implicit.
 
 ### Keep
 
@@ -75,8 +207,9 @@ that the current architecture is too fragile and too implicit.
 - The current Node contract is contradictory:
   - package metadata says Node `>=20`
   - engine runtime resolution effectively requires Node `24`
-- `sqlite-vec` adds complexity but is not the real search path in practice.
-- Lexical search indexing only tags is too weak.
+- runtime-installed `sqlite-vec` plus native dependency management adds complexity and polluted the
+  previous packaging/runtime story.
+- Lexical search behavior is too implicit and needs an explicit V1 contract.
 - MCP recall depending on an already-running engine is too brittle.
 - The UI assumes one repo per engine origin and cannot browse across repos.
 - Background hook state is in-memory, not durable.
@@ -93,44 +226,46 @@ that the current architecture is too fragile and too implicit.
 - Node 24 runtime discovery still exists.
 - Native runtime packages are installed into `plugins/memories/native/<platform>-<arch>-abi<abi>`.
 - The UI is origin-bound and single-repo.
-- Current lexical search indexes `tags_text`, not the main memory content.
+- Current lexical search behavior is tag-focused but not treated as an explicit V1 contract.
 
 ---
 
 ## 3) Non-Negotiable Rewrite Decisions
 
-1. Node 24 is the required target runtime for the rewrite.
-2. Stage 00 must verify whether Claude launches plugin entrypoints under Node 24. If that cannot be
+1. V1 supports macOS only, on `darwin-arm64`.
+2. Node 24 is the required target runtime for the rewrite.
+3. Stage 00 must verify whether Claude launches plugin entrypoints under Node 24. If that cannot be
    guaranteed, keep only a tiny launcher-compatible bootstrap wrapper that re-execs the real Node
    24 runtime while preserving fail-open behavior. Do not reintroduce heuristic runtime discovery.
-3. Use built-in `node:sqlite` from Node 24. Do not keep runtime native dependency installation.
-4. Store all persistent data under one global Claude memory directory, not inside repos.
-5. Use one global DB for all repos, worktrees, and memory scopes.
-6. Do not manage engine lifetime through sessions.
-7. Engine startup must be lazy:
-   - on `SessionStart`
-   - on `UserPromptSubmit`
-   - on `Stop`
-   - on MCP `recall`
-   - on any UI/API access that needs the engine
-8. Engine cleanup must be idle-based:
-   - after 1 hour without activity
-   - never while a learning job is active
-9. Repo identity must be Git-repo-aware and worktree-safe.
-10. Global scope and repo scope must both exist.
-11. All read/write/search contracts must carry scope and repo identity explicitly.
-12. When working inside a repo, retrieval must combine:
-    - global scope
-    - current repo scope
-13. Learning jobs must be queued and serialized in an explicit, durable way.
-14. Learning jobs must be leased and executed only by the global engine, never by an untracked
+4. Use built-in `node:sqlite` from Node 24.
+5. Use a vendored `sqlite-vec` extension binary committed to git and shipped in the plugin package.
+6. Do not install, rebuild, or download DB/runtime dependencies at runtime.
+7. Store all persistent data under one global Claude memory directory, not inside repos.
+8. Use one global DB for all memory spaces.
+9. Do not manage engine lifetime through sessions.
+10. Engine startup must be lazy and trigger on `SessionStart`, `UserPromptSubmit`, `Stop`, MCP
+    `recall`, and any UI/API access that needs the engine.
+11. Engine cleanup must be idle-based: after 1 hour without activity, and never while a learning
+    job is active.
+12. There is no global memory mode.
+13. Every memory belongs to exactly one active memory space.
+14. If inside a Git repo with a usable `origin` remote, identity is derived from the normalized
+    `origin` URL.
+15. If outside Git, identity is derived from the resolved directory root.
+16. If inside Git but no usable `origin` remote exists, fall back to directory-scoped identity at
+    the Git top-level directory.
+17. All read/write/search contracts must carry memory-space identity explicitly.
+18. Agent retrieval, startup context, and automatic learning operate only on the active memory
+    space, not across multiple spaces.
+19. Learning jobs must be queued and serialized in an explicit, durable way.
+20. Learning jobs must be leased and executed only by the global engine, never by an untracked
     detached hook subprocess.
-15. Global engine reuse and global DB access must be version- and schema-compatible.
-16. Cold marketplace installs must work from shipped artifacts alone, with no plugin-local
+21. Global engine reuse and global DB access must be version- and schema-compatible.
+22. Cold marketplace installs must work from shipped artifacts alone, with no plugin-local
     `npm install` step.
-17. No repo-local DBs, lock files, logs, or runtime artifacts.
-18. Hooks must remain fail-open.
-19. MCP stdout must remain protocol-clean.
+23. No repo-local DBs, lock files, logs, or runtime artifacts.
+24. Hooks must remain fail-open.
+25. MCP stdout must remain protocol-clean.
 
 ---
 
@@ -159,6 +294,8 @@ Important rules:
 
 - No persistent state is stored under repo roots.
 - No persistent state is stored under `plugins/memories/native`.
+- Vendored read-only binaries that ship with the plugin live under `plugins/memories/vendor/`, not
+  under the global storage root.
 - The engine lock is global, not repo-specific.
 - The main event timeline lives in SQLite, not in ad hoc per-repo files.
 - `engine.stderr.log` remains a plain file for low-level crash/bootstrap diagnostics only.
@@ -172,15 +309,15 @@ Claude hooks / MCP / UI
   -> ensureEngine()
   -> one global loopback engine
   -> one global SQLite database
-  -> repo registry + scoped memories + events + learning queue
+  -> memory-space registry + memories + events + learning queue
 ```
 
 High-level behavior:
 
 1. A caller resolves or provides the current working context.
 2. `ensureEngine()` reuses or starts one global engine.
-3. The engine resolves repo identity when relevant.
-4. Retrieval uses global scope plus repo scope when inside a repo.
+3. The engine resolves the active memory space for that context.
+4. Retrieval uses only the active memory space.
 5. `Stop` enqueues learning work instead of trying to own engine lifetime through sessions.
 6. The engine exits after 1 hour of inactivity.
 7. The next access starts it again automatically.
@@ -194,140 +331,120 @@ This is intentionally simpler than the current design:
 
 ---
 
-## 6) Repo Identity And Worktree Resolution
+## 6) Memory Space Identity And Resolution
 
-Repo identity must surround the actual Git repo, not the path Claude happened to start in.
+There is no global memory scope. The system resolves one active memory space from the current
+working context.
+
+### Space Kinds
+
+- `remote_repo`
+- `directory`
 
 ### Resolution Rules
 
-Given hook/MCP/UI input, resolve context in this order:
+Given hook/MCP/UI input, resolve the working path in this order:
 
-1. explicit `project_root` when provided
-2. explicit `cwd` when provided
+1. explicit `project_root`
+2. explicit `cwd`
 3. `CLAUDE_PROJECT_DIR`
 4. `process.cwd()`
 
 Then:
 
-1. Check whether the resolved directory is inside a Git work tree.
-2. If not inside Git:
-   - operate in global-only mode
-   - do not create repo-scoped state
-3. If inside Git:
-   - resolve absolute worktree root with `git rev-parse --show-toplevel`
-   - resolve absolute common git dir with `git rev-parse --path-format=absolute --git-common-dir`
-   - canonicalize both with `realpath`
+1. canonicalize that path with `realpath`
+2. check whether the path is inside a Git work tree
+3. if not inside Git:
+   - create or reuse a `directory` space rooted at the resolved directory
+4. if inside Git:
+   - resolve the Git top-level root with `git rev-parse --show-toplevel`
+   - inspect remotes
+   - if a usable `origin` remote exists, create or reuse a `remote_repo` space from the normalized
+     `origin` URL
+   - otherwise create or reuse a `directory` space rooted at the Git top-level root
 
-### Stable Repo Key
+### Remote-Scoped Identity
 
-The stable repo key must be derived from the canonical common git dir, not the current worktree
-path.
+Remote-scoped identity is based on `origin` only in V1.
 
-Recommended shape:
+Rules:
 
-- `repo_key = sha256(realpath(common_git_dir))`
+- if `origin` exists and normalizes successfully, it is the memory-space discriminator
+- if other remotes exist but `origin` does not, do not guess; fall back to directory scope
+- worktrees and separate clones with the same normalized `origin` share one memory space
+- unrelated repos never share memory unless their normalized `origin` URLs match exactly
 
-Why:
+### Remote URL Normalization
 
-- all worktrees of the same repo share the same common git dir
-- separate clones remain separate repos
-- symlinked openings normalize to the same repo
+The normalization algorithm must be deterministic and tested.
 
-### Stored Repo Metadata
+Required behavior:
 
-The repo registry must store enough information for search, UI, and debugging:
+- trim whitespace
+- strip embedded credentials and usernames
+- lowercase the host
+- normalize SSH and HTTPS forms into one canonical host/path representation
+- strip a trailing `.git`
+- strip trailing slashes
+
+Recommended identity input shape:
+
+- `host/owner/repo`
+
+Recommended stable key:
+
+- `space_key = sha256("remote:" + normalized_origin_url)`
+
+### Directory-Scoped Identity
+
+Directory scope is the fallback when shared remote identity is unavailable.
+
+Rules:
+
+- outside Git, the directory scope root is the resolved working directory
+- inside Git without usable `origin`, the directory scope root is the Git top-level directory
+- symlinked openings normalize through `realpath`
+
+Recommended stable key:
+
+- `space_key = sha256("dir:" + realpath(space_root))`
+
+### Space Metadata
+
+The memory-space registry must store enough information for search, UI, and diagnostics:
 
 - `id`
-- `repo_key`
+- `space_key`
+- `space_kind`
 - `display_name`
-- `git_common_dir`
-- `last_seen_worktree_root`
-- `first_seen_worktree_root`
-- `origin_url` when available
+- nullable `origin_url`
+- nullable `origin_url_normalized`
+- `last_seen_root_path`
 - `created_at`
 - `updated_at`
 - `last_seen_at`
 
-Optional but useful:
+### Space Roots
 
-- `default_branch`
-- `current_branch_last_seen`
-
-### Worktrees
-
-Worktrees must not create separate repos.
-
-Instead:
-
-- one repo record
-- many seen worktree roots
-- one shared repo-scoped memory space
-
-Path matchers must be stored as repo-relative paths, never as absolute filesystem paths.
-
----
-
-## 7) Scope Model
-
-The rewrite introduces explicit scope.
-
-### Scope Kinds
-
-- `global`
-- `repo`
-
-### Global Scope
-
-Global scope is for durable memory that should apply everywhere, especially rules and preferences.
+One memory space may be observed from multiple roots.
 
 Examples:
 
-- coding preferences that apply in every repo
-- reusable safety constraints
-- personal workflow conventions
+- multiple worktrees of one clone
+- multiple clones of one remote
+- one directory space reopened from the same root later
 
-### Repo Scope
-
-Repo scope is for memory tied to one Git repo.
-
-Examples:
-
-- repo architecture decisions
-- repo-specific rules
-- repo-specific facts
-- file/path-scoped constraints
-
-### Scope Behavior
-
-When Claude is inside a repo:
-
-- retrieval uses `global + current repo`
-- startup pinned context uses `global + current repo`
-- UI repo focus shows repo memory and can optionally include global overlays
-
-When Claude is not inside a repo:
-
-- retrieval uses `global` only
-- startup pinned context uses `global` only
-
-### Path Matcher Rule
-
-Path matchers are repo-relative and only valid for repo-scoped memories.
-
-V1 rule:
-
-- global memories do not support path matchers
-
-This keeps the semantics obvious and avoids surprising cross-repo path behavior.
+Track observed roots so the UI and logs can explain where a space was seen.
 
 ### Canonical Read/Write Contracts
 
-The rewrite must not leave scope semantics implicit. Every memory-shaped read result must include:
+Every memory-shaped read result must include:
 
 - `id`
-- `scope_kind`
-- nullable `repo_id`
-- nullable `repo_display_name`
+- `space_id`
+- `space_kind`
+- `space_display_name`
+- nullable `origin_url_normalized`
 - `memory_type`
 - `content`
 - `tags`
@@ -347,61 +464,69 @@ Search-shaped results must extend that with ranking metadata such as:
 
 Create/update rules:
 
-- manual create requires explicit `scope_kind`
-- repo-scoped create requires either explicit `repo_id` or current repo context
-- global create rejects path matchers
+- manual create requires either explicit `space_id` or resolvable current context
+- path matchers are always relative to the active space root
 - V1 updates may change content, tags, pin state, and path matchers
-- V1 updates may not move a memory between `global` and `repo`
-- V1 updates may not change `repo_id`
+- V1 updates may not move a memory between spaces
 
 Automatic learning rules:
 
-- when inside Git, automatic `Stop` learning may only create or update repo-scoped memories
-- automatic learning must never create or update global-scope memories in V1
-- when there is no repo context, automatic learning should skip rather than invent global scope
+- automatic `Stop` learning writes only to the active memory space
+- if no stable active memory space can be resolved, automatic learning must skip rather than guess
 
-Cross-repo read rules:
+Cross-space read rules:
 
-- if an API/UI/MCP response can contain more than one repo or more than one scope, the response and
-  rendered output must annotate repo and scope clearly
-- `scope = 'all'` is only acceptable if those annotations are present
+- agent retrieval, startup context, and automatic learning are current-space only
+- UI may browse more than one space
+- any API/UI response spanning multiple spaces must annotate space metadata clearly
 
 ---
 
 ## 8) Data Model
 
-The new DB must model repos, scopes, memories, retrieval indexes, events, and queued learning jobs.
+The new DB must model memory spaces, roots, memories, retrieval indexes, events, and queued
+learning jobs.
 
 ### Core Tables
 
-#### `repos`
+#### `memory_spaces`
 
-Stores one record per real Git repo identity.
+Stores one record per active memory identity.
 
 Suggested columns:
 
 - `id TEXT PRIMARY KEY`
-- `repo_key TEXT NOT NULL UNIQUE`
+- `space_key TEXT NOT NULL UNIQUE`
+- `space_kind TEXT NOT NULL CHECK (space_kind IN ('remote_repo', 'directory'))`
 - `display_name TEXT NOT NULL`
-- `git_common_dir TEXT NOT NULL`
-- `first_seen_worktree_root TEXT`
-- `last_seen_worktree_root TEXT`
+- `last_seen_root_path TEXT NOT NULL`
 - `origin_url TEXT`
+- `origin_url_normalized TEXT`
 - `created_at TEXT NOT NULL`
 - `updated_at TEXT NOT NULL`
 - `last_seen_at TEXT NOT NULL`
 
-#### `repo_worktrees`
+Required invariants:
 
-Tracks observed worktree roots for a repo.
+- remote spaces require `origin_url` and `origin_url_normalized`
+- directory spaces require both origin columns to be `NULL`
+
+#### `space_roots`
+
+Tracks observed roots for a memory space.
 
 Suggested columns:
 
 - `id TEXT PRIMARY KEY`
-- `repo_id TEXT NOT NULL REFERENCES repos(id) ON DELETE CASCADE`
-- `worktree_root TEXT NOT NULL UNIQUE`
+- `space_id TEXT NOT NULL REFERENCES memory_spaces(id) ON DELETE CASCADE`
+- `root_path TEXT NOT NULL`
+- `root_kind TEXT NOT NULL CHECK (root_kind IN ('git_worktree', 'directory_root'))`
 - `first_seen_at TEXT NOT NULL`
 - `last_seen_at TEXT NOT NULL`
+
+Recommended index rule:
+
+- unique index on `(space_id, root_path)`
 
 #### `memories`
 
@@ -410,19 +535,13 @@ Source of truth for all memories.
 Suggested columns:
 
 - `id TEXT PRIMARY KEY`
-- `scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'repo'))`
-- `repo_id TEXT REFERENCES repos(id) ON DELETE CASCADE`
+- `space_id TEXT NOT NULL REFERENCES memory_spaces(id) ON DELETE CASCADE`
 - `memory_type TEXT NOT NULL CHECK (memory_type IN ('fact', 'rule', 'decision', 'episode'))`
 - `content TEXT NOT NULL`
 - `tags_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags_json))`
 - `is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1))`
 - `created_at TEXT NOT NULL`
 - `updated_at TEXT NOT NULL`
-
-Required invariant:
-
-- `repo_id IS NULL` when `scope_kind = 'global'`
-- `repo_id IS NOT NULL` when `scope_kind = 'repo'`
 
 #### `memory_path_matchers`
 
@@ -435,39 +554,49 @@ Suggested columns:
 
 Required invariant:
 
-- path matchers may only exist for repo-scoped memories
+- path matchers are always relative to the owning memory space root
 
 #### `memory_fts`
 
-Lexical search must be stronger than the current implementation.
+Lexical search remains intentionally tag-focused in V1.
 
 V1 requirement:
 
-- index memory content and tags
-- do not repeat the current tag-only FTS design
+- index memory tags only
+- do not index main memory content in FTS
+- keep lexical behavior explicit and tested
 
 Suggested shape:
 
 ```sql
 CREATE VIRTUAL TABLE memory_fts USING fts5(
   id UNINDEXED,
-  content_text,
   tags_text
 );
 ```
 
-#### `memory_embeddings`
+#### `vec_memory`
 
-Suggested columns:
+`sqlite-vec` is the only semantic vector store in V1.
 
-- `memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE`
-- `vector_json TEXT NOT NULL`
-- `updated_at TEXT NOT NULL`
+Suggested shape:
 
-V1 decision:
+```sql
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
+  memory_id TEXT PRIMARY KEY,
+  embedding float[1024] distance_metric=cosine
+);
+```
 
-- keep embeddings in JSON
-- do not add `sqlite-vec` back into the first rewrite
+Required rules:
+
+- load the vendored macOS `sqlite-vec` extension during engine startup
+- store normalized `Float32` embeddings directly in `vec_memory`
+- do not keep a separate `memory_embeddings` table
+- do not store per-row `model_name` or `dimensions` metadata in SQLite because V1 fixes both in code
+- if the extension fails to load on the supported platform, fail startup with an explicit actionable
+  error
+- if the process is running on an unsupported platform, fail early with an explicit macOS-only error
 
 #### `learning_jobs`
 
@@ -476,8 +605,8 @@ Durable queue for post-stop learning work.
 Suggested columns:
 
 - `id TEXT PRIMARY KEY`
-- `repo_id TEXT REFERENCES repos(id) ON DELETE CASCADE`
-- `worktree_root TEXT`
+- `space_id TEXT NOT NULL REFERENCES memory_spaces(id) ON DELETE CASCADE`
+- `root_path TEXT NOT NULL`
 - `transcript_path TEXT NOT NULL`
 - `last_assistant_message TEXT`
 - `session_id TEXT`
@@ -508,8 +637,8 @@ Suggested columns:
 
 - `id INTEGER PRIMARY KEY AUTOINCREMENT`
 - `at TEXT NOT NULL`
-- `repo_id TEXT REFERENCES repos(id) ON DELETE SET NULL`
-- `worktree_root TEXT`
+- `space_id TEXT REFERENCES memory_spaces(id) ON DELETE SET NULL`
+- `root_path TEXT`
 - `event TEXT NOT NULL`
 - `kind TEXT NOT NULL`
 - `status TEXT NOT NULL`
@@ -541,14 +670,14 @@ Create/update sequence:
 1. write `memories`
 2. sync `memory_fts`
 3. replace path matchers
-4. sync embeddings
+4. sync `vec_memory`
 5. rollback on any failure
 
 Delete sequence:
 
 1. delete path matchers
 2. delete FTS row
-3. delete embedding row
+3. delete `vec_memory` row
 4. delete memory row
 
 ### Important Non-Goals
@@ -556,7 +685,9 @@ Delete sequence:
 - no session table as a lifecycle authority
 - no repo-local lock metadata
 - no per-repo DB files
-- no sqlite-vec mirror table in v1
+- no global memory scope table
+- no runtime installation of `sqlite-vec`
+- no multi-platform support in V1
 
 ---
 
@@ -619,7 +750,7 @@ Required behavior:
 - parallel callers may start at most one global engine
 - child exit before healthy must fail fast and visibly
 - stale or unhealthy locks must be replaced safely
-- repo-touch and job-enqueue paths must be idempotent under concurrent callers
+- space-touch and job-enqueue paths must be idempotent under concurrent callers
 
 ### Activity Rules
 
@@ -628,7 +759,7 @@ The engine must update `last_activity_at` whenever it handles meaningful work:
 - startup context fetch
 - search
 - CRUD
-- repo resolution/touch
+- space resolution/touch
 - job enqueue
 - job lease/heartbeat/finish
 - UI API reads
@@ -704,15 +835,15 @@ Reason:
 
 Future widening is allowed only if this remains true:
 
-- never run more than one learning job at the same time for the same `repo_id`
+- never run more than one learning job at the same time for the same `space_id`
 
 ### Worker Behavior
 
 For each job:
 
 1. read transcript
-2. derive repo-relative related paths
-3. search candidate memories using `global + repo`
+2. derive active-space-relative related paths
+3. search candidate memories using the job's owning space only
 4. run internal `claude -p` with `CLAUDE_CODE_SIMPLE=1`
 5. parse strict JSON actions
 6. sanitize path matchers
@@ -734,7 +865,7 @@ The queue must be visible in the UI:
 - running job
 - completed jobs
 - failed jobs
-- repo and time metadata
+- space and time metadata
 
 ---
 
@@ -742,25 +873,49 @@ The queue must be visible in the UI:
 
 The rewrite keeps hybrid retrieval but fixes the current weak and implicit parts.
 
-### Scope Of Search
+### Search Boundary
 
-When in repo:
+Default retrieval boundary:
 
-- search `global + repo`
+- search only the active memory space
 
-When outside repo:
+UI-only optional management behavior:
 
-- search `global`
+- an explicit all-spaces search may exist for browsing and diagnostics
+- agent retrieval, startup context, and automatic learning do not use all-spaces search in V1
 
 ### Branches
 
 1. Path-aware branch:
-   - repo-scoped memories only
-   - repo-relative path matchers
+   - active-space memories only
+   - active-space-relative path matchers
 2. Lexical branch:
-   - FTS over content and tags
+   - FTS over tags only
 3. Semantic branch:
    - embeddings over content
+
+### Embedding Model Contract
+
+V1 keeps semantic search simple and deterministic:
+
+- provider: local Ollama
+- model: `bge-m3`
+- dimensions: `1024`
+- no runtime profile switching in V1
+- these values are code-level constants in V1 and are not stored per row in SQLite
+- if a different embedding model is ever needed later, it must come with an explicit re-embedding and
+  vec-index migration plan
+
+### Vector Search Contract
+
+Nearest-`k` semantic retrieval uses one path in V1:
+
+1. load vendored `sqlite-vec` on the supported macOS target
+2. query `vec_memory` directly for nearest neighbors
+
+This means semantic retrieval depends on the extension in V1. If the vendored binary fails to load on
+the supported target, startup must fail explicitly rather than degrading to an alternate semantic
+path.
 
 ### Fusion
 
@@ -778,22 +933,21 @@ Order of importance:
    - must
    - preference
    - context
-3. scope relevance:
-   - repo-scoped should beat global when relevance is otherwise equal
-4. pinned status
-5. recency
+3. pinned status
+4. recency
 
 ### Path Matcher Contract
 
 Path matcher handling must be explicit because it has been one of the most failure-prone parts of
-the current implementation.
+the prior implementation.
 
 V1 rules:
 
-- only repo-relative path matchers are allowed
+- only active-space-relative path matchers are allowed
 - reject broad catch-alls such as `*`, `**`, `**/*`, `/`, and `./`
 - strip line-number suffixes and similar transcript noise before validation
-- basename-only promotion is allowed only when it resolves unambiguously to one related repo path
+- basename-only promotion is allowed only when it resolves unambiguously to one related path inside
+  the active space
 - cap matcher count per memory/action to prevent noisy retrieval
 - test ranking across exact file, exact dir, single-glob, and deep-glob cases
 
@@ -804,7 +958,9 @@ Keep local Ollama embeddings, but do not repeat the current startup-blocking beh
 Required behavior:
 
 - engine must still start when Ollama is unavailable
-- search must degrade to path + lexical retrieval
+- search must degrade to path + tag lexical retrieval
+- if the vendored vec extension fails to load on the supported target, fail startup with an explicit
+  actionable error
 - UI and logs should surface semantic-unavailable state
 - missing Ollama must not disable the whole plugin
 
@@ -822,35 +978,32 @@ But the new plan must treat this as a real, wired setting if exposed, not dead c
 
 ## 12) Startup Context
 
-Pinned startup memory remains useful, but it now needs scope awareness.
+Pinned startup memory remains useful, but it now needs memory-space awareness.
 
 ### SessionStart Injection
 
-When inside repo:
-
-- inject pinned global memories
-- inject pinned repo memories for the current repo
-
-When outside repo:
-
-- inject pinned global memories only
+- resolve the active memory space
+- inject pinned memories from that space only
 
 ### Formatting
 
-Startup markdown should clearly separate:
+Startup markdown should clearly identify:
 
-- global pinned memory
-- repo pinned memory
+- active space kind
+- active space display name
+- normalized origin URL when the active space is a remote repo
+- pinned memories for that active space
 
-This is better than one undifferentiated block because the user and model need to understand what
-is cross-repo versus repo-specific.
+This is better than an undifferentiated block because the user and model need to understand which
+project context the pinned memories came from.
 
 ### Guidance Contract
 
 The startup additional context must preserve the behavioral cues that make memory actually usable:
 
 - state clearly that `recall` is the main memory retrieval path
-- state clearly that the startup block contains pinned memory only, not the full memory set
+- state clearly that the startup block contains pinned memory for the active space only, not the full
+  memory set
 - instruct the model to check memory before acting on non-trivial work
 - instruct the model to stop and explain when remembered constraints conflict with the requested
   action
@@ -878,9 +1031,9 @@ Required behavior:
 
 1. resolve current context
 2. ensure global engine
-3. resolve repo identity when inside Git
-4. upsert repo/worktree last-seen metadata
-5. fetch pinned startup memory for the active scope
+3. resolve active memory space
+4. upsert memory-space and root last-seen metadata
+5. fetch pinned startup memory for the active space
 6. return:
    - top-level `systemMessage` with Memory UI URL
    - additional context with pinned memory markdown
@@ -893,13 +1046,13 @@ Required behavior:
 1. resolve current context
 2. ensure global engine
 3. refresh engine activity
-4. refresh repo/worktree last-seen metadata when inside Git
+4. refresh memory-space and root metadata
 5. inject lightweight reminder to use `recall`
 6. fail open on any error
 
 This hook should stay lightweight. It should not re-inject the full pinned startup block.
 
-It should preserve the lightweight reminder behavior from the current implementation:
+It should preserve the lightweight reminder behavior from the prior implementation:
 
 - use `recall` before acting when memory may matter
 - direct requests do not override remembered project rules
@@ -910,7 +1063,7 @@ Required behavior:
 
 1. resolve current context
 2. ensure global engine
-3. resolve repo identity when inside Git
+3. resolve active memory space
 4. verify transcript exists
 5. enqueue learning job
 6. return immediately
@@ -942,34 +1095,18 @@ Keep one MCP tool:
 1. validate input with zod
 2. resolve current context
 3. ensure global engine automatically
-4. search using the active scope
-5. return markdown only
+4. resolve the active memory space
+5. search only that space
+6. return markdown only
 
 ### Tool Description Policy
 
 The `recall` tool description must continue to carry explicit invocation guidance:
 
 - use `recall` before acting on non-trivial work
-- use it again when scope changes
+- use it again when project context changes
 - pinned startup context is not the full memory set
-
-### Scope Modes
-
-Recommended input:
-
-- `scope: 'auto' | 'global' | 'repo' | 'all'`
-
-Meaning:
-
-- `auto`
-  - inside repo: `global + current repo`
-  - outside repo: `global`
-- `global`
-  - global only
-- `repo`
-  - current repo only
-- `all`
-  - global plus all repos, mainly for diagnostics and UI-adjacent workflows
+- the tool searches the current active memory space, not all memories everywhere
 
 ### Important Difference From Current Code
 
@@ -979,7 +1116,8 @@ It must:
 
 - auto-start the engine
 - not depend on a pre-existing repo-local lock file
-- annotate repo and scope whenever results span more than one repo or more than one scope
+- resolve active space automatically from the current context
+- include active-space metadata in its markdown output
 
 ### Timeout Contract
 
@@ -999,15 +1137,14 @@ The MCP server must never emit non-protocol stdout logs.
 
 ## 15) UI Contract
 
-The UI must stop assuming one repo per origin.
+The UI must stop assuming one repo per origin and must stop assuming any global memory mode.
 
 ### High-Level Behavior
 
 The UI is served from the global engine at `/ui` and reflects:
 
-- global memories
-- repo memories
-- repo list
+- memory spaces
+- memories within those spaces
 - learning queue
 - operational logs
 
@@ -1015,10 +1152,10 @@ The UI is served from the global engine at `/ui` and reflects:
 
 #### Top Bar
 
-Show global stats:
+Show aggregate stats:
 
 - total memories
-- total repos
+- total spaces
 - queued jobs
 - running jobs
 - uptime
@@ -1029,17 +1166,16 @@ Show global stats:
 
 Support focus modes:
 
-- `Current repo`
-- `All repos`
-- `Global only`
-- explicit repo selection
+- `Current space`
+- `All spaces`
+- explicit space selection
 
 #### Memories View
 
 Show:
 
-- scope chip (`global` or repo)
-- repo chip when relevant
+- space-kind chip (`remote_repo` or `directory`)
+- space chip
 - type
 - pin state
 - path matchers
@@ -1048,9 +1184,9 @@ Show:
 
 Create/edit must support:
 
-- scope selection
-- repo selection when needed
-- path matchers only for repo scope
+- current-space defaulting
+- explicit space selection when creating from the UI outside current-context workflows
+- path matchers relative to the selected space root
 
 #### Jobs View
 
@@ -1062,7 +1198,7 @@ Show:
 - running
 - completed
 - failed
-- repo
+- space
 - transcript path
 - attempts
 - timestamps
@@ -1072,20 +1208,20 @@ Show:
 
 Show a unified event timeline with:
 
-- repo filter
+- space filter
 - status filter
 - pagination or capped recent window
 - expandable structured payloads
 
 ### Search Behavior
 
-UI search must be scope-aware and repo-aware.
+UI search must be space-aware.
 
 Examples:
 
-- in `Current repo`, search `global + repo`
-- in `Global only`, search global memories only
-- in `All repos`, search across everything
+- in `Current space`, search the active space only
+- in an explicit space focus, search that space only
+- in `All spaces`, search across everything with visible space annotations
 
 ---
 
@@ -1097,8 +1233,8 @@ The new API drops sessions and background-hook endpoints.
 
 - `GET /health`
 - `GET /stats`
-- `GET /repos`
-- `POST /repos/touch`
+- `GET /spaces`
+- `POST /spaces/touch`
 - `POST /memories/pinned`
 - `POST /memories/search`
 - `POST /memories/add`
@@ -1113,17 +1249,17 @@ The new API drops sessions and background-hook endpoints.
 
 Required API behavior:
 
-- memory CRUD/search/pinned payloads and results carry `scope_kind` and repo metadata explicitly
-- `POST /memories/pinned` accepts scope mode and current repo context rather than assuming one
-  implicit repo
-- `POST /memories/search` accepts scope mode and optional repo filter
-- `GET /memories` supports scope/repo filtering
-- `POST /memories/add` requires explicit `scope_kind`
-- repo-scoped writes require repo context
-- global writes reject path matchers
-- `PATCH /memories/:id` must not move memories across scope or repo in V1
-- `POST /learning-jobs` records resolved repo/worktree context when available
-- UI-facing results spanning multiple repos/scopes must include visible repo metadata
+- memory CRUD/search/pinned payloads and results carry `space_id`, `space_kind`, and space metadata
+  explicitly
+- `POST /memories/pinned` accepts current context or explicit `space_id`
+- `POST /memories/search` defaults to the resolved active space and may allow explicit `space_id` for
+  UI/admin workflows
+- `GET /memories` supports `space_id` filtering and optional all-spaces listing for the UI
+- `POST /memories/add` requires explicit `space_id` or resolvable current context
+- path matchers are validated relative to the owning space root
+- `PATCH /memories/:id` must not move memories across spaces in V1
+- `POST /learning-jobs` records resolved `space_id` and root path
+- UI-facing results spanning multiple spaces must include visible space metadata
 
 ### Explicitly Removed
 
@@ -1135,7 +1271,7 @@ Required API behavior:
 
 - validate all input with zod
 - keep route handlers thin
-- attach repo context explicitly
+- attach space context explicitly
 - persist event records through the shared event service
 - every meaningful request refreshes engine activity
 
@@ -1164,16 +1300,38 @@ Required updates:
 
 ### SQLite
 
-Use built-in `node:sqlite` from Node 24.
+Use built-in `node:sqlite` from Node 24 together with a vendored `sqlite-vec` extension.
 
 Therefore remove from the new architecture:
 
 - `better-sqlite3`
-- `sqlite-vec`
 - runtime `npm install` of DB dependencies
 - ABI-specific native cache directories
 - node runtime binary discovery logic
 - `MEMORIES_NODE_BIN`
+
+### Vendored `sqlite-vec` Contract
+
+The project vendors the SQLite extension binary directly in the repo and ships it in the plugin
+package.
+
+V1 packaged binary layout:
+
+```text
+plugins/memories/vendor/sqlite-vec/
+  darwin-arm64/
+    vec0.dylib
+```
+
+Required rules:
+
+- the binary is committed to git
+- the binary is included in the packaged plugin
+- there is no download, install, rebuild, or mutation at runtime
+- load path resolution is deterministic from `CLAUDE_PLUGIN_ROOT`
+- unsupported platform handling is explicit and actionable
+- semantic startup fails explicitly if the extension unexpectedly fails to load on the supported
+  target
 
 ### Build
 
@@ -1204,6 +1362,7 @@ Required rules:
 - any required CommonJS interop must be handled explicitly in the built output
 - plugin-root resolution must not depend on `process.cwd()`
 - hook and MCP command strings must keep quoted `${CLAUDE_PLUGIN_ROOT}` paths
+- the vendored `sqlite-vec` binary must be packaged and loadable from the shipped plugin
 - validation must include a cold-install simulation with no plugin `node_modules`
 
 ### Config Surface
@@ -1218,7 +1377,6 @@ Expected real settings for the rewrite:
 - `MEMORIES_ENGINE_BOOT_TIMEOUT_MS`
 - `MEMORIES_ENGINE_IDLE_TIMEOUT_MS`
 - `MEMORIES_OLLAMA_URL`
-- `MEMORIES_OLLAMA_PROFILE`
 - `MEMORIES_MCP_REQUEST_TIMEOUT_MS`
 
 Optional only if Stage 00 proves the launcher is not already Node 24:
@@ -1233,8 +1391,8 @@ This rewrite should be treated as a fresh architecture, not a patch on the curre
 
 ### Initial Position
 
-- current repo-local DBs are reference data, not authoritative storage for the rewrite
-- current implementation is a behavior reference, not a migration contract
+- legacy repo-local DBs are not authoritative storage for the rewrite
+- this file is the source of truth, not deleted code or unstated project history
 
 ### V1 Migration Rule
 
@@ -1267,7 +1425,7 @@ Required:
 3. `npm run build`
 4. hook contract tests
 5. engine lifecycle tests
-6. repo identity resolution tests
+6. memory-space identity resolution tests
 7. storage transaction tests
 8. schema migration and compatibility tests
 9. retrieval tests
@@ -1275,32 +1433,41 @@ Required:
 11. MCP recall tests
 12. cold-install packaging tests
 13. parallel startup/idempotency tests
+14. vendored `sqlite-vec` load tests on the supported target
+15. supported-target vec load failure tests with explicit startup error behavior
+16. `origin` URL normalization tests across SSH and HTTPS forms
+17. active-space fallback tests when Git has no usable `origin`
 
 ### Manual
 
-1. Start inside one repo and verify startup context includes global + repo pinned memory.
-2. Start in two worktrees of the same repo and verify both read/write the same repo-scoped memory.
-3. Trigger `Stop` in both worktrees close together and verify queue serialization.
-4. Run a marketplace-style cold install from committed artifacts only and verify hooks/MCP/UI start
+1. Start inside one Git repo with a usable `origin` and verify startup context includes only pinned
+   memory for that remote-scoped space.
+2. Start in two worktrees of the same repo and verify both read and write the same remote-scoped
+   memory space.
+3. Start in two separate clones with the same normalized `origin` and verify they share memory.
+4. Start in a Git repo with no usable `origin` and verify the system falls back to a directory space
+   rooted at the Git top-level directory.
+5. Start outside Git and verify the system uses a directory space rooted at the resolved working
+   directory.
+6. Trigger `Stop` in two roots that map to the same memory space close together and verify queue
+   serialization.
+7. Run a marketplace-style cold install from committed artifacts only and verify hooks/MCP/UI start
    with no plugin-local `node_modules`.
-5. Verify the launcher/runtime boundary:
-   - either plugin entrypoints already run under Node 24
-   - or the minimal bootstrap wrapper re-execs Node 24 correctly
-6. Let the engine idle with a short test timeout and verify automatic shutdown.
-7. Trigger `UserPromptSubmit`, `SessionStart`, `Stop`, and MCP `recall` against a stopped engine and
+8. Verify the launcher/runtime boundary: either plugin entrypoints already run under Node 24, or the
+   minimal bootstrap wrapper re-execs Node 24 correctly.
+9. Verify vendored `sqlite-vec` loads successfully on macOS `darwin-arm64`.
+10. Force vec loading failure and verify startup fails with an explicit actionable error.
+11. Let the engine idle with a short test timeout and verify automatic shutdown.
+12. Trigger `UserPromptSubmit`, `SessionStart`, `Stop`, and MCP `recall` against a stopped engine and
    verify auto-start.
-8. Run without Ollama and verify:
-   - engine still starts
-   - lexical/path retrieval still works
-9. Open `/ui` and verify:
-   - repo selection works
-   - global focus works
-   - job queue is visible
-   - logs are filterable
-10. Verify search and list results visibly annotate scope and repo where needed.
-11. Verify a repo with a legacy `.memories/ai_memory.db` gets a clear non-destructive notice.
-12. Verify no repo-local `.memories` folders are created.
-13. Verify no `native/<platform>-<arch>-abi...` artifacts are created.
+13. Run without Ollama and verify the engine still starts and tag lexical/path retrieval still works.
+14. Open `/ui` and verify current-space focus, all-spaces browsing, the job queue, and logs all work
+    correctly.
+15. Verify search and list results visibly annotate memory-space metadata when more than one space is
+    shown.
+16. Verify a repo with a legacy `.memories/ai_memory.db` gets a clear non-destructive notice.
+17. Verify no repo-local `.memories` folders are created.
+18. Verify no `native/<platform>-<arch>-abi...` artifacts are created.
 
 ### Security And Privacy
 
@@ -1326,11 +1493,13 @@ Goal:
 Micro-steps:
 
 1. confirm storage root
-2. confirm repo identity algorithm
-3. confirm launcher/runtime boundary for Node 24
-4. confirm `SessionEnd` removal or noop behavior
-5. confirm queue concurrency rule
-6. archive or mark old stage docs as non-authoritative before implementation begins
+2. confirm memory-space identity algorithm
+3. confirm `origin` normalization rules
+4. confirm Git-without-`origin` fallback behavior
+5. confirm launcher/runtime boundary for Node 24
+6. confirm macOS-only support target and vendored vec binary contract
+7. confirm `SessionEnd` removal or noop behavior
+8. confirm queue concurrency rule
 
 Gate:
 
@@ -1340,19 +1509,20 @@ Gate:
 
 Goal:
 
-- establish global paths, constants, schemas, repo resolver primitives, and event model
+- establish global paths, constants, schemas, memory-space resolver primitives, and event model
 
 Micro-steps:
 
 1. global storage path helpers
-2. repo identity resolver
-3. core zod schemas for scope-bearing memory/search/pinned contracts
-4. jobs, logs, and event contracts
-5. structured event service
+2. memory-space resolver
+3. remote URL normalization helper
+4. core zod schemas for space-bearing memory/search/pinned contracts
+5. jobs, logs, and event contracts
+6. structured event service
 
 Gate:
 
-- unit tests for path resolution and repo identity
+- unit tests for path resolution and memory-space identity
 
 ### Stage 02 - Node 24 And SQLite Baseline
 
@@ -1364,9 +1534,10 @@ Micro-steps:
 
 1. package metadata and build target updates
 2. decide and implement the minimal bootstrap boundary if Node 24 launcher guarantee is absent
-3. remove new-design dependency on `better-sqlite3` and `sqlite-vec`
-4. add SQLite bootstrap layer for built-in `node:sqlite`
-5. prove cold-install packaging assumptions locally
+3. remove new-design dependency on `better-sqlite3`
+4. add built-in `node:sqlite` bootstrap layer
+5. add vendored `sqlite-vec` binary layout and deterministic loader
+6. prove cold-install packaging assumptions locally
 
 Gate:
 
@@ -1396,13 +1567,13 @@ Gate:
 
 Goal:
 
-- implement repos, worktrees, memories, FTS, embeddings, jobs, and events tables
+- implement memory spaces, space roots, memories, FTS, vec semantic storage, jobs, and events tables
 
 Micro-steps:
 
-1. repo tables
-2. scoped memories and path matcher invariants
-3. FTS and embeddings tables
+1. memory-space tables
+2. memory table and path matcher invariants
+3. FTS and vec semantic storage tables
 4. jobs and events tables
 5. schema versioning and ordered migrations
 
@@ -1414,18 +1585,18 @@ Gate:
 
 Goal:
 
-- implement scoped retrieval with stronger lexical behavior
+- implement active-space retrieval with explicit tag-focused lexical behavior
 
 Micro-steps:
 
-1. repo/global scope filters
-2. content + tag lexical search
-3. semantic branch with Ollama fallback
+1. active-space filters
+2. tag lexical search
+3. semantic branch with vendored vec primary path
 4. path-aware merge and ranking
 
 Gate:
 
-- retrieval tests for scope, path, lexical, semantic fallback, and ranking
+- retrieval tests for active-space boundary, path, lexical, vec-backed semantic search, and ranking
 
 ### Stage 06 - API
 
@@ -1435,11 +1606,11 @@ Goal:
 
 Micro-steps:
 
-1. `/health`, `/stats`, `/repos`
-2. scope-bearing memory CRUD and search
+1. `/health`, `/stats`, `/spaces`
+2. space-bearing memory CRUD and search
 3. pinned context endpoint
 4. jobs and logs endpoints
-5. explicit repo/scope metadata in all relevant responses
+5. explicit space metadata in all relevant responses
 
 Gate:
 
@@ -1473,7 +1644,7 @@ Micro-steps:
 1. enqueue flow
 2. engine-owned lease and execution loop
 3. internal Claude call and strict JSON parsing
-4. repo-only automatic write policy
+4. active-space-only automatic write policy
 5. apply actions with durable status updates
 
 Gate:
@@ -1484,35 +1655,35 @@ Gate:
 
 Goal:
 
-- make recall auto-start and scope-aware
+- make recall auto-start and active-space-aware
 
 Micro-steps:
 
 1. auto engine startup
-2. scope input and repo resolution
+2. context input and memory-space resolution
 3. cold-start timeout split
-4. markdown output updates with repo/scope annotations where needed
+4. markdown output updates with active-space annotations
 
 Gate:
 
-- MCP tests from stopped-engine and inside/outside-repo scenarios
+- MCP tests from stopped-engine and remote-space/directory-space scenarios
 
 ### Stage 10 - UI Rewrite
 
 Goal:
 
-- build the multi-repo UI over the new model
+- build the memory-space UI over the new model
 
 Micro-steps:
 
-1. global stats and repo selector
-2. scoped memory list and CRUD
+1. aggregate stats and space selector
+2. memory-space list and CRUD
 3. jobs view
 4. logs view
 
 Gate:
 
-- manual multi-repo UI walkthrough
+- manual multi-space UI walkthrough
 
 ### Stage 11 - Packaging Cleanup
 
@@ -1525,7 +1696,7 @@ Micro-steps:
 1. manifest updates
 2. build config cleanup
 3. remove native-runtime assumptions from docs and code
-4. ensure archived docs cannot be mistaken for live implementation instructions
+4. ensure the plan remains self-sufficient and matches the shipped manifest/runtime layout
 
 Gate:
 
@@ -1539,9 +1710,9 @@ Goal:
 
 Micro-steps:
 
-1. concurrency and worktree scenarios
+1. concurrency and shared-space scenarios
 2. idle restart scenarios
-3. semantic unavailable scenarios
+3. vendored vec load and fail-fast scenarios
 4. security/privacy pass
 
 Gate:
@@ -1555,8 +1726,18 @@ Gate:
 The rewrite is complete only when all of the following are true:
 
 - there is one global engine process, not one engine per repo path
-- there is one global SQLite DB for all repos and scopes
-- starting Claude in two worktrees of the same repo uses the same repo-scoped memory
+- there is one global SQLite DB for all memory spaces
+- V1 support is explicitly macOS `darwin-arm64` only
+- there is no global memory scope
+- every memory belongs to exactly one memory space
+- starting Claude in two worktrees of the same repo with the same normalized `origin` uses the same
+  remote-scoped memory space
+- starting Claude in two separate clones with the same normalized `origin` uses the same
+  remote-scoped memory space
+- starting Claude in a Git repo without usable `origin` falls back to a directory-scoped space at
+  the Git top-level
+- starting Claude outside Git uses a directory-scoped memory space rooted at the resolved working
+  directory
 - engine startup is lazy and automatic on access
 - engine cleanup is idle-based after 1 hour, not session-based
 - engine reuse only occurs when runtime/API/schema versions are compatible
@@ -1566,13 +1747,16 @@ The rewrite is complete only when all of the following are true:
 - Node 24 is the explicit and consistent baseline
 - the launcher/runtime boundary for Node 24 is explicitly validated
 - MCP `recall` auto-starts the engine and works from a stopped-engine state
-- memory/search/pinned contracts expose scope and repo metadata explicitly
-- startup context includes global and repo pinned memory correctly
+- memory/search/pinned contracts expose memory-space metadata explicitly
+- startup context includes pinned memory for the active space only
 - `Stop` enqueues durable learning jobs and returns immediately
 - learning job execution is owned by the global engine
 - learning job execution is queued and serialized safely
-- the UI can browse all repos and focus one repo
-- lexical retrieval searches real memory content, not just tags
+- the UI can browse all spaces and focus one space
+- lexical retrieval remains tag-based and does not index main memory content
+- vendored `sqlite-vec` is committed, packaged, and used as the only semantic vector store in V1
+- vec load failure on the supported platform causes explicit startup failure rather than semantic
+  fallback
 - cold marketplace install works from shipped artifacts alone
 - the system still fails open on hook errors
 - lint, typecheck, build, and targeted tests pass
@@ -1584,11 +1768,13 @@ The rewrite is complete only when all of the following are true:
 These are reasonable default assumptions for the rewrite unless changed before Stage 01:
 
 1. Global storage root is `~/.claude/memories`.
-2. `SessionEnd` is removed from steady-state hook wiring.
-3. V1 learning concurrency is global single-file execution:
-   - one learning Claude job at a time globally
-4. Global scope is available for all memory types, even though the first practical use will mostly
-   be global rules/preferences.
-5. There is no automatic import from old repo-local DBs in V1.
-6. If the launcher is not already Node 24, the fallback is one minimal explicit bootstrap wrapper,
+2. V1 support is macOS `darwin-arm64` only.
+3. `SessionEnd` is removed from steady-state hook wiring.
+4. V1 learning concurrency is global single-file execution: one learning Claude job at a time
+   globally.
+5. `origin` is the only remote used for shared remote-scoped identity in V1.
+6. If a Git repo has no usable `origin`, the fallback is a directory-scoped space rooted at the Git
+   top-level directory.
+7. There is no automatic import from old repo-local DBs in V1.
+8. If the launcher is not already Node 24, the fallback is one minimal explicit bootstrap wrapper,
    not renewed runtime-discovery complexity.

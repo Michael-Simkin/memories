@@ -12,6 +12,12 @@ import {
 } from "../../shared/__tests__/helpers.js";
 import { DatabaseBootstrapRepository } from "../../storage/repositories/database-bootstrap-repository.js";
 import { handleUserPromptSubmitHook } from "../user-prompt-submit.js";
+import {
+  ENGINE_NODE_ARGUMENTS,
+  SOURCE_ENGINE_ENTRYPOINT,
+  TEST_PLUGIN_ROOT,
+  stopRunningEngine,
+} from "./helpers.js";
 import type { UserPromptSubmitHookInput } from "../types/user-prompt-submit.js";
 
 const EXPECTED_REMINDER =
@@ -41,6 +47,7 @@ describe("handleUserPromptSubmitHook", () => {
     );
 
     testContext.after(async () => {
+      await stopRunningEngine(claudeMemoryHome);
       await removePath(claudeMemoryHome);
       await removePath(workspacePath);
     });
@@ -48,7 +55,11 @@ describe("handleUserPromptSubmitHook", () => {
     const hookOutput = await handleUserPromptSubmitHook(
       createUserPromptSubmitHookInput(workspacePath),
       {
+        bootTimeoutMs: 10_000,
         claudeMemoryHome,
+        engineEntrypoint: SOURCE_ENGINE_ENTRYPOINT,
+        engineNodeArguments: ENGINE_NODE_ARGUMENTS,
+        pluginRoot: TEST_PLUGIN_ROOT,
       },
     );
     const canonicalWorkspacePath = await realpath(workspacePath);
@@ -105,6 +116,7 @@ describe("handleUserPromptSubmitHook", () => {
     const secondNestedPath = path.join(secondRepositoryPath, "packages", "app");
 
     testContext.after(async () => {
+      await stopRunningEngine(claudeMemoryHome);
       await removePath(claudeMemoryHome);
       await removePath(firstRepositoryPath);
       await removePath(secondRepositoryPath);
@@ -129,7 +141,11 @@ describe("handleUserPromptSubmitHook", () => {
     const firstOutput = await handleUserPromptSubmitHook(
       createUserPromptSubmitHookInput(firstRepositoryPath),
       {
+        bootTimeoutMs: 10_000,
         claudeMemoryHome,
+        engineEntrypoint: SOURCE_ENGINE_ENTRYPOINT,
+        engineNodeArguments: ENGINE_NODE_ARGUMENTS,
+        pluginRoot: TEST_PLUGIN_ROOT,
       },
     );
     const secondOutput = await handleUserPromptSubmitHook(
@@ -137,7 +153,11 @@ describe("handleUserPromptSubmitHook", () => {
         session_id: "session-2",
       }),
       {
+        bootTimeoutMs: 10_000,
         claudeMemoryHome,
+        engineEntrypoint: SOURCE_ENGINE_ENTRYPOINT,
+        engineNodeArguments: ENGINE_NODE_ARGUMENTS,
+        pluginRoot: TEST_PLUGIN_ROOT,
       },
     );
     const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({

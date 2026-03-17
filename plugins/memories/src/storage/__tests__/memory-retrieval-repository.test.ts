@@ -10,6 +10,7 @@ import { DatabaseBootstrapRepository } from "../repositories/database-bootstrap-
 import { MemoryRepository } from "../repositories/memory-repository.js";
 import { MemoryRetrievalRepository } from "../repositories/memory-retrieval-repository.js";
 import { SpaceRegistryRepository } from "../repositories/space-registry-repository.js";
+import { MEMORY_SEMANTIC_DIMENSIONS } from "../../shared/constants/embeddings.js";
 
 function createResolution(
   resolvedWorkingPath: string,
@@ -40,6 +41,13 @@ function touchSpace(
     }),
     observedAt,
   });
+}
+
+function createUnitVector(index: number): number[] {
+  const embedding = Array.from({ length: MEMORY_SEMANTIC_DIMENSIONS }, () => 0);
+  embedding[index] = 1;
+
+  return embedding;
 }
 
 describe("MemoryRetrievalRepository", () => {
@@ -151,8 +159,104 @@ describe("MemoryRetrievalRepository", () => {
             query: "   ",
             relatedPaths: [],
           }),
-        /requires a non-empty query, related paths, or both/u,
+        /requires a non-empty query, query embedding, related paths/u,
       );
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
+  it("uses reciprocal rank fusion for lexical and semantic hits before path hits", () => {
+    const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
+      databasePath: ":memory:",
+    });
+
+    try {
+      const primarySpace = touchSpace(
+        bootstrapResult.database,
+        "/workspace/project-c",
+        "2026-03-14T11:40:00.000Z",
+      );
+
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "path-lexical-semantic",
+        spaceId: primarySpace.space.id,
+        memoryType: "rule",
+        content: "Matches every branch.",
+        tags: ["release"],
+        pathMatchers: ["src/features/feature.ts"],
+        semanticEmbedding: createUnitVector(0),
+        updatedAt: "2026-03-14T11:50:00.000Z",
+      });
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "hybrid-only",
+        spaceId: primarySpace.space.id,
+        memoryType: "fact",
+        content: "Matches lexical and semantic only.",
+        tags: ["release"],
+        semanticEmbedding: createUnitVector(0),
+        updatedAt: "2026-03-14T11:49:00.000Z",
+      });
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "lexical-only",
+        spaceId: primarySpace.space.id,
+        memoryType: "fact",
+        content: "Matches lexical only.",
+        tags: ["release"],
+        updatedAt: "2026-03-14T11:48:00.000Z",
+      });
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "semantic-only",
+        spaceId: primarySpace.space.id,
+        memoryType: "fact",
+        content: "Matches semantic only.",
+        semanticEmbedding: createUnitVector(1),
+        updatedAt: "2026-03-14T11:47:00.000Z",
+      });
+
+      const searchResult = MemoryRetrievalRepository.searchMemories(
+        bootstrapResult.database,
+        {
+          spaceId: primarySpace.space.id,
+          query: "release",
+          queryEmbedding: createUnitVector(0),
+          relatedPaths: ["src/features/feature.ts:10"],
+        },
+      );
+      const firstResult = searchResult.results[0];
+      const secondResult = searchResult.results[1];
+      const thirdResult = searchResult.results[2];
+      const fourthResult = searchResult.results[3];
+
+      assert.deepEqual(
+        searchResult.results.map((result) => result.id),
+        ["path-lexical-semantic", "hybrid-only", "lexical-only", "semantic-only"],
+      );
+      assert.ok(firstResult);
+      assert.equal(firstResult.source, "path");
+      assert.deepEqual(firstResult.matched_by, ["path", "lexical", "semantic"]);
+      assert.equal(typeof firstResult.path_score, "number");
+      assert.equal(typeof firstResult.lexical_score, "number");
+      assert.equal(typeof firstResult.semantic_score, "number");
+
+      assert.ok(secondResult);
+      assert.equal(secondResult.source, "hybrid");
+      assert.deepEqual(secondResult.matched_by, ["lexical", "semantic"]);
+      assert.equal(secondResult.path_score, null);
+      assert.equal(typeof secondResult.lexical_score, "number");
+      assert.equal(typeof secondResult.semantic_score, "number");
+
+      assert.ok(thirdResult);
+      assert.equal(thirdResult.source, "lexical");
+      assert.deepEqual(thirdResult.matched_by, ["lexical"]);
+      assert.equal(typeof thirdResult.lexical_score, "number");
+      assert.equal(thirdResult.semantic_score, null);
+
+      assert.ok(fourthResult);
+      assert.equal(fourthResult.source, "semantic");
+      assert.deepEqual(fourthResult.matched_by, ["semantic"]);
+      assert.equal(fourthResult.lexical_score, null);
+      assert.equal(typeof fourthResult.semantic_score, "number");
     } finally {
       bootstrapResult.database.close();
     }

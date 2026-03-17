@@ -9,6 +9,7 @@ import type {
 import { DatabaseBootstrapRepository } from "../repositories/database-bootstrap-repository.js";
 import { MemoryRepository } from "../repositories/memory-repository.js";
 import { SpaceRegistryRepository } from "../repositories/space-registry-repository.js";
+import { MEMORY_SEMANTIC_DIMENSIONS } from "../../shared/constants/embeddings.js";
 
 function createResolution(
   resolvedWorkingPath: string,
@@ -39,6 +40,13 @@ function touchSpace(
     }),
     observedAt,
   });
+}
+
+function createUnitVector(index: number): number[] {
+  const embedding = Array.from({ length: MEMORY_SEMANTIC_DIMENSIONS }, () => 0);
+  embedding[index] = 1;
+
+  return embedding;
 }
 
 describe("MemoryRepository retrieval", () => {
@@ -271,6 +279,72 @@ describe("MemoryRepository retrieval", () => {
       assert.ok((pathResult.results[0]?.path_score ?? 0) > (pathResult.results[1]?.path_score ?? 0));
       assert.ok((pathResult.results[1]?.path_score ?? 0) > (pathResult.results[2]?.path_score ?? 0));
       assert.ok((pathResult.results[2]?.path_score ?? 0) > (pathResult.results[3]?.path_score ?? 0));
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
+  it("searches semantic embeddings only inside the requested space", () => {
+    const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
+      databasePath: ":memory:",
+    });
+
+    try {
+      const primarySpace = touchSpace(
+        bootstrapResult.database,
+        "/workspace/project-a",
+        "2026-03-14T10:30:00.000Z",
+      );
+      const secondarySpace = touchSpace(
+        bootstrapResult.database,
+        "/workspace/project-b",
+        "2026-03-14T10:31:00.000Z",
+      );
+
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "semantic-nearest",
+        spaceId: primarySpace.space.id,
+        memoryType: "fact",
+        content: "Nearest semantic match.",
+        semanticEmbedding: createUnitVector(0),
+        updatedAt: "2026-03-14T10:40:00.000Z",
+      });
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "semantic-next",
+        spaceId: primarySpace.space.id,
+        memoryType: "fact",
+        content: "Second semantic match.",
+        semanticEmbedding: createUnitVector(1),
+        updatedAt: "2026-03-14T10:39:00.000Z",
+      });
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "wrong-space-semantic",
+        spaceId: secondarySpace.space.id,
+        memoryType: "fact",
+        content: "Semantic match in another space.",
+        semanticEmbedding: createUnitVector(0),
+      });
+
+      const semanticResult = MemoryRepository.searchMemoriesBySemantic(
+        bootstrapResult.database,
+        {
+          spaceId: primarySpace.space.id,
+          queryEmbedding: createUnitVector(0),
+        },
+      );
+      const firstResult = semanticResult.results[0];
+
+      assert.deepEqual(
+        semanticResult.results.map((result) => result.id),
+        ["semantic-nearest", "semantic-next"],
+      );
+      assert.ok(firstResult);
+      assert.equal(firstResult.source, "semantic");
+      assert.deepEqual(firstResult.matched_by, ["semantic"]);
+      assert.equal(firstResult.path_score, null);
+      assert.equal(firstResult.lexical_score, null);
+      assert.equal(typeof firstResult.semantic_score, "number");
+      assert.ok((semanticResult.results[0]?.semantic_score ?? 0) > (semanticResult.results[1]?.semantic_score ?? 0));
     } finally {
       bootstrapResult.database.close();
     }

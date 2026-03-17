@@ -112,6 +112,7 @@ describe("ActiveSpaceMemoryRepository", () => {
           cwd: secondNestedPath,
         },
         memoryId: "shared-remote-memory",
+        memoryType: "decision",
         content: "Updated from another clone with the same origin.",
         tags: ["release", "deploy"],
         updatedAt: "2026-03-14T12:20:00.000Z",
@@ -144,6 +145,7 @@ describe("ActiveSpaceMemoryRepository", () => {
     );
 
     assert.equal(searchResult.space.space_id, createdMemory.space_id);
+    assert.equal(updatedMemory.memory_type, "decision");
     assert.equal(updatedMemory.content, "Updated from another clone with the same origin.");
     assert.deepEqual(updatedMemory.tags, ["release", "deploy"]);
     assert.deepEqual(

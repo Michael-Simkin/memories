@@ -9,6 +9,7 @@ import type {
 import { DatabaseBootstrapRepository } from "../repositories/database-bootstrap-repository.js";
 import { MemoryRepository } from "../repositories/memory-repository.js";
 import { SpaceRegistryRepository } from "../repositories/space-registry-repository.js";
+import { MEMORY_SEMANTIC_DIMENSIONS } from "../../shared/constants/embeddings.js";
 
 function createResolution(
   resolvedWorkingPath: string,
@@ -48,6 +49,13 @@ function createSpace(databasePath = ":memory:") {
     observedAt,
     touchResult,
   };
+}
+
+function createUnitVector(index: number): number[] {
+  const embedding = Array.from({ length: MEMORY_SEMANTIC_DIMENSIONS }, () => 0);
+  embedding[index] = 1;
+
+  return embedding;
 }
 
 describe("MemoryRepository", () => {
@@ -118,6 +126,7 @@ describe("MemoryRepository", () => {
 
       const updatedMemory = MemoryRepository.updateMemory(bootstrapResult.database, {
         memoryId: "memory-2",
+        memoryType: "decision",
         content: "Prefer explicit transactions for multi-table writes.",
         tags: ["sqlite", "transactions", "transactions"],
         isPinned: true,
@@ -138,6 +147,7 @@ describe("MemoryRepository", () => {
       assert.equal(updatedMemory.space_id, touchResult.space.id);
       assert.equal(updatedMemory.created_at, "2026-03-14T04:00:00.000Z");
       assert.equal(updatedMemory.updated_at, "2026-03-14T04:30:00.000Z");
+      assert.equal(updatedMemory.memory_type, "decision");
       assert.equal(
         updatedMemory.content,
         "Prefer explicit transactions for multi-table writes.",
@@ -147,6 +157,57 @@ describe("MemoryRepository", () => {
       assert.deepEqual(updatedMemory.path_matchers, ["src/storage/repositories/**"]);
       assert.deepEqual(storedPathMatchers, ["src/storage/repositories/**"]);
       assert.deepEqual(ftsMatches, ["memory-2"]);
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
+  it("lists memories across all spaces when no space filter is provided", () => {
+    const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
+      databasePath: ":memory:",
+    });
+
+    try {
+      const firstTouch = SpaceRegistryRepository.touchResolvedMemorySpace(
+        bootstrapResult.database,
+        {
+          resolution: createResolution("/workspace/project-a", {
+            insideWorkTree: false,
+          }),
+          observedAt: "2026-03-14T04:45:00.000Z",
+        },
+      );
+      const secondTouch = SpaceRegistryRepository.touchResolvedMemorySpace(
+        bootstrapResult.database,
+        {
+          resolution: createResolution("/workspace/project-b", {
+            insideWorkTree: false,
+          }),
+          observedAt: "2026-03-14T04:46:00.000Z",
+        },
+      );
+
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "memory-all-spaces-b",
+        spaceId: secondTouch.space.id,
+        memoryType: "fact",
+        content: "Second space memory.",
+        updatedAt: "2026-03-14T04:50:00.000Z",
+      });
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "memory-all-spaces-a",
+        spaceId: firstTouch.space.id,
+        memoryType: "fact",
+        content: "First space memory.",
+        updatedAt: "2026-03-14T04:49:00.000Z",
+      });
+
+      const listedMemories = MemoryRepository.listMemories(bootstrapResult.database, {});
+
+      assert.deepEqual(
+        listedMemories.map((memory) => memory.id),
+        ["memory-all-spaces-b", "memory-all-spaces-a"],
+      );
     } finally {
       bootstrapResult.database.close();
     }
@@ -234,6 +295,84 @@ describe("MemoryRepository", () => {
           matcher_count: 0,
         },
       );
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
+  it("syncs vec_memory on create, update, and delete", () => {
+    const { bootstrapResult, touchResult } = createSpace();
+
+    try {
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "memory-semantic",
+        spaceId: touchResult.space.id,
+        memoryType: "fact",
+        content: "Semantic storage should stay in sync.",
+        semanticEmbedding: createUnitVector(0),
+      });
+
+      const createdNearestRows = bootstrapResult.database
+        .prepare(`
+          SELECT memory_id, distance
+          FROM vec_memory
+          WHERE embedding MATCH ? AND k = 1
+          ORDER BY distance ASC;
+        `)
+        .all(JSON.stringify(createUnitVector(0)))
+        .map((row) => ({
+          memory_id: (row as { memory_id: string }).memory_id,
+          distance: (row as { distance: number }).distance,
+        }));
+
+      MemoryRepository.updateMemory(bootstrapResult.database, {
+        memoryId: "memory-semantic",
+        content: "Semantic storage should update with a replacement embedding.",
+        semanticEmbedding: createUnitVector(1),
+      });
+
+      const updatedNearestRows = bootstrapResult.database
+        .prepare(`
+          SELECT memory_id, distance
+          FROM vec_memory
+          WHERE embedding MATCH ? AND k = 1
+          ORDER BY distance ASC;
+        `)
+        .all(JSON.stringify(createUnitVector(1)))
+        .map((row) => ({
+          memory_id: (row as { memory_id: string }).memory_id,
+          distance: (row as { distance: number }).distance,
+        }));
+
+      MemoryRepository.updateMemory(bootstrapResult.database, {
+        memoryId: "memory-semantic",
+        content: "Semantic storage should clear stale vectors when content changes.",
+      });
+
+      const vecRowCountAfterClear = bootstrapResult.database
+        .prepare("select count(*) as count from vec_memory;")
+        .get() as { count: number };
+
+      MemoryRepository.updateMemory(bootstrapResult.database, {
+        memoryId: "memory-semantic",
+        semanticEmbedding: createUnitVector(2),
+      });
+      MemoryRepository.deleteMemory(bootstrapResult.database, {
+        memoryId: "memory-semantic",
+      });
+
+      const vecRowCountAfterDelete = bootstrapResult.database
+        .prepare("select count(*) as count from vec_memory;")
+        .get() as { count: number };
+
+      assert.deepEqual(createdNearestRows, [
+        { memory_id: "memory-semantic", distance: 0 },
+      ]);
+      assert.deepEqual(updatedNearestRows, [
+        { memory_id: "memory-semantic", distance: 0 },
+      ]);
+      assert.equal(vecRowCountAfterClear.count, 0);
+      assert.equal(vecRowCountAfterDelete.count, 0);
     } finally {
       bootstrapResult.database.close();
     }

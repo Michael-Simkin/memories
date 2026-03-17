@@ -16,7 +16,9 @@ export class StoragePathsService {
   static resolveMemoryStorageRoot(options: ResolveStoragePathsOptions = {}): string {
     const currentWorkingDirectory = options.currentWorkingDirectory ?? process.cwd();
     const userHomeDirectory = options.userHomeDirectory ?? homedir();
-    const configuredHome = normalizeNonEmptyString(options.claudeMemoryHome);
+    const configuredHome = normalizeNonEmptyString(
+      options.claudeMemoryHome ?? process.env["CLAUDE_MEMORY_HOME"]
+    );
 
     if (configuredHome) {
       return path.resolve(currentWorkingDirectory, configuredHome);

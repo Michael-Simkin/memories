@@ -17,6 +17,13 @@ export interface PersistedMemorySpace {
   lastSeenAt: string;
 }
 
+export interface PersistedMemorySpaceSummary extends PersistedMemorySpace {
+  rootCount: number;
+  memoryCount: number;
+  queuedJobCount: number;
+  runningJobCount: number;
+}
+
 export interface PersistedSpaceRoot {
   id: string;
   spaceId: string;
@@ -37,4 +44,8 @@ export interface TouchMemorySpaceResult {
 
 export interface TouchResolvedMemorySpaceInput extends TouchMemorySpaceOptions {
   resolution: ActiveMemorySpaceResolution;
+}
+
+export interface ListMemorySpacesOptions {
+  limit?: number | undefined;
 }

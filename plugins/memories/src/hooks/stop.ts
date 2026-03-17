@@ -1,14 +1,20 @@
 import { access } from "node:fs/promises";
 
 import { currentContextSchema } from "../shared/schemas/space.js";
-import { DatabaseBootstrapRepository } from "../storage/repositories/database-bootstrap-repository.js";
-import { ActiveSpaceLearningJobRepository } from "../storage/repositories/active-space-learning-job-repository.js";
+import {
+  DEFAULT_ENGINE_REQUEST_TIMEOUT_MS,
+  postEngineJson,
+} from "../engine/engine-client.js";
+import {
+  ensureEngine,
+  type EnsureEngineOptions,
+} from "../engine/ensure-engine.js";
 import { isMainModule, readHookInputJson } from "./hook-runtime.js";
 import { stopHookInputSchema } from "./schemas/stop.js";
 import type { StopHookInput, StopHookResult } from "./types/stop.js";
 
-interface StopHookOptions {
-  claudeMemoryHome?: string | undefined;
+interface StopHookOptions extends EnsureEngineOptions {
+  requestTimeoutMs?: number | undefined;
 }
 
 export async function handleStopHook(
@@ -34,29 +40,25 @@ export async function handleStopHook(
   const currentContext = currentContextSchema.parse({
     cwd: input.cwd,
   });
-  const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
-    claudeMemoryHome: options.claudeMemoryHome,
-  });
+  const requestTimeoutMs =
+    options.requestTimeoutMs ?? DEFAULT_ENGINE_REQUEST_TIMEOUT_MS;
+  const ensuredEngine = await ensureEngine(options);
+  const response = await postEngineJson<{ job: { id: string } }>(
+    ensuredEngine.connection,
+    "/learning-jobs",
+    {
+      context: currentContext,
+      transcript_path: input.transcript_path,
+      last_assistant_message: input.last_assistant_message,
+      session_id: input.session_id,
+    },
+    requestTimeoutMs,
+  );
 
-  try {
-    const queuedLearningJob =
-      await ActiveSpaceLearningJobRepository.enqueueLearningJob(
-        bootstrapResult.database,
-        {
-          context: currentContext,
-          transcriptPath: input.transcript_path,
-          lastAssistantMessage: input.last_assistant_message,
-          sessionId: input.session_id,
-        },
-      );
-
-    return {
-      enqueued: true,
-      jobId: queuedLearningJob.id,
-    };
-  } finally {
-    bootstrapResult.database.close();
-  }
+  return {
+    enqueued: true,
+    jobId: response.job.id,
+  };
 }
 
 export async function runStopHook(

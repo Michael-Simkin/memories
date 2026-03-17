@@ -1,0 +1,3 @@
+export const MEMORY_SEMANTIC_MODEL = "bge-m3";
+export const MEMORY_SEMANTIC_DIMENSIONS = 1024;
+export const MEMORY_RETRIEVAL_RRF_K = 60;

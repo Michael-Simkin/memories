@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { SqliteService } from "../sqlite-service.js";
+import { serializeSemanticEmbedding } from "../../shared/utils/embeddings.js";
 import { normalizeNonEmptyString } from "../../shared/utils/strings.js";
 import {
   normalizePathMatchers,
@@ -75,6 +76,12 @@ class MemoryRepository {
       lexical_score: row["lexical_score"]
     };
   }
+  static hydrateSemanticSearchRow(row) {
+    return {
+      ...MemoryRepository.hydrateMemoryRow(row),
+      semantic_score: row["semantic_score"]
+    };
+  }
   static normalizeContent(content) {
     const normalizedContent = normalizeNonEmptyString(content);
     if (!normalizedContent) {
@@ -127,6 +134,17 @@ class MemoryRepository {
       semantic_score: null
     };
   }
+  static mapSemanticSearchRow(row, pathMatchers) {
+    return {
+      ...MemoryRepository.mapMemoryRow(row, pathMatchers),
+      score: row.semantic_score,
+      source: "semantic",
+      matched_by: ["semantic"],
+      path_score: null,
+      lexical_score: null,
+      semantic_score: row.semantic_score
+    };
+  }
   static resolveUpdatedContent(existingContent, nextContent) {
     if (nextContent === void 0) {
       return existingContent;
@@ -144,6 +162,27 @@ class MemoryRepository {
       return existingIsPinned;
     }
     return MemoryRepository.toSqliteBoolean(nextIsPinned);
+  }
+  static resolveSemanticEmbeddingUpdateAction(existingContent, nextContent, input) {
+    if (Object.hasOwn(input, "semanticEmbedding")) {
+      if (input.semanticEmbedding === null) {
+        return {
+          kind: "delete"
+        };
+      }
+      return {
+        kind: "replace",
+        embedding: input.semanticEmbedding
+      };
+    }
+    if (nextContent !== existingContent) {
+      return {
+        kind: "delete"
+      };
+    }
+    return {
+      kind: "keep"
+    };
   }
   static readMemoryRow(database, memoryId) {
     const row = database.prepare(
@@ -235,6 +274,13 @@ class MemoryRepository {
     }
     database.prepare("INSERT INTO memory_fts (id, tags_text) VALUES (?, ?)").run(memoryId, MemoryRepository.serializeTagsForFts(tags));
   }
+  static replaceMemoryVectorRow(database, memoryId, semanticEmbedding) {
+    database.prepare("DELETE FROM vec_memory WHERE memory_id = ?").run(memoryId);
+    if (!semanticEmbedding) {
+      return;
+    }
+    database.prepare("INSERT INTO vec_memory (memory_id, embedding) VALUES (?, ?)").run(memoryId, serializeSemanticEmbedding(semanticEmbedding));
+  }
   static createMemory(database, input) {
     return SqliteService.transaction(database, () => {
       const memoryId = input.id ?? randomUUID();
@@ -271,6 +317,11 @@ class MemoryRepository {
         pathMatchers,
         createdAt
       );
+      MemoryRepository.replaceMemoryVectorRow(
+        database,
+        memoryId,
+        input.semanticEmbedding ?? void 0
+      );
       return MemoryRepository.readMemoryRecord(database, memoryId);
     });
   }
@@ -285,24 +336,37 @@ class MemoryRepository {
     );
   }
   static listMemories(database, options) {
-    const rows = database.prepare(
-      `SELECT
-          memories.id,
-          memories.space_id,
-          memory_spaces.space_kind,
-          memory_spaces.display_name AS space_display_name,
-          memory_spaces.origin_url_normalized,
-          memories.memory_type,
-          memories.content,
-          memories.tags_json,
-          memories.is_pinned,
-          memories.created_at,
-          memories.updated_at
-        FROM memories
-        INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
-        WHERE memories.space_id = ?
-        ORDER BY memories.updated_at DESC, memories.id ASC`
-    ).all(options.spaceId);
+    const normalizedSpaceId = normalizeNonEmptyString(options.spaceId);
+    let limit;
+    if (options.limit !== void 0) {
+      limit = MemoryRepository.normalizeSearchLimit(options.limit);
+    }
+    let query = `
+      SELECT
+        memories.id,
+        memories.space_id,
+        memory_spaces.space_kind,
+        memory_spaces.display_name AS space_display_name,
+        memory_spaces.origin_url_normalized,
+        memories.memory_type,
+        memories.content,
+        memories.tags_json,
+        memories.is_pinned,
+        memories.created_at,
+        memories.updated_at
+      FROM memories
+      INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
+    `;
+    const parameters = [];
+    if (normalizedSpaceId) {
+      query += " WHERE memories.space_id = ?";
+      parameters.push(normalizedSpaceId);
+    }
+    query += " ORDER BY memories.updated_at DESC, memories.id ASC";
+    if (limit !== void 0) {
+      query += ` LIMIT ${String(limit)}`;
+    }
+    const rows = database.prepare(query).all(...parameters);
     return rows.map(
       (row) => MemoryRepository.mapMemoryRow(
         MemoryRepository.hydrateMemoryRow(row),
@@ -383,6 +447,47 @@ class MemoryRepository {
       )
     };
   }
+  static searchMemoriesBySemantic(database, options) {
+    const space = MemoryRepository.requireSpaceMetadata(
+      database,
+      options.spaceId
+    );
+    const limit = MemoryRepository.normalizeSearchLimit(options.limit);
+    const rows = database.prepare(
+      `SELECT
+          memories.id,
+          memories.space_id,
+          memory_spaces.space_kind,
+          memory_spaces.display_name AS space_display_name,
+          memory_spaces.origin_url_normalized,
+          memories.memory_type,
+          memories.content,
+          memories.tags_json,
+          memories.is_pinned,
+          memories.created_at,
+          memories.updated_at,
+          CAST(1.0 - distance AS REAL) AS semantic_score
+        FROM vec_memory
+        INNER JOIN memories ON memories.id = vec_memory.memory_id
+        INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
+        WHERE memories.space_id = ?
+          AND vec_memory.embedding MATCH ?
+          AND k = ${String(limit)}
+        ORDER BY distance ASC, memories.is_pinned DESC, memories.updated_at DESC, memories.id ASC`
+    ).all(
+      options.spaceId,
+      serializeSemanticEmbedding(options.queryEmbedding)
+    );
+    return {
+      space,
+      results: rows.map(
+        (row) => MemoryRepository.mapSemanticSearchRow(
+          MemoryRepository.hydrateSemanticSearchRow(row),
+          MemoryRepository.readPathMatchers(database, row["id"])
+        )
+      )
+    };
+  }
   static searchMemoriesByPaths(database, options) {
     const space = MemoryRepository.requireSpaceMetadata(
       database,
@@ -444,6 +549,11 @@ class MemoryRepository {
         existingMemory.is_pinned,
         input.isPinned
       );
+      const semanticEmbeddingUpdateAction = MemoryRepository.resolveSemanticEmbeddingUpdateAction(
+        existingMemory.content,
+        nextContent,
+        input
+      );
       database.prepare(
         `UPDATE memories
           SET content = ?, tags_json = ?, is_pinned = ?, updated_at = ?
@@ -464,6 +574,13 @@ class MemoryRepository {
           updatedAt
         );
       }
+      if (semanticEmbeddingUpdateAction.kind !== "keep") {
+        MemoryRepository.replaceMemoryVectorRow(
+          database,
+          input.memoryId,
+          semanticEmbeddingUpdateAction.kind === "replace" ? semanticEmbeddingUpdateAction.embedding : null
+        );
+      }
       return MemoryRepository.readMemoryRecord(database, input.memoryId);
     });
   }
@@ -471,6 +588,7 @@ class MemoryRepository {
     SqliteService.transaction(database, () => {
       MemoryRepository.requireMemory(database, options.memoryId);
       database.prepare("DELETE FROM memory_fts WHERE id = ?").run(options.memoryId);
+      database.prepare("DELETE FROM vec_memory WHERE memory_id = ?").run(options.memoryId);
       database.prepare("DELETE FROM memory_path_matchers WHERE memory_id = ?").run(options.memoryId);
       database.prepare("DELETE FROM memories WHERE id = ?").run(options.memoryId);
     });

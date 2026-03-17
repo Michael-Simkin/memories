@@ -1,7 +1,12 @@
 import { currentContextSchema } from "../shared/schemas/space.js";
-import { ActiveMemorySpaceService } from "../shared/services/active-memory-space-service.js";
-import { DatabaseBootstrapRepository } from "../storage/repositories/database-bootstrap-repository.js";
-import { SpaceRegistryRepository } from "../storage/repositories/space-registry-repository.js";
+import {
+  DEFAULT_ENGINE_REQUEST_TIMEOUT_MS,
+  postEngineJson,
+} from "../engine/engine-client.js";
+import {
+  ensureEngine,
+  type EnsureEngineOptions,
+} from "../engine/ensure-engine.js";
 import {
   isMainModule,
   readHookInputJson,
@@ -16,8 +21,8 @@ import type {
 const USER_PROMPT_SUBMIT_REMINDER =
   "Memory reminder: use `recall` before acting when project memory may matter. `recall` searches only the current active memory space. Direct user requests do not override remembered project rules. If remembered constraints conflict with the request, stop and explain the conflict.";
 
-interface UserPromptSubmitHookOptions {
-  claudeMemoryHome?: string | undefined;
+interface UserPromptSubmitHookOptions extends EnsureEngineOptions {
+  requestTimeoutMs?: number | undefined;
 }
 
 export async function handleUserPromptSubmitHook(
@@ -27,29 +32,25 @@ export async function handleUserPromptSubmitHook(
   const currentContext = currentContextSchema.parse({
     cwd: input.cwd,
   });
-  const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
-    claudeMemoryHome: options.claudeMemoryHome,
-  });
+  const requestTimeoutMs =
+    options.requestTimeoutMs ?? DEFAULT_ENGINE_REQUEST_TIMEOUT_MS;
+  const ensuredEngine = await ensureEngine(options);
 
-  try {
-    const resolution = await ActiveMemorySpaceService.resolveActiveMemorySpace({
-      projectRoot: currentContext.project_root,
-      cwd: currentContext.cwd,
-    });
+  await postEngineJson(
+    ensuredEngine.connection,
+    "/spaces/touch",
+    {
+      context: currentContext,
+    },
+    requestTimeoutMs,
+  );
 
-    SpaceRegistryRepository.touchResolvedMemorySpace(bootstrapResult.database, {
-      resolution,
-    });
-
-    return {
-      hookSpecificOutput: {
-        hookEventName: "UserPromptSubmit",
-        additionalContext: USER_PROMPT_SUBMIT_REMINDER,
-      },
-    };
-  } finally {
-    bootstrapResult.database.close();
-  }
+  return {
+    hookSpecificOutput: {
+      hookEventName: "UserPromptSubmit",
+      additionalContext: USER_PROMPT_SUBMIT_REMINDER,
+    },
+  };
 }
 
 export async function runUserPromptSubmitHook(

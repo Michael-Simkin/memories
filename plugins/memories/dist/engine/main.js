@@ -1,9 +1,17 @@
-import { RuntimeSupportService } from "../shared/services/runtime-support-service.js";
-function main() {
-  RuntimeSupportService.assertSupportedRuntime();
-  process.stderr.write(
-    "Claude Memory engine lifecycle is not implemented yet in this rebuild.\n"
-  );
-  process.exitCode = 1;
+import { startEngineServer } from "./engine-server.js";
+async function main() {
+  try {
+    await startEngineServer({
+      claudeMemoryHome: process.env["CLAUDE_MEMORY_HOME"],
+      currentWorkingDirectory: process.cwd(),
+      pluginRoot: process.env["CLAUDE_PLUGIN_ROOT"],
+      registerSignalHandlers: true
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown engine startup error.";
+    process.stderr.write(`${errorMessage}
+`);
+    process.exitCode = 1;
+  }
 }
-main();
+void main();

@@ -51,6 +51,12 @@ export interface UpdateLearningJobInput {
   updatedAt?: string | undefined;
 }
 
+export interface LeaseLearningJobInput {
+  leaseOwner: string;
+  leaseDurationMs: number;
+  leasedAt?: string | undefined;
+}
+
 export interface ListLearningJobsOptions {
   spaceId?: string | undefined;
   state?: LearningJobState | undefined;

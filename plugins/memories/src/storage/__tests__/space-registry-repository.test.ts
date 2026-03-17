@@ -7,6 +7,8 @@ import type {
   GitInspection,
 } from "../../shared/types/memory-space.js";
 import { DatabaseBootstrapRepository } from "../repositories/database-bootstrap-repository.js";
+import { LearningJobRepository } from "../repositories/learning-job-repository.js";
+import { MemoryRepository } from "../repositories/memory-repository.js";
 import { SpaceRegistryRepository } from "../repositories/space-registry-repository.js";
 
 function createResolution(
@@ -175,6 +177,79 @@ describe("SpaceRegistryRepository", () => {
         "/workspace/clone-one",
         "/workspace/clone-two",
       ]);
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
+  it("lists spaces with memory, root, and job summary counts", () => {
+    const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
+      databasePath: ":memory:",
+    });
+    const firstResolution = createResolution("/workspace/project-a", {
+      insideWorkTree: false,
+    });
+    const secondResolution = createResolution("/workspace/project-b", {
+      insideWorkTree: false,
+    });
+
+    try {
+      const firstTouch = SpaceRegistryRepository.touchResolvedMemorySpace(
+        bootstrapResult.database,
+        {
+          resolution: firstResolution,
+          observedAt: "2026-03-14T04:00:00.000Z",
+        },
+      );
+      const secondTouch = SpaceRegistryRepository.touchResolvedMemorySpace(
+        bootstrapResult.database,
+        {
+          resolution: secondResolution,
+          observedAt: "2026-03-14T05:00:00.000Z",
+        },
+      );
+
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "space-list-memory",
+        spaceId: firstTouch.space.id,
+        memoryType: "fact",
+        content: "Space summaries should include memory counts.",
+      });
+      LearningJobRepository.enqueueLearningJob(bootstrapResult.database, {
+        id: "space-list-job-pending",
+        spaceId: firstTouch.space.id,
+        rootPath: "/workspace/project-a",
+        transcriptPath: "/tmp/project-a.jsonl",
+      });
+      LearningJobRepository.enqueueLearningJob(bootstrapResult.database, {
+        id: "space-list-job-running",
+        spaceId: secondTouch.space.id,
+        rootPath: "/workspace/project-b",
+        transcriptPath: "/tmp/project-b.jsonl",
+        state: "running",
+        leaseOwner: "worker-1",
+        leaseExpiresAt: "2026-03-14T05:30:00.000Z",
+      });
+
+      const listedSpaces = SpaceRegistryRepository.listSpaces(
+        bootstrapResult.database,
+      );
+      const firstListedSpace = listedSpaces[0];
+      const secondListedSpace = listedSpaces[1];
+
+      assert.ok(firstListedSpace);
+      assert.ok(secondListedSpace);
+      assert.equal(firstListedSpace.id, secondTouch.space.id);
+      assert.equal(firstListedSpace.memoryCount, 0);
+      assert.equal(firstListedSpace.queuedJobCount, 0);
+      assert.equal(firstListedSpace.runningJobCount, 1);
+      assert.equal(firstListedSpace.rootCount, 1);
+
+      assert.equal(secondListedSpace.id, firstTouch.space.id);
+      assert.equal(secondListedSpace.memoryCount, 1);
+      assert.equal(secondListedSpace.queuedJobCount, 1);
+      assert.equal(secondListedSpace.runningJobCount, 0);
+      assert.equal(secondListedSpace.rootCount, 1);
     } finally {
       bootstrapResult.database.close();
     }
