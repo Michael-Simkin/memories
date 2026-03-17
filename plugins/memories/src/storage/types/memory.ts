@@ -18,6 +18,17 @@ export interface CreateMemoryInput {
   updatedAt?: string | undefined;
 }
 
+export interface CreateActiveMemoryInput extends ResolveActiveSpaceOptions {
+  id?: string | undefined;
+  memoryType: MemoryType;
+  content: string;
+  tags?: string[] | undefined;
+  isPinned?: boolean | undefined;
+  pathMatchers?: string[] | undefined;
+  createdAt?: string | undefined;
+  updatedAt?: string | undefined;
+}
+
 export interface UpdateMemoryInput {
   memoryId: string;
   content?: string | undefined;

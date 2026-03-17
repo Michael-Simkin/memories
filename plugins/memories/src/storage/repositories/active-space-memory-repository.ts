@@ -7,7 +7,9 @@ import { MemoryRetrievalRepository } from "./memory-retrieval-repository.js";
 import { MemoryRepository } from "./memory-repository.js";
 import { SpaceRegistryRepository } from "./space-registry-repository.js";
 import type {
+  CreateActiveMemoryInput,
   ListActivePinnedMemoriesOptions,
+  PersistedMemoryRecord,
   PersistedMemorySearchResponse,
   PersistedPinnedMemoriesResult,
   ResolveActiveSpaceOptions,
@@ -46,6 +48,28 @@ export class ActiveSpaceMemoryRepository {
     });
 
     return touchResult.space.id;
+  }
+
+  static async createMemory(
+    database: DatabaseSync,
+    input: CreateActiveMemoryInput,
+  ): Promise<PersistedMemoryRecord> {
+    const spaceId = await ActiveSpaceMemoryRepository.resolveRequestedSpaceId(
+      database,
+      input,
+    );
+
+    return MemoryRepository.createMemory(database, {
+      id: input.id,
+      spaceId,
+      memoryType: input.memoryType,
+      content: input.content,
+      tags: input.tags,
+      isPinned: input.isPinned,
+      pathMatchers: input.pathMatchers,
+      createdAt: input.createdAt,
+      updatedAt: input.updatedAt,
+    });
   }
 
   static async listPinnedMemories(

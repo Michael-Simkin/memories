@@ -9,14 +9,11 @@ import {
   removePath,
   runGitCommand,
 } from "../../shared/__tests__/helpers.js";
-import { ActiveMemorySpaceService } from "../../shared/services/active-memory-space-service.js";
 import { ActiveSpaceMemoryRepository } from "../repositories/active-space-memory-repository.js";
 import { DatabaseBootstrapRepository } from "../repositories/database-bootstrap-repository.js";
-import { MemoryRepository } from "../repositories/memory-repository.js";
-import { SpaceRegistryRepository } from "../repositories/space-registry-repository.js";
 
 describe("ActiveSpaceMemoryRepository", () => {
-  it("lists pinned memories for a directory-scoped context", async (testContext) => {
+  it("creates and reads pinned memories for a directory-scoped context", async (testContext) => {
     const workspacePath = await createTempDirectory(
       "claude-memory-active-space-pinned-",
     );
@@ -29,26 +26,19 @@ describe("ActiveSpaceMemoryRepository", () => {
       await removePath(workspacePath);
     });
 
-    const resolution = await ActiveMemorySpaceService.resolveActiveMemorySpace({
-      cwd: workspacePath,
-      processCwd: "/unused/process-cwd",
-    });
-    const touchResult = SpaceRegistryRepository.touchResolvedMemorySpace(
+    const createdMemory = await ActiveSpaceMemoryRepository.createMemory(
       bootstrapResult.database,
       {
-        resolution,
-        observedAt: "2026-03-14T12:00:00.000Z",
+        context: {
+          cwd: workspacePath,
+        },
+        id: "active-pinned",
+        memoryType: "rule",
+        content: "Pinned result for this active space.",
+        tags: ["startup"],
+        isPinned: true,
       },
     );
-
-    MemoryRepository.createMemory(bootstrapResult.database, {
-      id: "active-pinned",
-      spaceId: touchResult.space.id,
-      memoryType: "rule",
-      content: "Pinned result for this active space.",
-      tags: ["startup"],
-      isPinned: true,
-    });
 
     const pinnedResult = await ActiveSpaceMemoryRepository.listPinnedMemories(
       bootstrapResult.database,
@@ -59,7 +49,7 @@ describe("ActiveSpaceMemoryRepository", () => {
       },
     );
 
-    assert.equal(pinnedResult.space.space_id, touchResult.space.id);
+    assert.equal(pinnedResult.space.space_id, createdMemory.space_id);
     assert.deepEqual(
       pinnedResult.memories.map((memory) => memory.id),
       ["active-pinned"],
@@ -100,26 +90,19 @@ describe("ActiveSpaceMemoryRepository", () => {
       "git@github.com:Owner/Repo.git",
     ]);
 
-    const firstResolution = await ActiveMemorySpaceService.resolveActiveMemorySpace({
-      cwd: firstRepositoryPath,
-      processCwd: "/unused/process-cwd",
-    });
-    const firstTouch = SpaceRegistryRepository.touchResolvedMemorySpace(
+    const createdMemory = await ActiveSpaceMemoryRepository.createMemory(
       bootstrapResult.database,
       {
-        resolution: firstResolution,
-        observedAt: "2026-03-14T12:10:00.000Z",
+        context: {
+          cwd: firstRepositoryPath,
+        },
+        id: "shared-remote-memory",
+        memoryType: "fact",
+        content: "Remote-scoped memories should be shared across clones.",
+        tags: ["release"],
+        pathMatchers: ["packages/app/src/index.ts"],
       },
     );
-
-    MemoryRepository.createMemory(bootstrapResult.database, {
-      id: "shared-remote-memory",
-      spaceId: firstTouch.space.id,
-      memoryType: "fact",
-      content: "Remote-scoped memories should be shared across clones.",
-      tags: ["release"],
-      pathMatchers: ["packages/app/src/index.ts"],
-    });
 
     const searchResult = await ActiveSpaceMemoryRepository.searchMemories(
       bootstrapResult.database,
@@ -137,7 +120,7 @@ describe("ActiveSpaceMemoryRepository", () => {
       )
       .get() as { root_count: number; space_count: number };
 
-    assert.equal(searchResult.space.space_id, firstTouch.space.id);
+    assert.equal(searchResult.space.space_id, createdMemory.space_id);
     assert.deepEqual(
       searchResult.results.map((result) => result.id),
       ["shared-remote-memory"],
