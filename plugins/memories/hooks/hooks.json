@@ -1,0 +1,35 @@
+{
+  "description": "Claude Memory lifecycle hooks",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/run-with-node24.sh\" \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-start.js\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/run-with-node24.sh\" \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/user-prompt-submit.js\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/run-with-node24.sh\" \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/stop.js\""
+          }
+        ]
+      }
+    ]
+  }
+}

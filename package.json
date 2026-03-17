@@ -14,7 +14,7 @@
     "lint": "eslint .",
     "pack:memories:dry-run": "npm pack --dry-run --json --workspace @claude-memory/memories",
     "typecheck": "npm run typecheck --workspace @claude-memory/memories",
-    "test": "tsx --test plugins/memories/src/shared/__tests__/*.test.ts plugins/memories/src/storage/__tests__/*.test.ts",
+    "test": "tsx --test plugins/memories/src/shared/__tests__/*.test.ts plugins/memories/src/storage/__tests__/*.test.ts plugins/memories/src/mcp/__tests__/*.test.ts",
     "verify:packaging": "node ./verify-memories-package.mjs"
   },
   "devDependencies": {

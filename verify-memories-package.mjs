@@ -13,6 +13,19 @@ const marketplaceManifestPath = path.join(
   ".claude-plugin",
   "marketplace.json",
 );
+const mcpConfigPath = path.join(
+  repoRootPath,
+  "plugins",
+  "memories",
+  ".mcp.json",
+);
+const hooksConfigPath = path.join(
+  repoRootPath,
+  "plugins",
+  "memories",
+  "hooks",
+  "hooks.json",
+);
 const pluginManifestPath = path.join(
   repoRootPath,
   "plugins",
@@ -23,15 +36,25 @@ const pluginManifestPath = path.join(
 
 const requiredPackPaths = [
   ".claude-plugin/plugin.json",
+  ".mcp.json",
+  "bin/run-with-node24.sh",
+  "dist/engine/main.js",
+  "dist/hooks/hook-runtime.js",
+  "dist/hooks/session-start.js",
+  "dist/hooks/stop.js",
+  "dist/hooks/user-prompt-submit.js",
+  "dist/mcp/search-server.js",
   "dist/shared/services/plugin-paths-service.js",
   "dist/storage/sqlite-service.js",
   "dist/storage/sqlite-vec-service.js",
+  "hooks/hooks.json",
   "package.json",
   "vendor/sqlite-vec/darwin-arm64/vec0.dylib",
 ];
 
 const allowedPackPathPrefixes = [
   ".claude-plugin/",
+  "bin/",
   "dist/",
   "hooks/",
   "vendor/",
@@ -77,6 +100,8 @@ async function readJsonFile(jsonFilePath) {
 
 async function main() {
   const marketplaceManifest = await readJsonFile(marketplaceManifestPath);
+  const mcpConfig = await readJsonFile(mcpConfigPath);
+  const hooksConfig = await readJsonFile(hooksConfigPath);
   const pluginManifest = await readJsonFile(pluginManifestPath);
 
   assert.equal(
@@ -111,6 +136,72 @@ async function main() {
     pluginManifest.version,
     "0.0.0",
     "Plugin manifest must carry the current plugin version.",
+  );
+  assert.equal(
+    pluginManifest.hooks,
+    "./hooks/hooks.json",
+    'Plugin manifest must wire hooks from "./hooks/hooks.json".',
+  );
+  assert.equal(
+    pluginManifest.mcpServers,
+    "./.mcp.json",
+    'Plugin manifest must wire MCP servers from "./.mcp.json".',
+  );
+
+  assert.deepEqual(
+    mcpConfig,
+    {
+      mcpServers: {
+        memories: {
+          command: "${CLAUDE_PLUGIN_ROOT}/bin/run-with-node24.sh",
+          args: ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/search-server.js"],
+        },
+      },
+    },
+    "MCP config must register exactly one memories stdio server through the Node 24 wrapper.",
+  );
+
+  assert.deepEqual(
+    hooksConfig,
+    {
+      description: "Claude Memory lifecycle hooks",
+      hooks: {
+        SessionStart: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command:
+                  "\"${CLAUDE_PLUGIN_ROOT}/bin/run-with-node24.sh\" \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-start.js\"",
+              },
+            ],
+          },
+        ],
+        UserPromptSubmit: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command:
+                  "\"${CLAUDE_PLUGIN_ROOT}/bin/run-with-node24.sh\" \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/user-prompt-submit.js\"",
+              },
+            ],
+          },
+        ],
+        Stop: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command:
+                  "\"${CLAUDE_PLUGIN_ROOT}/bin/run-with-node24.sh\" \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/stop.js\"",
+              },
+            ],
+          },
+        ],
+      },
+    },
+    "Hook config must wire SessionStart, UserPromptSubmit, and Stop through the Node 24 wrapper.",
   );
 
   await runNpmCommand(["run", "build", "--workspace", pluginWorkspaceName]);

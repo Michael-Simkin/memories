@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "memories": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/run-with-node24.sh",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/search-server.js"]
+    }
+  }
+}

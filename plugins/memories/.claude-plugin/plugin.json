@@ -1,5 +1,7 @@
 {
   "name": "memories",
   "version": "0.0.0",
-  "description": "Local memory for Claude Code with remote-repo and directory-scoped memory spaces."
+  "description": "Local memory for Claude Code with remote-repo and directory-scoped memory spaces.",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json"
 }
