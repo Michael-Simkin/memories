@@ -1,0 +1,14 @@
+{
+  "name": "claude-memory",
+  "owner": {
+    "name": "Claude Memory"
+  },
+  "plugins": [
+    {
+      "name": "memories",
+      "source": "./plugins/memories",
+      "description": "Local memory for Claude Code with remote-repo and directory-scoped memory spaces.",
+      "version": "0.0.0"
+    }
+  ]
+}
