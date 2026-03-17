@@ -1,5 +1,6 @@
 export type * from "./engine.js";
 export type * from "./events.js";
+export type * from "./health.js";
 export type * from "./jobs.js";
 export type * from "./memory-space.js";
 export type * from "./memory.js";

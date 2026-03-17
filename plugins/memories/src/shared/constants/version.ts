@@ -1,0 +1,2 @@
+export const CLAUDE_MEMORY_VERSION = "0.0.0";
+export const CLAUDE_MEMORY_API_CONTRACT_VERSION = 1;

@@ -1,11 +1,13 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { CLAUDE_MEMORY_VERSION } from "../shared/constants/version.js";
+
 const DEFAULT_PROTOCOL_VERSION = "2025-11-25";
 const RECALL_TOOL_NAME = "recall";
 const SERVER_INFO = {
   name: "memories",
-  version: "0.0.0",
+  version: CLAUDE_MEMORY_VERSION,
 };
 
 type JsonRpcId = number | string | null;

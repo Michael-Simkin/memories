@@ -10,7 +10,7 @@ import type {
 import { SqliteService } from "../sqlite-service.js";
 
 export class DatabaseBootstrapRepository {
-  private static getLatestSchemaVersion(): number {
+  static getLatestSchemaVersion(): number {
     return STORAGE_MIGRATIONS.at(-1)?.version ?? 0;
   }
 

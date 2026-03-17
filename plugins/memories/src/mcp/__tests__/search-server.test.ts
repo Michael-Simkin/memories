@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { CLAUDE_MEMORY_VERSION } from "../../shared/constants/version.js";
 import {
   handleJsonRpcMessage,
   serializeJsonRpcMessage,
@@ -27,7 +28,7 @@ describe("search-server", () => {
         },
         serverInfo: {
           name: "memories",
-          version: "0.0.0",
+          version: CLAUDE_MEMORY_VERSION,
         },
       },
     });
