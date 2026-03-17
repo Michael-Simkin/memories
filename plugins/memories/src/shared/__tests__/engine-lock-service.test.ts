@@ -1,10 +1,23 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 import { createTempDirectory, removePath } from "./helpers.js";
 import { EngineLockService } from "../services/engine-lock-service.js";
 import { StoragePathsService } from "../services/storage-paths-service.js";
+
+async function spawnExitedChildProcess(): Promise<number> {
+  const childProcess = spawn(process.execPath, ["-e", "process.exit(0);"], {
+    stdio: "ignore",
+  });
+
+  await once(childProcess, "exit");
+  assert.ok(childProcess.pid);
+
+  return childProcess.pid;
+}
 
 describe("EngineLockService", () => {
   it("writes and reads the global engine lock with the resolved storage root", async (testContext) => {
@@ -91,6 +104,68 @@ describe("EngineLockService", () => {
     assert.equal(startupLock, null);
   });
 
+  it("returns the engine lock when its pid is still alive", async (testContext) => {
+    const storageRoot = await createTempDirectory("claude-memory-engine-alive-");
+
+    testContext.after(async () => {
+      await removePath(storageRoot);
+    });
+
+    await EngineLockService.writeEngineLock(
+      {
+        host: "127.0.0.1",
+        port: 43125,
+        pid: process.pid,
+        started_at: "2026-03-14T16:15:00.000Z",
+        last_activity_at: "2026-03-14T16:16:00.000Z",
+        version: "0.0.0",
+      },
+      {
+        claudeMemoryHome: storageRoot,
+      },
+    );
+
+    const liveLock = await EngineLockService.readEngineLockIfProcessAlive({
+      claudeMemoryHome: storageRoot,
+    });
+
+    assert.ok(liveLock);
+    assert.equal(liveLock.pid, process.pid);
+  });
+
+  it("removes a stale engine lock when its pid is no longer alive", async (testContext) => {
+    const storageRoot = await createTempDirectory("claude-memory-engine-stale-");
+    const exitedPid = await spawnExitedChildProcess();
+
+    testContext.after(async () => {
+      await removePath(storageRoot);
+    });
+
+    await EngineLockService.writeEngineLock(
+      {
+        host: "127.0.0.1",
+        port: 43126,
+        pid: exitedPid,
+        started_at: "2026-03-14T16:17:00.000Z",
+        last_activity_at: "2026-03-14T16:18:00.000Z",
+        version: "0.0.0",
+      },
+      {
+        claudeMemoryHome: storageRoot,
+      },
+    );
+
+    const staleLock = await EngineLockService.readEngineLockIfProcessAlive({
+      claudeMemoryHome: storageRoot,
+    });
+    const persistedLock = await EngineLockService.readEngineLock({
+      claudeMemoryHome: storageRoot,
+    });
+
+    assert.equal(staleLock, null);
+    assert.equal(persistedLock, null);
+  });
+
   it("clears the engine lock only when the expected pid owns it", async (testContext) => {
     const storageRoot = await createTempDirectory("claude-memory-engine-clear-");
 
@@ -166,6 +241,66 @@ describe("EngineLockService", () => {
     assert.equal(rejectedRemoval, false);
     assert.equal(acceptedRemoval, true);
     assert.equal(remainingLock, null);
+  });
+
+  it("returns the engine startup lock when its pid is still alive", async (testContext) => {
+    const storageRoot = await createTempDirectory(
+      "claude-memory-engine-startup-alive-",
+    );
+
+    testContext.after(async () => {
+      await removePath(storageRoot);
+    });
+
+    await EngineLockService.writeEngineStartupLock(
+      {
+        pid: process.pid,
+        acquired_at: "2026-03-14T16:40:00.000Z",
+        version: "0.0.0",
+      },
+      {
+        claudeMemoryHome: storageRoot,
+      },
+    );
+
+    const liveLock = await EngineLockService.readEngineStartupLockIfProcessAlive({
+      claudeMemoryHome: storageRoot,
+    });
+
+    assert.ok(liveLock);
+    assert.equal(liveLock.pid, process.pid);
+  });
+
+  it("removes a stale engine startup lock when its pid is no longer alive", async (testContext) => {
+    const storageRoot = await createTempDirectory(
+      "claude-memory-engine-startup-stale-",
+    );
+    const exitedPid = await spawnExitedChildProcess();
+
+    testContext.after(async () => {
+      await removePath(storageRoot);
+    });
+
+    await EngineLockService.writeEngineStartupLock(
+      {
+        pid: exitedPid,
+        acquired_at: "2026-03-14T16:41:00.000Z",
+        version: "0.0.0",
+      },
+      {
+        claudeMemoryHome: storageRoot,
+      },
+    );
+
+    const staleLock = await EngineLockService.readEngineStartupLockIfProcessAlive({
+      claudeMemoryHome: storageRoot,
+    });
+    const persistedLock = await EngineLockService.readEngineStartupLock({
+      claudeMemoryHome: storageRoot,
+    });
+
+    assert.equal(staleLock, null);
+    assert.equal(persistedLock, null);
   });
 
   it("throws an actionable error when the engine lock contents are invalid", async (testContext) => {

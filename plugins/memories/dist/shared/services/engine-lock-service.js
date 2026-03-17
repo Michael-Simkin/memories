@@ -6,6 +6,22 @@ class EngineLockService {
   static hasErrorCode(error, code) {
     return typeof error === "object" && error !== null && "code" in error && error["code"] === code;
   }
+  static isProcessAlive(pid) {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      if (EngineLockService.hasErrorCode(error, "ESRCH")) {
+        return false;
+      }
+      if (EngineLockService.hasErrorCode(error, "EPERM")) {
+        return true;
+      }
+      throw new Error(`Failed to determine whether pid "${String(pid)}" is alive.`, {
+        cause: error
+      });
+    }
+  }
   static async writeJsonFileAtomically(targetPath, value) {
     const targetDirectoryPath = path.dirname(targetPath);
     const tempPath = `${targetPath}.${String(process.pid)}.${String(Date.now())}.tmp`;
@@ -54,12 +70,30 @@ class EngineLockService {
     await rm(targetPath, { force: true });
     return true;
   }
+  static async readLockIfProcessAlive(targetPath, readLock) {
+    const currentLock = await readLock();
+    if (!currentLock) {
+      return null;
+    }
+    if (EngineLockService.isProcessAlive(currentLock.pid)) {
+      return currentLock;
+    }
+    await rm(targetPath, { force: true });
+    return null;
+  }
   static async readEngineLock(options = {}) {
     const storagePaths = StoragePathsService.resolveMemoryStoragePaths(options);
     return EngineLockService.readLockFile(
       storagePaths.engineLockPath,
       "engine lock",
       (value) => engineLockSchema.parse(value)
+    );
+  }
+  static async readEngineLockIfProcessAlive(options = {}) {
+    const storagePaths = StoragePathsService.resolveMemoryStoragePaths(options);
+    return EngineLockService.readLockIfProcessAlive(
+      storagePaths.engineLockPath,
+      () => EngineLockService.readEngineLock(options)
     );
   }
   static async writeEngineLock(input, options = {}) {
@@ -88,6 +122,13 @@ class EngineLockService {
       storagePaths.engineStartupLockPath,
       "engine startup lock",
       (value) => engineStartupLockSchema.parse(value)
+    );
+  }
+  static async readEngineStartupLockIfProcessAlive(options = {}) {
+    const storagePaths = StoragePathsService.resolveMemoryStoragePaths(options);
+    return EngineLockService.readLockIfProcessAlive(
+      storagePaths.engineStartupLockPath,
+      () => EngineLockService.readEngineStartupLock(options)
     );
   }
   static async writeEngineStartupLock(input, options = {}) {
