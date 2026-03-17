@@ -38,6 +38,15 @@ export interface UpdateMemoryInput {
   updatedAt?: string | undefined;
 }
 
+export interface UpdateActiveMemoryInput extends ResolveActiveSpaceOptions {
+  memoryId: string;
+  content?: string | undefined;
+  tags?: string[] | undefined;
+  isPinned?: boolean | undefined;
+  pathMatchers?: string[] | undefined;
+  updatedAt?: string | undefined;
+}
+
 export interface ListMemoriesOptions {
   spaceId: string;
 }
@@ -76,6 +85,10 @@ export interface SearchActiveMemoriesOptions extends ResolveActiveSpaceOptions {
   query?: string | undefined;
   relatedPaths?: string[] | undefined;
   limit?: number | undefined;
+}
+
+export interface DeleteActiveMemoryOptions extends ResolveActiveSpaceOptions {
+  memoryId: string;
 }
 
 export interface DeleteMemoryOptions {

@@ -8,12 +8,14 @@ import { MemoryRepository } from "./memory-repository.js";
 import { SpaceRegistryRepository } from "./space-registry-repository.js";
 import type {
   CreateActiveMemoryInput,
+  DeleteActiveMemoryOptions,
   ListActivePinnedMemoriesOptions,
   PersistedMemoryRecord,
   PersistedMemorySearchResponse,
   PersistedPinnedMemoriesResult,
   ResolveActiveSpaceOptions,
   SearchActiveMemoriesOptions,
+  UpdateActiveMemoryInput,
 } from "../types/memory.js";
 
 export class ActiveSpaceMemoryRepository {
@@ -48,6 +50,26 @@ export class ActiveSpaceMemoryRepository {
     });
 
     return touchResult.space.id;
+  }
+
+  private static requireMemoryInSpace(
+    database: DatabaseSync,
+    memoryId: string,
+    spaceId: string,
+  ): PersistedMemoryRecord {
+    const memory = MemoryRepository.getMemoryById(database, memoryId);
+
+    if (!memory) {
+      throw new Error(`Unable to find memory "${memoryId}".`);
+    }
+
+    if (memory.space_id !== spaceId) {
+      throw new Error(
+        `Memory "${memoryId}" does not belong to active space "${spaceId}".`,
+      );
+    }
+
+    return memory;
   }
 
   static async createMemory(
@@ -100,6 +122,51 @@ export class ActiveSpaceMemoryRepository {
       query: options.query,
       relatedPaths: options.relatedPaths,
       limit: options.limit,
+    });
+  }
+
+  static async updateMemory(
+    database: DatabaseSync,
+    input: UpdateActiveMemoryInput,
+  ): Promise<PersistedMemoryRecord> {
+    const spaceId = await ActiveSpaceMemoryRepository.resolveRequestedSpaceId(
+      database,
+      input,
+    );
+
+    ActiveSpaceMemoryRepository.requireMemoryInSpace(
+      database,
+      input.memoryId,
+      spaceId,
+    );
+
+    return MemoryRepository.updateMemory(database, {
+      memoryId: input.memoryId,
+      content: input.content,
+      tags: input.tags,
+      isPinned: input.isPinned,
+      pathMatchers: input.pathMatchers,
+      updatedAt: input.updatedAt,
+    });
+  }
+
+  static async deleteMemory(
+    database: DatabaseSync,
+    input: DeleteActiveMemoryOptions,
+  ): Promise<void> {
+    const spaceId = await ActiveSpaceMemoryRepository.resolveRequestedSpaceId(
+      database,
+      input,
+    );
+
+    ActiveSpaceMemoryRepository.requireMemoryInSpace(
+      database,
+      input.memoryId,
+      spaceId,
+    );
+
+    MemoryRepository.deleteMemory(database, {
+      memoryId: input.memoryId,
     });
   }
 }
