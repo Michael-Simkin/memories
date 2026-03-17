@@ -119,6 +119,26 @@ function resolveProtocolVersion(message: Record<string, unknown>): string {
   return DEFAULT_PROTOCOL_VERSION;
 }
 
+function resolveRequestTimeoutMs(configuredTimeoutMs?: number): number {
+  const timeoutValue =
+    configuredTimeoutMs ?? process.env["MEMORIES_MCP_REQUEST_TIMEOUT_MS"];
+
+  if (timeoutValue === undefined) {
+    return DEFAULT_ENGINE_REQUEST_TIMEOUT_MS;
+  }
+
+  const numericTimeout =
+    typeof timeoutValue === "number"
+      ? timeoutValue
+      : Number.parseInt(timeoutValue, 10);
+
+  if (!Number.isInteger(numericTimeout) || numericTimeout <= 0) {
+    throw new Error("MEMORIES_MCP_REQUEST_TIMEOUT_MS must be a positive integer.");
+  }
+
+  return numericTimeout;
+}
+
 function listToolsResult(): { tools: Array<Record<string, unknown>> } {
   return {
     tools: [
@@ -239,8 +259,7 @@ async function callToolResult(
       project_root: process.env["CLAUDE_PROJECT_DIR"],
       cwd: process.cwd(),
     });
-    const requestTimeoutMs =
-      options.requestTimeoutMs ?? DEFAULT_ENGINE_REQUEST_TIMEOUT_MS;
+    const requestTimeoutMs = resolveRequestTimeoutMs(options.requestTimeoutMs);
     const ensuredEngine = await ensureEngine(options);
     const searchResponse = await postEngineJson<MemorySearchResponse>(
       ensuredEngine.connection,

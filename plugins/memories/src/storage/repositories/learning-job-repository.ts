@@ -8,17 +8,24 @@ import {
 import { SqliteService } from "../sqlite-service.js";
 import type {
   EnqueueLearningJobInput,
+  FinalizeLearningJobInput,
+  HeartbeatLearningJobInput,
   LeaseLearningJobInput,
   ListLearningJobsOptions,
   PersistedLearningJob,
+  StartLearningJobInput,
   UpdateLearningJobInput,
 } from "../types/learning-job.js";
 
 interface LearningJobRow {
   id: string;
   space_id: string;
+  space_kind: PersistedLearningJob["space_kind"];
+  space_display_name: PersistedLearningJob["space_display_name"];
+  origin_url_normalized: PersistedLearningJob["origin_url_normalized"];
   root_path: string;
   transcript_path: string;
+  enqueue_key: string | null;
   last_assistant_message: string | null;
   session_id: string | null;
   state: PersistedLearningJob["state"];
@@ -33,14 +40,16 @@ interface LearningJobRow {
 }
 
 export class LearningJobRepository {
-  private static hydrateLearningJobRow(
-    row: Record<string, unknown>
-  ): LearningJobRow {
+  private static hydrateLearningJobRow(row: Record<string, unknown>): LearningJobRow {
     return {
       id: row["id"] as string,
       space_id: row["space_id"] as string,
+      space_kind: row["space_kind"] as PersistedLearningJob["space_kind"],
+      space_display_name: row["space_display_name"] as PersistedLearningJob["space_display_name"],
+      origin_url_normalized: row["origin_url_normalized"] as PersistedLearningJob["origin_url_normalized"],
       root_path: row["root_path"] as string,
       transcript_path: row["transcript_path"] as string,
+      enqueue_key: row["enqueue_key"] as string | null,
       last_assistant_message: row["last_assistant_message"] as string | null,
       session_id: row["session_id"] as string | null,
       state: row["state"] as PersistedLearningJob["state"],
@@ -59,6 +68,9 @@ export class LearningJobRepository {
     return {
       id: row.id,
       space_id: row.space_id,
+      space_kind: row.space_kind,
+      space_display_name: row.space_display_name,
+      origin_url_normalized: row.origin_url_normalized,
       root_path: row.root_path,
       transcript_path: row.transcript_path,
       last_assistant_message: row.last_assistant_message,
@@ -75,10 +87,7 @@ export class LearningJobRepository {
     };
   }
 
-  private static normalizeRequiredText(
-    value: string,
-    fieldName: string
-  ): string {
+  private static normalizeRequiredText(value: string, fieldName: string): string {
     const normalizedValue = normalizeNonEmptyString(value);
 
     if (!normalizedValue) {
@@ -88,10 +97,12 @@ export class LearningJobRepository {
     return normalizedValue;
   }
 
-  private static normalizeNullableText(
-    value: string | null | undefined
-  ): string | null {
+  private static normalizeNullableText(value: string | null | undefined): string | null {
     return normalizeNullableString(value);
+  }
+
+  private static normalizeEnqueueKey(enqueueKey: string | undefined): string | null {
+    return normalizeNonEmptyString(enqueueKey) ?? null;
   }
 
   private static normalizeAttemptCount(attemptCount: number): number {
@@ -110,10 +121,7 @@ export class LearningJobRepository {
     return leaseDurationMs;
   }
 
-  private static normalizeTimestamp(
-    value: string | undefined,
-    fieldName: string
-  ): string {
+  private static normalizeTimestamp(value: string | undefined, fieldName: string): string {
     const timestamp = value ?? new Date().toISOString();
 
     if (Number.isNaN(Date.parse(timestamp))) {
@@ -143,28 +151,33 @@ export class LearningJobRepository {
 
   private static readLearningJobRow(
     database: DatabaseSync,
-    jobId: string
+    jobId: string,
   ): LearningJobRow | null {
     const row = database
       .prepare(
         `SELECT
-          id,
-          space_id,
-          root_path,
-          transcript_path,
-          last_assistant_message,
-          session_id,
-          state,
-          lease_owner,
-          lease_expires_at,
-          attempt_count,
-          error_text,
-          enqueued_at,
-          started_at,
-          finished_at,
-          updated_at
+          learning_jobs.id,
+          learning_jobs.space_id,
+          memory_spaces.space_kind,
+          memory_spaces.display_name AS space_display_name,
+          memory_spaces.origin_url_normalized,
+          learning_jobs.root_path,
+          learning_jobs.transcript_path,
+          learning_jobs.enqueue_key,
+          learning_jobs.last_assistant_message,
+          learning_jobs.session_id,
+          learning_jobs.state,
+          learning_jobs.lease_owner,
+          learning_jobs.lease_expires_at,
+          learning_jobs.attempt_count,
+          learning_jobs.error_text,
+          learning_jobs.enqueued_at,
+          learning_jobs.started_at,
+          learning_jobs.finished_at,
+          learning_jobs.updated_at
         FROM learning_jobs
-        WHERE id = ?`
+        LEFT JOIN memory_spaces ON memory_spaces.id = learning_jobs.space_id
+        WHERE learning_jobs.id = ?`,
       )
       .get(jobId);
 
@@ -172,15 +185,52 @@ export class LearningJobRepository {
       return null;
     }
 
-    return LearningJobRepository.hydrateLearningJobRow(
-      row as Record<string, unknown>
-    );
+    return LearningJobRepository.hydrateLearningJobRow(row as Record<string, unknown>);
   }
 
-  private static requireLearningJob(
+  private static readActiveJobByEnqueueKey(
     database: DatabaseSync,
-    jobId: string
-  ): LearningJobRow {
+    enqueueKey: string,
+  ): LearningJobRow | null {
+    const row = database
+      .prepare(
+        `SELECT
+          learning_jobs.id,
+          learning_jobs.space_id,
+          memory_spaces.space_kind,
+          memory_spaces.display_name AS space_display_name,
+          memory_spaces.origin_url_normalized,
+          learning_jobs.root_path,
+          learning_jobs.transcript_path,
+          learning_jobs.enqueue_key,
+          learning_jobs.last_assistant_message,
+          learning_jobs.session_id,
+          learning_jobs.state,
+          learning_jobs.lease_owner,
+          learning_jobs.lease_expires_at,
+          learning_jobs.attempt_count,
+          learning_jobs.error_text,
+          learning_jobs.enqueued_at,
+          learning_jobs.started_at,
+          learning_jobs.finished_at,
+          learning_jobs.updated_at
+        FROM learning_jobs
+        LEFT JOIN memory_spaces ON memory_spaces.id = learning_jobs.space_id
+        WHERE learning_jobs.enqueue_key = ?
+          AND learning_jobs.state IN ('pending', 'leased', 'running')
+        ORDER BY learning_jobs.enqueued_at ASC, learning_jobs.id ASC
+        LIMIT 1`,
+      )
+      .get(enqueueKey);
+
+    if (!row) {
+      return null;
+    }
+
+    return LearningJobRepository.hydrateLearningJobRow(row as Record<string, unknown>);
+  }
+
+  private static requireLearningJob(database: DatabaseSync, jobId: string): LearningJobRow {
     const row = LearningJobRepository.readLearningJobRow(database, jobId);
 
     if (!row) {
@@ -192,24 +242,21 @@ export class LearningJobRepository {
 
   private static readLearningJob(
     database: DatabaseSync,
-    jobId: string
+    jobId: string,
   ): PersistedLearningJob {
     return LearningJobRepository.mapLearningJobRow(
-      LearningJobRepository.requireLearningJob(database, jobId)
+      LearningJobRepository.requireLearningJob(database, jobId),
     );
   }
 
-  private static hasActiveLiveLease(
-    database: DatabaseSync,
-    leasedAt: string
-  ): boolean {
+  private static hasActiveLiveLease(database: DatabaseSync, leasedAt: string): boolean {
     const row = database
       .prepare(
         `SELECT count(*) AS count
         FROM learning_jobs
         WHERE state IN ('leased', 'running')
           AND lease_expires_at IS NOT NULL
-          AND lease_expires_at > ?`
+          AND lease_expires_at > ?`,
       )
       .get(leasedAt) as { count: number };
 
@@ -218,42 +265,50 @@ export class LearningJobRepository {
 
   private static readNextLeasableJobRow(
     database: DatabaseSync,
-    leasedAt: string
+    leasedAt: string,
   ): LearningJobRow | null {
     const row = database
       .prepare(
         `SELECT
-          id,
-          space_id,
-          root_path,
-          transcript_path,
-          last_assistant_message,
-          session_id,
-          state,
-          lease_owner,
-          lease_expires_at,
-          attempt_count,
-          error_text,
-          enqueued_at,
-          started_at,
-          finished_at,
-          updated_at
+          learning_jobs.id,
+          learning_jobs.space_id,
+          memory_spaces.space_kind,
+          memory_spaces.display_name AS space_display_name,
+          memory_spaces.origin_url_normalized,
+          learning_jobs.root_path,
+          learning_jobs.transcript_path,
+          learning_jobs.enqueue_key,
+          learning_jobs.last_assistant_message,
+          learning_jobs.session_id,
+          learning_jobs.state,
+          learning_jobs.lease_owner,
+          learning_jobs.lease_expires_at,
+          learning_jobs.attempt_count,
+          learning_jobs.error_text,
+          learning_jobs.enqueued_at,
+          learning_jobs.started_at,
+          learning_jobs.finished_at,
+          learning_jobs.updated_at
         FROM learning_jobs
-        WHERE state = 'pending'
+        LEFT JOIN memory_spaces ON memory_spaces.id = learning_jobs.space_id
+        WHERE learning_jobs.state = 'pending'
           OR (
-            state IN ('leased', 'running')
-            AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+            learning_jobs.state IN ('leased', 'running')
+            AND (
+              learning_jobs.lease_expires_at IS NULL
+              OR learning_jobs.lease_expires_at <= ?
+            )
           )
         ORDER BY
-          CASE state
+          CASE learning_jobs.state
             WHEN 'pending' THEN 0
             WHEN 'leased' THEN 1
             WHEN 'running' THEN 2
             ELSE 3
           END,
-          enqueued_at ASC,
-          id ASC
-        LIMIT 1`
+          learning_jobs.enqueued_at ASC,
+          learning_jobs.id ASC
+        LIMIT 1`,
       )
       .get(leasedAt);
 
@@ -261,30 +316,97 @@ export class LearningJobRepository {
       return null;
     }
 
-    return LearningJobRepository.hydrateLearningJobRow(
-      row as Record<string, unknown>
-    );
+    return LearningJobRepository.hydrateLearningJobRow(row as Record<string, unknown>);
+  }
+
+  private static finalizeLearningJob(
+    database: DatabaseSync,
+    state: "completed" | "failed" | "skipped",
+    input: FinalizeLearningJobInput,
+  ): PersistedLearningJob | null {
+    return SqliteService.transaction(database, () => {
+      const leaseOwner = LearningJobRepository.normalizeRequiredText(
+        input.leaseOwner,
+        "leaseOwner",
+      );
+      const finishedAt = LearningJobRepository.normalizeTimestamp(
+        input.finishedAt,
+        "finishedAt",
+      );
+      const errorText =
+        state === "completed"
+          ? null
+          : LearningJobRepository.normalizeNullableText(input.errorText);
+      const updateResult = database
+        .prepare(
+          `UPDATE learning_jobs
+          SET
+            state = ?,
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            error_text = ?,
+            finished_at = ?,
+            updated_at = ?
+          WHERE id = ?
+            AND state IN ('leased', 'running')
+            AND lease_owner = ?`,
+        )
+        .run(state, errorText, finishedAt, finishedAt, input.jobId, leaseOwner);
+
+      if (updateResult.changes === 0) {
+        return null;
+      }
+
+      return LearningJobRepository.readLearningJob(database, input.jobId);
+    });
   }
 
   static enqueueLearningJob(
     database: DatabaseSync,
-    input: EnqueueLearningJobInput
+    input: EnqueueLearningJobInput,
   ): PersistedLearningJob {
     return SqliteService.transaction(database, () => {
+      const normalizedSpaceId = LearningJobRepository.normalizeRequiredText(
+        input.spaceId,
+        "spaceId",
+      );
+      const normalizedRootPath = LearningJobRepository.normalizeRequiredText(
+        input.rootPath,
+        "rootPath",
+      );
+      const normalizedTranscriptPath = LearningJobRepository.normalizeRequiredText(
+        input.transcriptPath,
+        "transcriptPath",
+      );
+      const normalizedEnqueueKey = LearningJobRepository.normalizeEnqueueKey(
+        input.enqueueKey,
+      );
+
+      if (normalizedEnqueueKey) {
+        const existingActiveJob = LearningJobRepository.readActiveJobByEnqueueKey(
+          database,
+          normalizedEnqueueKey,
+        );
+
+        if (existingActiveJob) {
+          return LearningJobRepository.mapLearningJobRow(existingActiveJob);
+        }
+      }
+
       const jobId = input.id ?? randomUUID();
       const enqueuedAt = input.enqueuedAt ?? new Date().toISOString();
       const updatedAt = input.updatedAt ?? enqueuedAt;
       const attemptCount = LearningJobRepository.normalizeAttemptCount(
-        input.attemptCount ?? 0
+        input.attemptCount ?? 0,
       );
-
-      database
+      const insertResult = database
         .prepare(
-          `INSERT INTO learning_jobs (
+          `INSERT OR IGNORE INTO learning_jobs (
             id,
             space_id,
             root_path,
             transcript_path,
+            enqueue_key,
             last_assistant_message,
             session_id,
             state,
@@ -296,22 +418,15 @@ export class LearningJobRepository {
             started_at,
             finished_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           jobId,
-          LearningJobRepository.normalizeRequiredText(input.spaceId, "spaceId"),
-          LearningJobRepository.normalizeRequiredText(
-            input.rootPath,
-            "rootPath"
-          ),
-          LearningJobRepository.normalizeRequiredText(
-            input.transcriptPath,
-            "transcriptPath"
-          ),
-          LearningJobRepository.normalizeNullableText(
-            input.lastAssistantMessage
-          ),
+          normalizedSpaceId,
+          normalizedRootPath,
+          normalizedTranscriptPath,
+          normalizedEnqueueKey,
+          LearningJobRepository.normalizeNullableText(input.lastAssistantMessage),
           LearningJobRepository.normalizeNullableText(input.sessionId),
           input.state ?? "pending",
           LearningJobRepository.normalizeNullableText(input.leaseOwner),
@@ -321,16 +436,31 @@ export class LearningJobRepository {
           enqueuedAt,
           LearningJobRepository.normalizeNullableText(input.startedAt),
           LearningJobRepository.normalizeNullableText(input.finishedAt),
-          updatedAt
+          updatedAt,
         );
 
-      return LearningJobRepository.readLearningJob(database, jobId);
+      if (insertResult.changes === 1) {
+        return LearningJobRepository.readLearningJob(database, jobId);
+      }
+
+      if (normalizedEnqueueKey) {
+        const existingActiveJob = LearningJobRepository.readActiveJobByEnqueueKey(
+          database,
+          normalizedEnqueueKey,
+        );
+
+        if (existingActiveJob) {
+          return LearningJobRepository.mapLearningJobRow(existingActiveJob);
+        }
+      }
+
+      throw new Error("Failed to enqueue learning job.");
     });
   }
 
   static getLearningJobById(
     database: DatabaseSync,
-    jobId: string
+    jobId: string,
   ): PersistedLearningJob | null {
     const row = LearningJobRepository.readLearningJobRow(database, jobId);
 
@@ -343,7 +473,7 @@ export class LearningJobRepository {
 
   static listLearningJobs(
     database: DatabaseSync,
-    options: ListLearningJobsOptions = {}
+    options: ListLearningJobsOptions = {},
   ): PersistedLearningJob[] {
     const whereClauses: string[] = [];
     const parameters: string[] = [];
@@ -357,35 +487,40 @@ export class LearningJobRepository {
     if (options.spaceId !== undefined) {
       whereClauses.push("space_id = ?");
       parameters.push(
-        LearningJobRepository.normalizeRequiredText(options.spaceId, "spaceId")
+        LearningJobRepository.normalizeRequiredText(options.spaceId, "spaceId"),
       );
     }
 
     let query = `
       SELECT
-        id,
-        space_id,
-        root_path,
-        transcript_path,
-        last_assistant_message,
-        session_id,
-        state,
-        lease_owner,
-        lease_expires_at,
-        attempt_count,
-        error_text,
-        enqueued_at,
-        started_at,
-        finished_at,
-        updated_at
+        learning_jobs.id,
+        learning_jobs.space_id,
+        memory_spaces.space_kind,
+        memory_spaces.display_name AS space_display_name,
+        memory_spaces.origin_url_normalized,
+        learning_jobs.root_path,
+        learning_jobs.transcript_path,
+        learning_jobs.enqueue_key,
+        learning_jobs.last_assistant_message,
+        learning_jobs.session_id,
+        learning_jobs.state,
+        learning_jobs.lease_owner,
+        learning_jobs.lease_expires_at,
+        learning_jobs.attempt_count,
+        learning_jobs.error_text,
+        learning_jobs.enqueued_at,
+        learning_jobs.started_at,
+        learning_jobs.finished_at,
+        learning_jobs.updated_at
       FROM learning_jobs
+      LEFT JOIN memory_spaces ON memory_spaces.id = learning_jobs.space_id
     `;
 
     if (whereClauses.length > 0) {
       query += ` WHERE ${whereClauses.join(" AND ")}`;
     }
 
-    query += ` ORDER BY enqueued_at ASC, id ASC LIMIT ${String(limit)}`;
+    query += ` ORDER BY learning_jobs.enqueued_at ASC, learning_jobs.id ASC LIMIT ${String(limit)}`;
 
     const rows = database.prepare(query).all(...parameters) as Record<
       string,
@@ -394,26 +529,26 @@ export class LearningJobRepository {
 
     return rows.map((row) =>
       LearningJobRepository.mapLearningJobRow(
-        LearningJobRepository.hydrateLearningJobRow(row)
-      )
+        LearningJobRepository.hydrateLearningJobRow(row),
+      ),
     );
   }
 
   static leaseNextLearningJob(
     database: DatabaseSync,
-    input: LeaseLearningJobInput
+    input: LeaseLearningJobInput,
   ): PersistedLearningJob | null {
     return SqliteService.transaction(database, () => {
       const leaseOwner = LearningJobRepository.normalizeRequiredText(
         input.leaseOwner,
-        "leaseOwner"
+        "leaseOwner",
       );
       const leaseDurationMs = LearningJobRepository.normalizeLeaseDurationMs(
-        input.leaseDurationMs
+        input.leaseDurationMs,
       );
       const leasedAt = LearningJobRepository.normalizeTimestamp(
         input.leasedAt,
-        "leasedAt"
+        "leasedAt",
       );
 
       if (LearningJobRepository.hasActiveLiveLease(database, leasedAt)) {
@@ -422,7 +557,7 @@ export class LearningJobRepository {
 
       const nextJob = LearningJobRepository.readNextLeasableJobRow(
         database,
-        leasedAt
+        leasedAt,
       );
 
       if (!nextJob) {
@@ -431,7 +566,7 @@ export class LearningJobRepository {
 
       const leaseExpiresAt = LearningJobRepository.addMilliseconds(
         leasedAt,
-        leaseDurationMs
+        leaseDurationMs,
       );
 
       database
@@ -443,29 +578,121 @@ export class LearningJobRepository {
             lease_expires_at = ?,
             attempt_count = ?,
             updated_at = ?
-          WHERE id = ?`
+          WHERE id = ?`,
         )
         .run(
           leaseOwner,
           leaseExpiresAt,
           nextJob.attempt_count + 1,
           leasedAt,
-          nextJob.id
+          nextJob.id,
         );
 
       return LearningJobRepository.readLearningJob(database, nextJob.id);
     });
   }
 
+  static startLearningJob(
+    database: DatabaseSync,
+    input: StartLearningJobInput,
+  ): PersistedLearningJob | null {
+    return SqliteService.transaction(database, () => {
+      const leaseOwner = LearningJobRepository.normalizeRequiredText(
+        input.leaseOwner,
+        "leaseOwner",
+      );
+      const startedAt = LearningJobRepository.normalizeTimestamp(
+        input.startedAt,
+        "startedAt",
+      );
+      const updateResult = database
+        .prepare(
+          `UPDATE learning_jobs
+          SET
+            state = 'running',
+            started_at = COALESCE(started_at, ?),
+            updated_at = ?
+          WHERE id = ?
+            AND state = 'leased'
+            AND lease_owner = ?`,
+        )
+        .run(startedAt, startedAt, input.jobId, leaseOwner);
+
+      if (updateResult.changes === 0) {
+        return null;
+      }
+
+      return LearningJobRepository.readLearningJob(database, input.jobId);
+    });
+  }
+
+  static heartbeatLearningJob(
+    database: DatabaseSync,
+    input: HeartbeatLearningJobInput,
+  ): PersistedLearningJob | null {
+    return SqliteService.transaction(database, () => {
+      const leaseOwner = LearningJobRepository.normalizeRequiredText(
+        input.leaseOwner,
+        "leaseOwner",
+      );
+      const heartbeatedAt = LearningJobRepository.normalizeTimestamp(
+        input.heartbeatedAt,
+        "heartbeatedAt",
+      );
+      const leaseDurationMs = LearningJobRepository.normalizeLeaseDurationMs(
+        input.leaseDurationMs,
+      );
+      const leaseExpiresAt = LearningJobRepository.addMilliseconds(
+        heartbeatedAt,
+        leaseDurationMs,
+      );
+      const updateResult = database
+        .prepare(
+          `UPDATE learning_jobs
+          SET
+            lease_expires_at = ?,
+            updated_at = ?
+          WHERE id = ?
+            AND state IN ('leased', 'running')
+            AND lease_owner = ?`,
+        )
+        .run(leaseExpiresAt, heartbeatedAt, input.jobId, leaseOwner);
+
+      if (updateResult.changes === 0) {
+        return null;
+      }
+
+      return LearningJobRepository.readLearningJob(database, input.jobId);
+    });
+  }
+
+  static completeLearningJob(
+    database: DatabaseSync,
+    input: FinalizeLearningJobInput,
+  ): PersistedLearningJob | null {
+    return LearningJobRepository.finalizeLearningJob(database, "completed", input);
+  }
+
+  static failLearningJob(
+    database: DatabaseSync,
+    input: FinalizeLearningJobInput,
+  ): PersistedLearningJob | null {
+    return LearningJobRepository.finalizeLearningJob(database, "failed", input);
+  }
+
+  static skipLearningJob(
+    database: DatabaseSync,
+    input: FinalizeLearningJobInput,
+  ): PersistedLearningJob | null {
+    return LearningJobRepository.finalizeLearningJob(database, "skipped", input);
+  }
+
   static updateLearningJob(
     database: DatabaseSync,
-    input: UpdateLearningJobInput
+    input: UpdateLearningJobInput,
   ): PersistedLearningJob {
     return SqliteService.transaction(database, () => {
-      const existingJob = LearningJobRepository.requireLearningJob(
-        database,
-        input.jobId
-      );
+      const existingJob = LearningJobRepository.requireLearningJob(database, input.jobId);
       let nextLastAssistantMessage = existingJob.last_assistant_message;
       let nextSessionId = existingJob.session_id;
       let nextState = existingJob.state;
@@ -478,14 +705,12 @@ export class LearningJobRepository {
 
       if (Object.hasOwn(input, "lastAssistantMessage")) {
         nextLastAssistantMessage = LearningJobRepository.normalizeNullableText(
-          input.lastAssistantMessage
+          input.lastAssistantMessage,
         );
       }
 
       if (Object.hasOwn(input, "sessionId")) {
-        nextSessionId = LearningJobRepository.normalizeNullableText(
-          input.sessionId
-        );
+        nextSessionId = LearningJobRepository.normalizeNullableText(input.sessionId);
       }
 
       if (input.state !== undefined) {
@@ -493,39 +718,31 @@ export class LearningJobRepository {
       }
 
       if (Object.hasOwn(input, "leaseOwner")) {
-        nextLeaseOwner = LearningJobRepository.normalizeNullableText(
-          input.leaseOwner
-        );
+        nextLeaseOwner = LearningJobRepository.normalizeNullableText(input.leaseOwner);
       }
 
       if (Object.hasOwn(input, "leaseExpiresAt")) {
         nextLeaseExpiresAt = LearningJobRepository.normalizeNullableText(
-          input.leaseExpiresAt
+          input.leaseExpiresAt,
         );
       }
 
       if (input.attemptCount !== undefined) {
         nextAttemptCount = LearningJobRepository.normalizeAttemptCount(
-          input.attemptCount
+          input.attemptCount,
         );
       }
 
       if (Object.hasOwn(input, "errorText")) {
-        nextErrorText = LearningJobRepository.normalizeNullableText(
-          input.errorText
-        );
+        nextErrorText = LearningJobRepository.normalizeNullableText(input.errorText);
       }
 
       if (Object.hasOwn(input, "startedAt")) {
-        nextStartedAt = LearningJobRepository.normalizeNullableText(
-          input.startedAt
-        );
+        nextStartedAt = LearningJobRepository.normalizeNullableText(input.startedAt);
       }
 
       if (Object.hasOwn(input, "finishedAt")) {
-        nextFinishedAt = LearningJobRepository.normalizeNullableText(
-          input.finishedAt
-        );
+        nextFinishedAt = LearningJobRepository.normalizeNullableText(input.finishedAt);
       }
 
       const updatedAt = input.updatedAt ?? new Date().toISOString();
@@ -544,7 +761,7 @@ export class LearningJobRepository {
             started_at = ?,
             finished_at = ?,
             updated_at = ?
-          WHERE id = ?`
+          WHERE id = ?`,
         )
         .run(
           nextLastAssistantMessage,
@@ -557,7 +774,7 @@ export class LearningJobRepository {
           nextStartedAt,
           nextFinishedAt,
           updatedAt,
-          input.jobId
+          input.jobId,
         );
 
       return LearningJobRepository.readLearningJob(database, input.jobId);

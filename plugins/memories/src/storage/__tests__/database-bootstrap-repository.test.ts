@@ -51,8 +51,8 @@ describe("DatabaseBootstrapRepository", () => {
         bootstrapResult.databasePath,
         path.join(tempDirectory, "memory.db"),
       );
-      assert.equal(bootstrapResult.schemaVersion, 5);
-      assert.equal(SqliteService.readUserVersion(bootstrapResult.database), 5);
+      assert.equal(bootstrapResult.schemaVersion, 6);
+      assert.equal(SqliteService.readUserVersion(bootstrapResult.database), 6);
       assert.deepEqual(tableRows, [
         { name: "idx_space_roots_space_id_root_path", type: "index" },
         { name: "events", type: "table" },
@@ -187,7 +187,7 @@ describe("DatabaseBootstrapRepository", () => {
         .prepare("select count(*) as count from memory_spaces;")
         .get() as { count: number };
 
-      assert.equal(secondBootstrap.schemaVersion, 5);
+      assert.equal(secondBootstrap.schemaVersion, 6);
       assert.equal(row.count, 1);
     } finally {
       secondBootstrap.database.close();

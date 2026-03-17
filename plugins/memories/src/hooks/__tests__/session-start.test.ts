@@ -119,7 +119,7 @@ describe("handleSessionStartHook", () => {
 
     assert.match(
       hookOutput.systemMessage,
-      /^Claude Memory UI: http:\/\/127\.0\.0\.1:\d+\/ui$/u,
+      /^Claude Memory UI: http:\/\/127\.0\.0\.1:\d+\/ui\?cwd=/u,
     );
     assert.equal(hookOutput.hookSpecificOutput.hookEventName, "SessionStart");
     assert.match(

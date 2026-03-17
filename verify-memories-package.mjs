@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
+import {
+  access,
+  mkdtemp,
+  readFile,
+  rm,
+  unlink,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -8,28 +16,16 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const repoRootPath = path.dirname(fileURLToPath(import.meta.url));
 const pluginWorkspaceName = "@claude-memory/memories";
+const pluginRootPath = path.join(repoRootPath, "plugins", "memories");
 const marketplaceManifestPath = path.join(
   repoRootPath,
   ".claude-plugin",
   "marketplace.json",
 );
-const mcpConfigPath = path.join(
-  repoRootPath,
-  "plugins",
-  "memories",
-  ".mcp.json",
-);
-const hooksConfigPath = path.join(
-  repoRootPath,
-  "plugins",
-  "memories",
-  "hooks",
-  "hooks.json",
-);
+const mcpConfigPath = path.join(pluginRootPath, ".mcp.json");
+const hooksConfigPath = path.join(pluginRootPath, "hooks", "hooks.json");
 const pluginManifestPath = path.join(
-  repoRootPath,
-  "plugins",
-  "memories",
+  pluginRootPath,
   ".claude-plugin",
   "plugin.json",
 );
@@ -39,14 +35,11 @@ const requiredPackPaths = [
   ".mcp.json",
   "bin/run-with-node24.sh",
   "dist/engine/main.js",
-  "dist/hooks/hook-runtime.js",
   "dist/hooks/session-start.js",
   "dist/hooks/stop.js",
   "dist/hooks/user-prompt-submit.js",
   "dist/mcp/search-server.js",
-  "dist/shared/services/plugin-paths-service.js",
-  "dist/storage/sqlite-service.js",
-  "dist/storage/sqlite-vec-service.js",
+  "dist/ui/index.html",
   "hooks/hooks.json",
   "package.json",
   "vendor/sqlite-vec/darwin-arm64/vec0.dylib",
@@ -71,7 +64,7 @@ function isAllowedPackPath(filePath) {
 }
 
 function isLeakedSourcePath(filePath) {
-  if (filePath.startsWith("src/")) {
+  if (filePath.startsWith("src/") || filePath.startsWith("web/")) {
     return true;
   }
 
@@ -81,6 +74,7 @@ function isLeakedSourcePath(filePath) {
 
   return (
     filePath.endsWith(".ts") ||
+    filePath.endsWith(".tsx") ||
     filePath === "tsconfig.json" ||
     filePath === "tsup.config.ts"
   );
@@ -96,6 +90,143 @@ async function runNpmCommand(args) {
 async function readJsonFile(jsonFilePath) {
   const fileText = await readFile(jsonFilePath, "utf8");
   return JSON.parse(fileText);
+}
+
+async function pathExists(targetPath) {
+  try {
+    await access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(predicate, options) {
+  const deadline = Date.now() + options.timeoutMs;
+
+  while (Date.now() < deadline) {
+    const result = await predicate();
+
+    if (result !== null) {
+      return result;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, options.intervalMs));
+  }
+
+  throw new Error(options.errorMessage);
+}
+
+async function stopChildProcess(child) {
+  if (child.exitCode !== null) {
+    return;
+  }
+
+  child.kill("SIGTERM");
+
+  try {
+    await Promise.race([
+      once(child, "exit"),
+      new Promise((_, reject) =>
+        setTimeout(() => {
+          reject(new Error("Timed out waiting for child process shutdown."));
+        }, 5_000),
+      ),
+    ]);
+  } catch {
+    child.kill("SIGKILL");
+    await once(child, "exit");
+  }
+}
+
+async function smokeTestPackedEngine(packageRoot) {
+  const claudeMemoryHome = await mkdtemp(
+    path.join(tmpdir(), "claude-memory-packaged-engine-"),
+  );
+  const engineEntrypointPath = path.join(packageRoot, "dist", "engine", "main.js");
+  let stderrText = "";
+  const child = spawn(process.execPath, [engineEntrypointPath], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      CLAUDE_MEMORY_HOME: claudeMemoryHome,
+      CLAUDE_PLUGIN_ROOT: packageRoot,
+      MEMORIES_LEARNING_WORKER_DISABLED: "1",
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderrText += chunk;
+  });
+
+  try {
+    const engineLockPath = path.join(claudeMemoryHome, "engine.lock.json");
+    const engineLock = await waitFor(
+      async () => {
+        if (child.exitCode !== null) {
+          throw new Error(
+            `Packaged engine exited before becoming healthy.${stderrText ? `\n${stderrText.trim()}` : ""}`,
+          );
+        }
+
+        if (!(await pathExists(engineLockPath))) {
+          return null;
+        }
+
+        return readJsonFile(engineLockPath);
+      },
+      {
+        timeoutMs: 15_000,
+        intervalMs: 200,
+        errorMessage: "Timed out waiting for the packaged engine lock file.",
+      },
+    );
+    const baseUrl = `http://${engineLock.host}:${String(engineLock.port)}`;
+    const healthResponse = await fetch(`${baseUrl}/health`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    const statsResponse = await fetch(`${baseUrl}/stats`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    const spacesResponse = await fetch(`${baseUrl}/spaces`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    const uiResponse = await fetch(`${baseUrl}/ui`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    const healthPayload = await healthResponse.json();
+    const statsText = await statsResponse.text();
+    const spacesText = await spacesResponse.text();
+    const uiHtml = await uiResponse.text();
+
+    assert.equal(healthResponse.status, 200, "Packaged engine /health must respond.");
+    assert.equal(
+      healthPayload.db_schema_version,
+      6,
+      "Packaged engine must expose the current database schema version.",
+    );
+    assert.equal(
+      statsResponse.status,
+      200,
+      `Packaged engine /stats must respond. Response body: ${statsText}`,
+    );
+    const statsPayload = JSON.parse(statsText);
+    assert.equal(statsPayload.online, true, "Packaged engine must report online.");
+    assert.equal(
+      spacesResponse.status,
+      200,
+      `Packaged engine /spaces must respond. Response body: ${spacesText}`,
+    );
+    const spacesPayload = JSON.parse(spacesText);
+    assert.ok(Array.isArray(spacesPayload.spaces), "Packaged engine /spaces must return an array.");
+    assert.equal(uiResponse.status, 200, "Packaged engine /ui must respond.");
+    assert.match(uiHtml, /<title>Claude Memory UI<\/title>/u);
+  } finally {
+    await stopChildProcess(child);
+    await rm(claudeMemoryHome, { recursive: true, force: true });
+  }
 }
 
 async function main() {
@@ -208,13 +339,12 @@ async function main() {
 
   const packCommandResult = await runNpmCommand([
     "pack",
-    "--dry-run",
     "--json",
     "--workspace",
     pluginWorkspaceName,
   ]);
-
   const packResults = JSON.parse(packCommandResult.stdout);
+
   assert.ok(Array.isArray(packResults), "npm pack did not return a JSON array.");
   assert.equal(
     packResults.length,
@@ -228,12 +358,14 @@ async function main() {
     packResult && typeof packResult === "object",
     "npm pack returned an unexpected result payload.",
   );
+  assert.ok(Array.isArray(packResult.files), "Packed workspace result is missing its file list.");
+  assert.equal(
+    typeof packResult.filename,
+    "string",
+    "Packed workspace result must include a filename.",
+  );
 
-  const packFiles = packResult.files;
-
-  assert.ok(Array.isArray(packFiles), "Packed workspace result is missing its file list.");
-
-  const packedPaths = packFiles
+  const packedPaths = packResult.files
     .map((fileEntry) => {
       if (!fileEntry || typeof fileEntry !== "object") {
         throw new Error("Packed workspace file entry has an unexpected shape.");
@@ -276,8 +408,42 @@ async function main() {
     `Packed plugin leaked raw source or test files: ${leakedSourcePaths.join(", ")}`,
   );
 
+  const nodeModulesPaths = packedPaths.filter((filePath) =>
+    filePath.startsWith("node_modules/"),
+  );
+
+  assert.deepEqual(
+    nodeModulesPaths,
+    [],
+    `Packed plugin must not rely on plugin-local node_modules: ${nodeModulesPaths.join(", ")}`,
+  );
+
+  const tarballPath = path.join(repoRootPath, packResult.filename);
+  const extractDirectoryPath = await mkdtemp(
+    path.join(tmpdir(), "claude-memory-packaged-plugin-"),
+  );
+
+  try {
+    await execFileAsync("tar", ["-xzf", tarballPath, "-C", extractDirectoryPath], {
+      cwd: repoRootPath,
+    });
+
+    const extractedPackagePath = path.join(extractDirectoryPath, "package");
+
+    assert.equal(
+      await pathExists(path.join(extractedPackagePath, "node_modules")),
+      false,
+      "Extracted packaged plugin must not include node_modules.",
+    );
+
+    await smokeTestPackedEngine(extractedPackagePath);
+  } finally {
+    await unlink(tarballPath).catch(() => {});
+    await rm(extractDirectoryPath, { recursive: true, force: true });
+  }
+
   console.log(
-    "Verified marketplace and plugin manifests plus the memories package boundary, dist artifacts, and vendored sqlite-vec packaging.",
+    "Verified manifests, packaged file boundary, vendored sqlite-vec, and a cold-start smoke test from the packed plugin artifact.",
   );
 }
 

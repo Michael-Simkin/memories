@@ -4,6 +4,7 @@ import {
   nonEmptyStringSchema,
   nullableNonEmptyStringSchema,
 } from "./common.js";
+import { spaceKindSchema } from "./space.js";
 
 export const learningJobStateSchema = z.enum([
   "pending",
@@ -18,6 +19,9 @@ export const learningJobSchema = z
   .object({
     id: nonEmptyStringSchema,
     space_id: nonEmptyStringSchema,
+    space_kind: spaceKindSchema.nullable(),
+    space_display_name: nullableNonEmptyStringSchema,
+    origin_url_normalized: nullableNonEmptyStringSchema,
     root_path: nonEmptyStringSchema,
     transcript_path: nonEmptyStringSchema,
     last_assistant_message: nullableNonEmptyStringSchema,

@@ -15,6 +15,9 @@ interface EventRow {
   id: number;
   at: string;
   space_id: string | null;
+  space_kind: PersistedEventRecord["space_kind"];
+  space_display_name: PersistedEventRecord["space_display_name"];
+  origin_url_normalized: PersistedEventRecord["origin_url_normalized"];
   root_path: string | null;
   event: string;
   kind: PersistedEventRecord["kind"];
@@ -32,6 +35,9 @@ export class EventRepository {
       id: row["id"] as number,
       at: row["at"] as string,
       space_id: row["space_id"] as string | null,
+      space_kind: row["space_kind"] as PersistedEventRecord["space_kind"],
+      space_display_name: row["space_display_name"] as PersistedEventRecord["space_display_name"],
+      origin_url_normalized: row["origin_url_normalized"] as PersistedEventRecord["origin_url_normalized"],
       root_path: row["root_path"] as string | null,
       event: row["event"] as string,
       kind: row["kind"] as PersistedEventRecord["kind"],
@@ -49,6 +55,9 @@ export class EventRepository {
       id: row.id,
       at: row.at,
       space_id: row.space_id,
+      space_kind: row.space_kind,
+      space_display_name: row.space_display_name,
+      origin_url_normalized: row.origin_url_normalized,
       root_path: row.root_path,
       event: row.event,
       kind: row.kind,
@@ -123,20 +132,24 @@ export class EventRepository {
     const row = database
       .prepare(
         `SELECT
-          id,
-          at,
-          space_id,
-          root_path,
-          event,
-          kind,
-          status,
-          session_id,
-          memory_id,
-          job_id,
-          detail,
-          data_json
+          events.id,
+          events.at,
+          events.space_id,
+          memory_spaces.space_kind,
+          memory_spaces.display_name AS space_display_name,
+          memory_spaces.origin_url_normalized,
+          events.root_path,
+          events.event,
+          events.kind,
+          events.status,
+          events.session_id,
+          events.memory_id,
+          events.job_id,
+          events.detail,
+          events.data_json
         FROM events
-        WHERE id = ?`
+        LEFT JOIN memory_spaces ON memory_spaces.id = events.space_id
+        WHERE events.id = ?`
       )
       .get(eventId);
 
@@ -230,26 +243,30 @@ export class EventRepository {
 
     let query = `
       SELECT
-        id,
-        at,
-        space_id,
-        root_path,
-        event,
-        kind,
-        status,
-        session_id,
-        memory_id,
-        job_id,
-        detail,
-        data_json
+        events.id,
+        events.at,
+        events.space_id,
+        memory_spaces.space_kind,
+        memory_spaces.display_name AS space_display_name,
+        memory_spaces.origin_url_normalized,
+        events.root_path,
+        events.event,
+        events.kind,
+        events.status,
+        events.session_id,
+        events.memory_id,
+        events.job_id,
+        events.detail,
+        events.data_json
       FROM events
+      LEFT JOIN memory_spaces ON memory_spaces.id = events.space_id
     `;
 
     if (whereClauses.length > 0) {
       query += ` WHERE ${whereClauses.join(" AND ")}`;
     }
 
-    query += ` ORDER BY id DESC LIMIT ${String(limit)}`;
+    query += ` ORDER BY events.id DESC LIMIT ${String(limit)}`;
 
     const rows = database.prepare(query).all(...parameters) as Record<
       string,

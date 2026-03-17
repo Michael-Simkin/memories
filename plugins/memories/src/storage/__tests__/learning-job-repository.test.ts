@@ -88,6 +88,9 @@ describe("LearningJobRepository", () => {
       assert.deepEqual(firstJob, {
         id: "job-1",
         space_id: touchResult.space.id,
+        space_kind: "directory",
+        space_display_name: "/workspace/project",
+        origin_url_normalized: null,
         root_path: "/workspace/project",
         transcript_path: "/tmp/transcript-1.md",
         last_assistant_message: "summarize it",
@@ -110,6 +113,7 @@ describe("LearningJobRepository", () => {
         leasedJobs.map((job) => job.id),
         ["job-2"],
       );
+      assert.equal(queuedJobs[0]?.space_display_name, "/workspace/project");
     } finally {
       bootstrapResult.database.close();
     }
@@ -161,6 +165,92 @@ describe("LearningJobRepository", () => {
       assert.equal(clearedJob.error_text, "model timeout");
       assert.equal(clearedJob.finished_at, "2026-03-14T06:31:00.000Z");
       assert.equal(clearedJob.updated_at, "2026-03-14T06:31:00.000Z");
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
+  it("reuses active jobs for the same enqueue key and allows re-enqueue after completion", () => {
+    const { bootstrapResult, touchResult } = createSpace();
+
+    try {
+      const firstJob = LearningJobRepository.enqueueLearningJob(bootstrapResult.database, {
+        id: "job-dedupe-first",
+        spaceId: touchResult.space.id,
+        rootPath: "/workspace/project",
+        transcriptPath: "/tmp/transcript-dedupe.md",
+        enqueueKey: "enqueue-key-1",
+        enqueuedAt: "2026-03-14T06:32:00.000Z",
+      });
+      const duplicateJob = LearningJobRepository.enqueueLearningJob(
+        bootstrapResult.database,
+        {
+          id: "job-dedupe-second",
+          spaceId: touchResult.space.id,
+          rootPath: "/workspace/project",
+          transcriptPath: "/tmp/transcript-dedupe.md",
+          enqueueKey: "enqueue-key-1",
+          enqueuedAt: "2026-03-14T06:33:00.000Z",
+        },
+      );
+      const leasedJob = LearningJobRepository.leaseNextLearningJob(
+        bootstrapResult.database,
+        {
+          leaseOwner: "worker-dedupe",
+          leaseDurationMs: 60_000,
+          leasedAt: "2026-03-14T06:34:00.000Z",
+        },
+      );
+
+      assert.ok(leasedJob);
+
+      const startedJob = LearningJobRepository.startLearningJob(
+        bootstrapResult.database,
+        {
+          jobId: leasedJob.id,
+          leaseOwner: "worker-dedupe",
+          startedAt: "2026-03-14T06:34:05.000Z",
+        },
+      );
+
+      assert.ok(startedJob);
+
+      const completedJob = LearningJobRepository.completeLearningJob(
+        bootstrapResult.database,
+        {
+          jobId: leasedJob.id,
+          leaseOwner: "worker-dedupe",
+          finishedAt: "2026-03-14T06:35:00.000Z",
+        },
+      );
+
+      assert.ok(completedJob);
+
+      const requeuedJob = LearningJobRepository.enqueueLearningJob(
+        bootstrapResult.database,
+        {
+          id: "job-dedupe-third",
+          spaceId: touchResult.space.id,
+          rootPath: "/workspace/project",
+          transcriptPath: "/tmp/transcript-dedupe.md",
+          enqueueKey: "enqueue-key-1",
+          enqueuedAt: "2026-03-14T06:36:00.000Z",
+        },
+      );
+      const queuedJobs = LearningJobRepository.listLearningJobs(
+        bootstrapResult.database,
+        {
+          spaceId: touchResult.space.id,
+        },
+      );
+
+      assert.equal(firstJob.id, "job-dedupe-first");
+      assert.equal(duplicateJob.id, "job-dedupe-first");
+      assert.equal(requeuedJob.id, "job-dedupe-third");
+      assert.deepEqual(
+        queuedJobs.map((job) => job.id),
+        ["job-dedupe-first", "job-dedupe-third"],
+      );
     } finally {
       bootstrapResult.database.close();
     }
@@ -306,6 +396,83 @@ describe("LearningJobRepository", () => {
       assert.equal(leasedJob.lease_owner, "worker-new");
       assert.equal(leasedJob.lease_expires_at, "2026-03-14T07:02:00.000Z");
       assert.equal(leasedJob.attempt_count, 2);
+    } finally {
+      bootstrapResult.database.close();
+    }
+  });
+
+  it("starts, heartbeats, and finalizes a leased job for the active lease owner", () => {
+    const { bootstrapResult, touchResult } = createSpace();
+
+    try {
+      LearningJobRepository.enqueueLearningJob(bootstrapResult.database, {
+        id: "job-active-transition",
+        spaceId: touchResult.space.id,
+        rootPath: "/workspace/project",
+        transcriptPath: "/tmp/transcript-active-transition.md",
+      });
+
+      const leasedJob = LearningJobRepository.leaseNextLearningJob(
+        bootstrapResult.database,
+        {
+          leaseOwner: "worker-active",
+          leaseDurationMs: 60_000,
+          leasedAt: "2026-03-14T07:10:00.000Z",
+        },
+      );
+
+      assert.ok(leasedJob);
+
+      const startedJob = LearningJobRepository.startLearningJob(
+        bootstrapResult.database,
+        {
+          jobId: "job-active-transition",
+          leaseOwner: "worker-active",
+          startedAt: "2026-03-14T07:10:05.000Z",
+        },
+      );
+      const heartbeatedJob = LearningJobRepository.heartbeatLearningJob(
+        bootstrapResult.database,
+        {
+          jobId: "job-active-transition",
+          leaseOwner: "worker-active",
+          leaseDurationMs: 120_000,
+          heartbeatedAt: "2026-03-14T07:11:00.000Z",
+        },
+      );
+      const failedOwnerStart = LearningJobRepository.startLearningJob(
+        bootstrapResult.database,
+        {
+          jobId: "job-active-transition",
+          leaseOwner: "worker-other",
+          startedAt: "2026-03-14T07:11:05.000Z",
+        },
+      );
+      const skippedJob = LearningJobRepository.skipLearningJob(
+        bootstrapResult.database,
+        {
+          jobId: "job-active-transition",
+          leaseOwner: "worker-active",
+          finishedAt: "2026-03-14T07:12:00.000Z",
+          errorText: "transcript missing",
+        },
+      );
+
+      assert.ok(startedJob);
+      assert.equal(startedJob.state, "running");
+      assert.equal(startedJob.started_at, "2026-03-14T07:10:05.000Z");
+
+      assert.ok(heartbeatedJob);
+      assert.equal(heartbeatedJob.lease_expires_at, "2026-03-14T07:13:00.000Z");
+
+      assert.equal(failedOwnerStart, null);
+
+      assert.ok(skippedJob);
+      assert.equal(skippedJob.state, "skipped");
+      assert.equal(skippedJob.lease_owner, null);
+      assert.equal(skippedJob.lease_expires_at, null);
+      assert.equal(skippedJob.error_text, "transcript missing");
+      assert.equal(skippedJob.finished_at, "2026-03-14T07:12:00.000Z");
     } finally {
       bootstrapResult.database.close();
     }

@@ -46,8 +46,17 @@ describe("handleStopHook", () => {
     const transcriptPath = path.join(workspacePath, "transcript.jsonl");
 
     await writeFile(transcriptPath, '{"event":"assistant"}\n', "utf8");
+    const originalLearningWorkerDisabled =
+      process.env["MEMORIES_LEARNING_WORKER_DISABLED"];
+    process.env["MEMORIES_LEARNING_WORKER_DISABLED"] = "1";
 
     testContext.after(async () => {
+      if (originalLearningWorkerDisabled === undefined) {
+        delete process.env["MEMORIES_LEARNING_WORKER_DISABLED"];
+      } else {
+        process.env["MEMORIES_LEARNING_WORKER_DISABLED"] =
+          originalLearningWorkerDisabled;
+      }
       await stopRunningEngine(claudeMemoryHome);
       await removePath(claudeMemoryHome);
       await removePath(workspacePath);

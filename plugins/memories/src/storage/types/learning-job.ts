@@ -24,6 +24,7 @@ export interface EnqueueLearningJobInput {
   spaceId: string;
   rootPath: string;
   transcriptPath: string;
+  enqueueKey?: string | undefined;
   lastAssistantMessage?: string | null | undefined;
   sessionId?: string | null | undefined;
   state?: LearningJobState | undefined;
@@ -55,6 +56,26 @@ export interface LeaseLearningJobInput {
   leaseOwner: string;
   leaseDurationMs: number;
   leasedAt?: string | undefined;
+}
+
+export interface StartLearningJobInput {
+  jobId: string;
+  leaseOwner: string;
+  startedAt?: string | undefined;
+}
+
+export interface HeartbeatLearningJobInput {
+  jobId: string;
+  leaseOwner: string;
+  leaseDurationMs: number;
+  heartbeatedAt?: string | undefined;
+}
+
+export interface FinalizeLearningJobInput {
+  jobId: string;
+  leaseOwner: string;
+  finishedAt?: string | undefined;
+  errorText?: string | null | undefined;
 }
 
 export interface ListLearningJobsOptions {

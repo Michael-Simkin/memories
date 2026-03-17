@@ -91,6 +91,9 @@ describe("EventRepository", () => {
           id: learningJobEvents[0]?.id,
           at: "2026-03-14T07:10:00.000Z",
           space_id: touchResult.space.id,
+          space_kind: "directory",
+          space_display_name: "/workspace/project",
+          origin_url_normalized: null,
           root_path: "/workspace/project",
           event: "Job enqueued",
           kind: "learning_job",
@@ -133,6 +136,9 @@ describe("EventRepository", () => {
       assert.ok(persistedEvent);
       assert.equal(createdEvent.space_id, touchResult.space.id);
       assert.equal(persistedEvent.space_id, null);
+      assert.equal(persistedEvent.space_kind, null);
+      assert.equal(persistedEvent.space_display_name, null);
+      assert.equal(persistedEvent.origin_url_normalized, null);
       assert.equal(persistedEvent.event, "Space opened");
     } finally {
       bootstrapResult.database.close();

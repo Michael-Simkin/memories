@@ -1,0 +1,1218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Memory UI</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b1020;
+        --bg-elevated: #121a30;
+        --bg-muted: #18223d;
+        --border: #29385f;
+        --text: #f5f7ff;
+        --text-muted: #9db0de;
+        --accent: #77a7ff;
+        --accent-strong: #a9c4ff;
+        --success: #7ee787;
+        --warning: #f7cc66;
+        --danger: #ff8f8f;
+        --chip: #1d2948;
+        --shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(119, 167, 255, 0.18), transparent 32%),
+          radial-gradient(circle at bottom right, rgba(169, 196, 255, 0.12), transparent 28%),
+          var(--bg);
+        color: var(--text);
+        font:
+          14px/1.5 ui-sans-serif,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      .shell {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .hero,
+      .panel {
+        background: rgba(18, 26, 48, 0.94);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        box-shadow: var(--shadow);
+      }
+
+      .hero {
+        padding: 24px;
+      }
+
+      .hero-head {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+      }
+
+      .hero-copy p,
+      .panel-copy {
+        margin: 8px 0 0;
+        color: var(--text-muted);
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px;
+        margin-top: 20px;
+      }
+
+      .stat-card {
+        padding: 14px;
+        border-radius: 14px;
+        background: var(--bg-muted);
+        border: 1px solid var(--border);
+      }
+
+      .stat-label {
+        color: var(--text-muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .stat-value {
+        margin-top: 6px;
+        font-size: 24px;
+        font-weight: 700;
+      }
+
+      .toolbar {
+        display: grid;
+        gap: 12px;
+        margin-top: 20px;
+        padding: 20px;
+      }
+
+      .toolbar-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+        gap: 20px;
+        margin-top: 20px;
+      }
+
+      .secondary-layout {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px;
+        margin-top: 20px;
+      }
+
+      .panel {
+        padding: 20px;
+      }
+
+      .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .panel-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--text-muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      input,
+      select,
+      textarea,
+      button {
+        font: inherit;
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        padding: 11px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(11, 16, 32, 0.86);
+        color: var(--text);
+      }
+
+      textarea {
+        min-height: 108px;
+        resize: vertical;
+      }
+
+      button {
+        border: 1px solid transparent;
+        border-radius: 12px;
+        padding: 10px 14px;
+        cursor: pointer;
+        transition:
+          transform 120ms ease,
+          background 120ms ease,
+          border-color 120ms ease;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+      }
+
+      .primary {
+        background: var(--accent);
+        color: #071126;
+        font-weight: 700;
+      }
+
+      .secondary {
+        background: var(--chip);
+        color: var(--text);
+        border-color: var(--border);
+      }
+
+      .danger {
+        background: rgba(255, 143, 143, 0.15);
+        color: var(--danger);
+        border-color: rgba(255, 143, 143, 0.35);
+      }
+
+      .card-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .memory-card,
+      .job-card,
+      .event-card {
+        padding: 16px;
+        border-radius: 16px;
+        background: var(--bg-muted);
+        border: 1px solid var(--border);
+      }
+
+      .card-head {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 12px 0;
+      }
+
+      .chip {
+        padding: 4px 9px;
+        border-radius: 999px;
+        background: var(--chip);
+        border: 1px solid var(--border);
+        color: var(--accent-strong);
+        font-size: 12px;
+      }
+
+      .meta-list {
+        display: grid;
+        gap: 4px;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+
+      .content-block {
+        white-space: pre-wrap;
+        margin-top: 12px;
+      }
+
+      .form-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .form-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .message {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(11, 16, 32, 0.8);
+        color: var(--text-muted);
+      }
+
+      .message.error {
+        border-color: rgba(255, 143, 143, 0.35);
+        color: var(--danger);
+      }
+
+      .message.success {
+        border-color: rgba(126, 231, 135, 0.35);
+        color: var(--success);
+      }
+
+      .muted {
+        color: var(--text-muted);
+      }
+
+      .status-online {
+        color: var(--success);
+      }
+
+      .status-warning {
+        color: var(--warning);
+      }
+
+      .status-error {
+        color: var(--danger);
+      }
+
+      details {
+        margin-top: 12px;
+      }
+
+      details pre {
+        overflow: auto;
+        padding: 12px;
+        border-radius: 12px;
+        background: rgba(11, 16, 32, 0.86);
+        border: 1px solid var(--border);
+      }
+
+      .empty {
+        padding: 18px;
+        border-radius: 14px;
+        background: rgba(11, 16, 32, 0.55);
+        border: 1px dashed var(--border);
+        color: var(--text-muted);
+      }
+
+      @media (max-width: 1100px) {
+        .layout,
+        .secondary-layout {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="hero">
+        <div class="hero-head">
+          <div class="hero-copy">
+            <h1>Claude Memory</h1>
+            <p id="hero-status">Loading engine state...</p>
+          </div>
+          <div class="panel-actions">
+            <button class="secondary" id="refresh-button" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="stats-grid" id="stats-grid"></div>
+      </section>
+
+      <section class="panel toolbar">
+        <div class="toolbar-row">
+          <div style="flex: 1 1 180px">
+            <label for="focus-mode">Focus</label>
+            <select id="focus-mode">
+              <option value="current">Current space</option>
+              <option value="all">All spaces</option>
+              <option value="selected">Explicit space</option>
+            </select>
+          </div>
+          <div style="flex: 2 1 280px">
+            <label for="space-select">Space</label>
+            <select id="space-select"></select>
+          </div>
+          <div style="flex: 2 1 280px">
+            <label for="search-input">Search</label>
+            <input
+              id="search-input"
+              type="search"
+              placeholder="Search memories by content, tags, or path context"
+            />
+          </div>
+        </div>
+        <div class="toolbar-row">
+          <div style="flex: 1 1 220px">
+            <label for="logs-status-filter">Log status filter</label>
+            <select id="logs-status-filter">
+              <option value="">All statuses</option>
+              <option value="info">Info</option>
+              <option value="success">Success</option>
+              <option value="warning">Warning</option>
+              <option value="error">Error</option>
+            </select>
+          </div>
+          <div class="message" id="focus-summary" style="flex: 1 1 480px"></div>
+        </div>
+      </section>
+
+      <section class="layout">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Memory Editor</h2>
+              <div class="panel-copy">
+                Current-space creation is the default. Switch focus or pick an explicit space when needed.
+              </div>
+            </div>
+          </div>
+          <form class="form-grid" id="memory-form">
+            <div>
+              <label for="memory-space-select">Target space</label>
+              <select id="memory-space-select"></select>
+            </div>
+            <div>
+              <label for="memory-type">Memory type</label>
+              <select id="memory-type">
+                <option value="fact">fact</option>
+                <option value="rule">rule</option>
+                <option value="decision">decision</option>
+                <option value="episode">episode</option>
+              </select>
+            </div>
+            <div>
+              <label for="memory-content">Content</label>
+              <textarea
+                id="memory-content"
+                placeholder="State the durable memory clearly and directly."
+              ></textarea>
+            </div>
+            <div>
+              <label for="memory-tags">Tags</label>
+              <input
+                id="memory-tags"
+                type="text"
+                placeholder="comma,separated,tags"
+              />
+            </div>
+            <div>
+              <label for="memory-path-matchers">Path matchers</label>
+              <textarea
+                id="memory-path-matchers"
+                placeholder="One relative path matcher per line. Example: src/engine/**/*.ts"
+              ></textarea>
+            </div>
+            <div>
+              <label>
+                <input id="memory-pinned" type="checkbox" style="width: auto" />
+                Pin this memory
+              </label>
+            </div>
+            <div class="form-actions">
+              <button class="primary" id="save-memory-button" type="submit">Save memory</button>
+              <button class="secondary" id="cancel-edit-button" type="button">Clear form</button>
+            </div>
+            <div class="message" id="form-message"></div>
+          </form>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Memories</h2>
+              <div class="panel-copy" id="memories-summary"></div>
+            </div>
+          </div>
+          <div class="card-list" id="memories-list"></div>
+        </section>
+      </section>
+
+      <section class="secondary-layout">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Jobs</h2>
+              <div class="panel-copy" id="jobs-summary"></div>
+            </div>
+          </div>
+          <div class="card-list" id="jobs-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Logs</h2>
+              <div class="panel-copy" id="logs-summary"></div>
+            </div>
+          </div>
+          <div class="card-list" id="logs-list"></div>
+        </section>
+      </section>
+    </div>
+
+    <script>
+      const state = {
+        currentCwd: new URLSearchParams(window.location.search).get("cwd"),
+        currentSpace: null,
+        editingMemoryId: null,
+        focusMode: "all",
+        jobs: [],
+        logs: [],
+        memories: [],
+        searchText: "",
+        spaces: [],
+        stats: null,
+      };
+
+      if (new URLSearchParams(window.location.search).get("space_id")) {
+        state.focusMode = "selected";
+      } else if (state.currentCwd) {
+        state.focusMode = "current";
+      }
+
+      const elements = {
+        cancelEditButton: document.querySelector("#cancel-edit-button"),
+        focusMode: document.querySelector("#focus-mode"),
+        focusSummary: document.querySelector("#focus-summary"),
+        formMessage: document.querySelector("#form-message"),
+        heroStatus: document.querySelector("#hero-status"),
+        jobsList: document.querySelector("#jobs-list"),
+        jobsSummary: document.querySelector("#jobs-summary"),
+        logsList: document.querySelector("#logs-list"),
+        logsStatusFilter: document.querySelector("#logs-status-filter"),
+        logsSummary: document.querySelector("#logs-summary"),
+        memoriesList: document.querySelector("#memories-list"),
+        memoriesSummary: document.querySelector("#memories-summary"),
+        memoryContent: document.querySelector("#memory-content"),
+        memoryForm: document.querySelector("#memory-form"),
+        memoryPathMatchers: document.querySelector("#memory-path-matchers"),
+        memoryPinned: document.querySelector("#memory-pinned"),
+        memorySpaceSelect: document.querySelector("#memory-space-select"),
+        memoryTags: document.querySelector("#memory-tags"),
+        memoryType: document.querySelector("#memory-type"),
+        refreshButton: document.querySelector("#refresh-button"),
+        searchInput: document.querySelector("#search-input"),
+        spaceSelect: document.querySelector("#space-select"),
+        statsGrid: document.querySelector("#stats-grid"),
+      };
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (character) => {
+          const replacements = {
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          };
+
+          return replacements[character] || character;
+        });
+      }
+
+      async function fetchJson(pathname, options = {}) {
+        const request = await fetch(pathname, options);
+
+        if (!request.ok) {
+          let errorText = `Request failed with status ${request.status}.`;
+
+          try {
+            const payload = await request.json();
+
+            if (payload && typeof payload.error === "string") {
+              errorText = payload.error;
+            }
+          } catch {
+            // Ignore invalid JSON and keep the generic message.
+          }
+
+          throw new Error(errorText);
+        }
+
+        return request.json();
+      }
+
+      function formatDate(value) {
+        if (!value) {
+          return "n/a";
+        }
+
+        const date = new Date(value);
+
+        if (Number.isNaN(date.valueOf())) {
+          return value;
+        }
+
+        return date.toLocaleString();
+      }
+
+      function formatDuration(milliseconds) {
+        if (typeof milliseconds !== "number" || !Number.isFinite(milliseconds)) {
+          return "n/a";
+        }
+
+        const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+
+        if (hours > 0) {
+          return `${hours}h ${minutes}m`;
+        }
+
+        if (minutes > 0) {
+          return `${minutes}m ${seconds}s`;
+        }
+
+        return `${seconds}s`;
+      }
+
+      function parseStringList(value) {
+        return value
+          .split(/[\n,]/u)
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0);
+      }
+
+      function getFocusedSpaceId() {
+        if (state.focusMode === "current") {
+          return state.currentSpace?.id ?? null;
+        }
+
+        if (state.focusMode === "selected") {
+          return elements.spaceSelect.value || null;
+        }
+
+        return null;
+      }
+
+      function getMemoryFormSpaceId() {
+        const selectedSpaceId = elements.memorySpaceSelect.value;
+
+        if (selectedSpaceId) {
+          return selectedSpaceId;
+        }
+
+        return getFocusedSpaceId();
+      }
+
+      function renderStats() {
+        if (!state.stats) {
+          elements.statsGrid.innerHTML = '<div class="empty">Stats are unavailable.</div>';
+          elements.heroStatus.textContent = "Engine stats are unavailable.";
+          return;
+        }
+
+        const idleRemaining =
+          state.stats.idle_timeout_ms -
+          (Date.now() - Date.parse(state.stats.last_activity_at || state.stats.started_at));
+        const stats = [
+          ["Total memories", state.stats.totalMemories],
+          ["Total spaces", state.stats.totalSpaces],
+          ["Queued jobs", state.stats.queuedJobs],
+          ["Running jobs", state.stats.runningJobs],
+          ["Uptime", formatDuration(state.stats.uptime_ms)],
+          ["Idle remaining", formatDuration(idleRemaining)],
+        ];
+
+        elements.statsGrid.innerHTML = stats
+          .map(
+            ([label, value]) => `
+              <article class="stat-card">
+                <div class="stat-label">${escapeHtml(label)}</div>
+                <div class="stat-value">${escapeHtml(String(value))}</div>
+              </article>
+            `,
+          )
+          .join("");
+
+        const onlineText = state.stats.online ? "online" : "offline";
+        let semanticText = "semantic status unknown";
+
+        if (state.stats.semantic_available === true) {
+          semanticText = "semantic search ready";
+        } else if (state.stats.semantic_available === false) {
+          semanticText = "semantic search degraded";
+        }
+
+        elements.heroStatus.innerHTML = `
+          <span class="${state.stats.online ? "status-online" : "status-error"}">${escapeHtml(onlineText)}</span>
+          · started ${escapeHtml(formatDate(state.stats.started_at))}
+          · last activity ${escapeHtml(formatDate(state.stats.last_activity_at))}
+          · ${escapeHtml(semanticText)}
+        `;
+      }
+
+      function renderSpaceOptions() {
+        const options = state.spaces
+          .map(
+            (space) => `
+              <option value="${escapeHtml(space.id)}">${escapeHtml(
+                `${space.displayName} (${space.spaceKind})`,
+              )}</option>
+            `,
+          )
+          .join("");
+
+        elements.spaceSelect.innerHTML = `<option value="">Select a space</option>${options}`;
+        elements.memorySpaceSelect.innerHTML = `<option value="">Use focused space</option>${options}`;
+
+        const querySpaceId = new URLSearchParams(window.location.search).get("space_id");
+
+        if (querySpaceId && state.spaces.some((space) => space.id === querySpaceId)) {
+          elements.spaceSelect.value = querySpaceId;
+        } else if (state.currentSpace) {
+          elements.spaceSelect.value = state.currentSpace.id;
+        }
+
+        syncMemorySpaceSelection();
+      }
+
+      function syncMemorySpaceSelection() {
+        if (state.editingMemoryId) {
+          return;
+        }
+
+        const focusedSpaceId = getFocusedSpaceId();
+
+        if (focusedSpaceId) {
+          elements.memorySpaceSelect.value = focusedSpaceId;
+          return;
+        }
+
+        elements.memorySpaceSelect.value = "";
+      }
+
+      async function loadMemories() {
+        const focusedSpaceId = getFocusedSpaceId();
+        const queryText = state.searchText.trim();
+
+        if (state.focusMode === "all") {
+          const requestPath =
+            queryText.length > 0
+              ? `/memories?query=${encodeURIComponent(queryText)}&limit=100`
+              : "/memories?limit=100";
+          const payload = await fetchJson(requestPath);
+
+          state.memories = payload.memories || [];
+          return;
+        }
+
+        if (!focusedSpaceId) {
+          state.memories = [];
+          return;
+        }
+
+        if (queryText.length > 0) {
+          const payload = await fetchJson("/memories/search", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              space_id: focusedSpaceId,
+              query: queryText,
+              limit: 50,
+            }),
+          });
+
+          state.memories = payload.results || [];
+          return;
+        }
+
+        const payload = await fetchJson(
+          `/memories?space_id=${encodeURIComponent(focusedSpaceId)}`,
+        );
+
+        state.memories = payload.memories || [];
+      }
+
+      async function loadJobs() {
+        const payload = await fetchJson("/learning-jobs?limit=100");
+        const focusedSpaceId = getFocusedSpaceId();
+
+        state.jobs =
+          state.focusMode === "all" || !focusedSpaceId
+            ? payload.jobs || []
+            : (payload.jobs || []).filter((job) => job.space_id === focusedSpaceId);
+      }
+
+      async function loadLogs() {
+        const payload = await fetchJson("/logs?limit=100");
+        const focusedSpaceId = getFocusedSpaceId();
+        const selectedStatus = elements.logsStatusFilter.value;
+
+        state.logs = (payload.events || []).filter((event) => {
+          if (selectedStatus && event.status !== selectedStatus) {
+            return false;
+          }
+
+          if (state.focusMode !== "all" && focusedSpaceId && event.space_id !== focusedSpaceId) {
+            return false;
+          }
+
+          return true;
+        });
+      }
+
+      async function resolveCurrentSpace() {
+        if (!state.currentCwd) {
+          state.currentSpace = null;
+          return;
+        }
+
+        const payload = await fetchJson("/spaces/touch", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            context: {
+              cwd: state.currentCwd,
+            },
+          }),
+        });
+
+        state.currentSpace = payload.space;
+      }
+
+      async function loadCoreData() {
+        const [statsPayload, spacesPayload] = await Promise.all([
+          fetchJson("/stats"),
+          fetchJson("/spaces"),
+        ]);
+
+        state.stats = statsPayload;
+        state.spaces = spacesPayload.spaces || [];
+      }
+
+      function renderFocusSummary() {
+        const focusedSpaceId = getFocusedSpaceId();
+        const focusedSpace = state.spaces.find((space) => space.id === focusedSpaceId);
+        const currentSpaceText = state.currentSpace
+          ? `${state.currentSpace.displayName} (${state.currentSpace.spaceKind})`
+          : "unresolved";
+
+        if (state.focusMode === "current") {
+          elements.focusSummary.innerHTML = `Current space focus: <strong>${escapeHtml(
+            currentSpaceText,
+          )}</strong>`;
+          return;
+        }
+
+        if (state.focusMode === "selected") {
+          elements.focusSummary.innerHTML = focusedSpace
+            ? `Explicit space focus: <strong>${escapeHtml(
+                `${focusedSpace.displayName} (${focusedSpace.spaceKind})`,
+              )}</strong>`
+            : "Pick a space to browse or edit.";
+          return;
+        }
+
+        elements.focusSummary.innerHTML =
+          "All spaces focus: the list and jobs span every memory space, and search runs against the global memory index with visible space annotations.";
+      }
+
+      function renderMemories() {
+        const countLabel = `${state.memories.length} memory${state.memories.length === 1 ? "" : "ies"}`;
+
+        elements.memoriesSummary.textContent = state.searchText
+          ? `Showing ${countLabel} for "${state.searchText}".`
+          : `Showing ${countLabel}.`;
+
+        if (state.memories.length === 0) {
+          elements.memoriesList.innerHTML =
+            '<div class="empty">No memories matched the active focus and search.</div>';
+          return;
+        }
+
+        elements.memoriesList.innerHTML = state.memories
+          .map(
+            (memory) => `
+              <article class="memory-card">
+                <div class="card-head">
+                  <div>
+                    <strong>${escapeHtml(memory.memory_type)}</strong>
+                    <span class="muted">in ${escapeHtml(memory.space_display_name)}</span>
+                  </div>
+                  <div class="panel-actions">
+                    <button class="secondary" data-action="edit-memory" data-memory-id="${escapeHtml(
+                      memory.id,
+                    )}" type="button">Edit</button>
+                    <button class="danger" data-action="delete-memory" data-memory-id="${escapeHtml(
+                      memory.id,
+                    )}" type="button">Delete</button>
+                  </div>
+                </div>
+                <div class="chip-row">
+                  <span class="chip">${escapeHtml(memory.space_kind)}</span>
+                  <span class="chip">${memory.is_pinned ? "pinned" : "unpinned"}</span>
+                  ${
+                    Array.isArray(memory.matched_by)
+                      ? memory.matched_by
+                          .map((matchedBy) => `<span class="chip">${escapeHtml(matchedBy)}</span>`)
+                          .join("")
+                      : ""
+                  }
+                </div>
+                <div class="meta-list">
+                  <div>Updated: ${escapeHtml(formatDate(memory.updated_at))}</div>
+                  <div>Tags: ${escapeHtml((memory.tags || []).join(", ") || "(none)")}</div>
+                  <div>Path matchers: ${escapeHtml(
+                    (memory.path_matchers || []).join(", ") || "(none)",
+                  )}</div>
+                </div>
+                <div class="content-block">${escapeHtml(memory.content)}</div>
+              </article>
+            `,
+          )
+          .join("");
+      }
+
+      function renderJobs() {
+        elements.jobsSummary.textContent = `${state.jobs.length} job${
+          state.jobs.length === 1 ? "" : "s"
+        } in view.`;
+
+        if (state.jobs.length === 0) {
+          elements.jobsList.innerHTML =
+            '<div class="empty">No queued, running, or historical jobs matched the current focus.</div>';
+          return;
+        }
+
+        elements.jobsList.innerHTML = state.jobs
+          .map((job) => {
+            const spaceLabel = job.space_display_name || job.space_id;
+            const spaceKindChip = job.space_kind
+              ? `<span class="chip">${escapeHtml(job.space_kind)}</span>`
+              : "";
+
+            return `
+              <article class="job-card">
+                <div class="card-head">
+                  <strong>${escapeHtml(job.state)}</strong>
+                  <span class="chip">${escapeHtml(spaceLabel)}</span>
+                </div>
+                <div class="chip-row">
+                  ${spaceKindChip}
+                </div>
+                <div class="meta-list">
+                  <div>Transcript: ${escapeHtml(job.transcript_path)}</div>
+                  <div>Attempts: ${escapeHtml(String(job.attempt_count))}</div>
+                  <div>Queued: ${escapeHtml(formatDate(job.enqueued_at))}</div>
+                  <div>Started: ${escapeHtml(formatDate(job.started_at))}</div>
+                  <div>Finished: ${escapeHtml(formatDate(job.finished_at))}</div>
+                </div>
+                ${
+                  job.error_text
+                    ? `<div class="message error">${escapeHtml(job.error_text)}</div>`
+                    : ""
+                }
+              </article>
+            `;
+          })
+          .join("");
+      }
+
+      function renderLogs() {
+        elements.logsSummary.textContent = `${state.logs.length} event${
+          state.logs.length === 1 ? "" : "s"
+        } in view.`;
+
+        if (state.logs.length === 0) {
+          elements.logsList.innerHTML =
+            '<div class="empty">No events matched the current focus and status filter.</div>';
+          return;
+        }
+
+        elements.logsList.innerHTML = state.logs
+          .map((event) => {
+            let statusClass = "";
+            const spaceLabel = event.space_display_name || event.space_id || "none";
+
+            if (event.status === "error") {
+              statusClass = "status-error";
+            } else if (event.status === "warning") {
+              statusClass = "status-warning";
+            } else if (event.status === "success") {
+              statusClass = "status-online";
+            }
+
+            return `
+              <article class="event-card">
+                <div class="card-head">
+                  <strong>${escapeHtml(event.event)}</strong>
+                  <span class="${statusClass}">${escapeHtml(event.status)}</span>
+                </div>
+                <div class="meta-list">
+                  <div>At: ${escapeHtml(formatDate(event.at))}</div>
+                  <div>Kind: ${escapeHtml(event.kind)}</div>
+                  <div>Space: ${escapeHtml(spaceLabel)}</div>
+                  <div>Space kind: ${escapeHtml(event.space_kind || "n/a")}</div>
+                  <div>Job: ${escapeHtml(event.job_id || "n/a")}</div>
+                </div>
+                ${
+                  event.detail
+                    ? `<div class="content-block">${escapeHtml(event.detail)}</div>`
+                    : ""
+                }
+                ${
+                  event.data
+                    ? `<details><summary>Structured data</summary><pre>${escapeHtml(
+                        JSON.stringify(event.data, null, 2),
+                      )}</pre></details>`
+                    : ""
+                }
+              </article>
+            `;
+          })
+          .join("");
+      }
+
+      function renderAll() {
+        renderStats();
+        renderSpaceOptions();
+        renderFocusSummary();
+        renderMemories();
+        renderJobs();
+        renderLogs();
+      }
+
+      function setFormMessage(text, type = "") {
+        elements.formMessage.textContent = text;
+        elements.formMessage.className = type ? `message ${type}` : "message";
+      }
+
+      function resetForm() {
+        state.editingMemoryId = null;
+        elements.memoryType.value = "fact";
+        elements.memoryContent.value = "";
+        elements.memoryTags.value = "";
+        elements.memoryPathMatchers.value = "";
+        elements.memoryPinned.checked = false;
+        syncMemorySpaceSelection();
+        setFormMessage("Ready to create a new memory.");
+      }
+
+      async function refreshUi() {
+        await resolveCurrentSpace();
+        await loadCoreData();
+        await Promise.all([loadMemories(), loadJobs(), loadLogs()]);
+        renderAll();
+      }
+
+      async function saveMemory(event) {
+        event.preventDefault();
+
+        const targetSpaceId = getMemoryFormSpaceId();
+
+        if (!targetSpaceId) {
+          setFormMessage("Choose a target space before saving.", "error");
+          return;
+        }
+
+        const payload = {
+          space_id: targetSpaceId,
+          memory_type: elements.memoryType.value,
+          content: elements.memoryContent.value.trim(),
+          tags: parseStringList(elements.memoryTags.value),
+          is_pinned: elements.memoryPinned.checked,
+          path_matchers: parseStringList(elements.memoryPathMatchers.value),
+        };
+
+        if (!payload.content) {
+          setFormMessage("Memory content is required.", "error");
+          return;
+        }
+
+        try {
+          if (state.editingMemoryId) {
+            await fetchJson(`/memories/${encodeURIComponent(state.editingMemoryId)}`, {
+              method: "PATCH",
+              headers: {
+                "content-type": "application/json",
+              },
+              body: JSON.stringify(payload),
+            });
+            setFormMessage("Memory updated.", "success");
+          } else {
+            await fetchJson("/memories/add", {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+              },
+              body: JSON.stringify(payload),
+            });
+            setFormMessage("Memory created.", "success");
+          }
+
+          resetForm();
+          await refreshUi();
+        } catch (error) {
+          setFormMessage(error.message || "Unable to save the memory.", "error");
+        }
+      }
+
+      async function deleteMemory(memoryId) {
+        const memory = state.memories.find((entry) => entry.id === memoryId);
+
+        if (!memory) {
+          return;
+        }
+
+        if (!window.confirm("Delete this memory?")) {
+          return;
+        }
+
+        try {
+          await fetchJson(`/memories/${encodeURIComponent(memoryId)}`, {
+            method: "DELETE",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              space_id: memory.space_id,
+            }),
+          });
+
+          if (state.editingMemoryId === memoryId) {
+            resetForm();
+          }
+
+          await refreshUi();
+        } catch (error) {
+          setFormMessage(error.message || "Unable to delete the memory.", "error");
+        }
+      }
+
+      function editMemory(memoryId) {
+        const memory = state.memories.find((entry) => entry.id === memoryId);
+
+        if (!memory) {
+          return;
+        }
+
+        state.editingMemoryId = memory.id;
+        elements.memorySpaceSelect.value = memory.space_id;
+        elements.memoryType.value = memory.memory_type;
+        elements.memoryContent.value = memory.content;
+        elements.memoryTags.value = (memory.tags || []).join(", ");
+        elements.memoryPathMatchers.value = (memory.path_matchers || []).join("\n");
+        elements.memoryPinned.checked = Boolean(memory.is_pinned);
+        setFormMessage(`Editing memory ${memory.id}.`);
+        elements.memoryContent.focus();
+      }
+
+      async function handleFocusChange() {
+        state.focusMode = elements.focusMode.value;
+        syncMemorySpaceSelection();
+        await refreshUi();
+      }
+
+      function wireEvents() {
+        elements.focusMode.value = state.focusMode;
+        elements.memoryForm.addEventListener("submit", saveMemory);
+        elements.cancelEditButton.addEventListener("click", resetForm);
+        elements.refreshButton.addEventListener("click", () => {
+          void refreshUi();
+        });
+        elements.searchInput.addEventListener("input", async (event) => {
+          state.searchText = event.target.value;
+          await loadMemories();
+          renderMemories();
+        });
+        elements.focusMode.addEventListener("change", () => {
+          void handleFocusChange();
+        });
+        elements.spaceSelect.addEventListener("change", () => {
+          syncMemorySpaceSelection();
+          void refreshUi();
+        });
+        elements.logsStatusFilter.addEventListener("change", () => {
+          void refreshUi();
+        });
+        elements.memoriesList.addEventListener("click", (event) => {
+          const actionButton = event.target.closest("button[data-action]");
+
+          if (!actionButton) {
+            return;
+          }
+
+          const action = actionButton.getAttribute("data-action");
+          const memoryId = actionButton.getAttribute("data-memory-id");
+
+          if (!memoryId) {
+            return;
+          }
+
+          if (action === "edit-memory") {
+            editMemory(memoryId);
+            return;
+          }
+
+          if (action === "delete-memory") {
+            void deleteMemory(memoryId);
+          }
+        });
+      }
+
+      async function main() {
+        wireEvents();
+        resetForm();
+
+        try {
+          await refreshUi();
+        } catch (error) {
+          elements.heroStatus.textContent =
+            error.message || "Unable to load the Claude Memory UI.";
+        }
+
+        window.setInterval(() => {
+          void refreshUi().catch(() => {});
+        }, 10000);
+      }
+
+      main().catch(() => {
+        elements.heroStatus.textContent = "Unable to start the Claude Memory UI.";
+      });
+    </script>
+  </body>
+</html>

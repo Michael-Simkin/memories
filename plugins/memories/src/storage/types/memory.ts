@@ -88,6 +88,12 @@ export interface SearchMemoriesOptions {
   limit?: number | undefined;
 }
 
+export interface SearchAllMemoriesOptions {
+  query?: string | undefined;
+  queryEmbedding?: number[] | undefined;
+  limit?: number | undefined;
+}
+
 export interface ResolveActiveSpaceOptions {
   spaceId?: string | undefined;
   context?: CurrentContext | undefined;

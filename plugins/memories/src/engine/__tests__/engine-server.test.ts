@@ -200,6 +200,8 @@ describe("startEngineServer", () => {
     const startedServer = await startEngineServer({
       claudeMemoryHome,
       idleTimeoutMs: 10_000,
+      learningWorkerEnabled: false,
+      learningWorkerPollIntervalMs: 60_000,
       pluginRoot: TEST_PLUGIN_ROOT,
       registerSignalHandlers: false,
     });
@@ -216,6 +218,9 @@ describe("startEngineServer", () => {
     );
     const spacesResponse = await fetch(
       `http://${startedServer.host}:${String(startedServer.port)}/spaces`,
+    );
+    const uiResponse = await fetch(
+      `http://${startedServer.host}:${String(startedServer.port)}/ui`,
     );
     const persistedLock = await EngineLockService.readEngineLock({
       claudeMemoryHome,
@@ -237,9 +242,10 @@ describe("startEngineServer", () => {
     const spacesPayload = (await spacesResponse.json()) as {
       spaces: Array<{ id: string; memoryCount: number; queuedJobCount: number }>;
     };
+    const uiHtml = await uiResponse.text();
 
     assert.equal(healthResponse.status, 200);
-    assert.equal(healthPayload.db_schema_version, 5);
+    assert.equal(healthPayload.db_schema_version, 6);
     assert.equal(healthPayload.api_contract_version, 1);
     assert.equal(typeof healthPayload.engine_version, "string");
 
@@ -260,6 +266,9 @@ describe("startEngineServer", () => {
     assert.equal(firstSpace.memoryCount, 1);
     assert.equal(firstSpace.queuedJobCount, 1);
 
+    assert.equal(uiResponse.status, 200);
+    assert.match(uiHtml, /<title>Claude Memory UI<\/title>/u);
+
     assert.ok(persistedLock);
     assert.equal(persistedLock.port, startedServer.port);
   });
@@ -271,6 +280,8 @@ describe("startEngineServer", () => {
     const startedServer = await startEngineServer({
       claudeMemoryHome,
       idleTimeoutMs: 250,
+      learningWorkerEnabled: false,
+      learningWorkerPollIntervalMs: 60_000,
       pluginRoot: TEST_PLUGIN_ROOT,
       registerSignalHandlers: false,
     });
@@ -328,6 +339,8 @@ describe("startEngineServer", () => {
     const startedServer = await startEngineServer({
       claudeMemoryHome,
       idleTimeoutMs: 250,
+      learningWorkerEnabled: false,
+      learningWorkerPollIntervalMs: 60_000,
       pluginRoot: TEST_PLUGIN_ROOT,
       registerSignalHandlers: false,
     });
@@ -395,6 +408,8 @@ describe("startEngineServer", () => {
     const startedServer = await startEngineServer({
       claudeMemoryHome,
       idleTimeoutMs: 10_000,
+      learningWorkerEnabled: false,
+      learningWorkerPollIntervalMs: 60_000,
       pluginRoot: TEST_PLUGIN_ROOT,
       registerSignalHandlers: false,
     });
@@ -522,6 +537,8 @@ describe("startEngineServer", () => {
     const startedServer = await startEngineServer({
       claudeMemoryHome,
       idleTimeoutMs: 10_000,
+      learningWorkerEnabled: false,
+      learningWorkerPollIntervalMs: 60_000,
       pluginRoot: TEST_PLUGIN_ROOT,
       registerSignalHandlers: false,
     });
@@ -591,14 +608,24 @@ describe("startEngineServer", () => {
       `/learning-jobs?space_id=${encodeURIComponent(seededState.spaceId)}`,
     );
     const listedJobsPayload = (await listJobsResponse.json()) as {
-      jobs: Array<{ id: string; state: string }>;
+      jobs: Array<{
+        id: string;
+        space_display_name: string | null;
+        space_kind: string | null;
+        state: string;
+      }>;
     };
     const listLogsResponse = await requestJson(
       startedServer,
       `/logs?space_id=${encodeURIComponent(seededState.spaceId)}&kind=api`,
     );
     const listedLogsPayload = (await listLogsResponse.json()) as {
-      events: Array<{ detail: string | null; event: string }>;
+      events: Array<{
+        detail: string | null;
+        event: string;
+        space_display_name: string | null;
+        space_kind: string | null;
+      }>;
     };
     const deleteMemoryResponse = await deleteJson(
       startedServer,
@@ -649,17 +676,24 @@ describe("startEngineServer", () => {
       listedJobsPayload.jobs.map((job) => job.id),
       [enqueuedJobPayload.job.id],
     );
-    assert.equal(listedJobsPayload.jobs[0]?.state, "pending");
+    const firstListedJob = listedJobsPayload.jobs[0];
+
+    assert.ok(firstListedJob);
+    assert.equal(firstListedJob.state, "pending");
+    assert.equal(firstListedJob.space_kind, "directory");
+    assert.equal(firstListedJob.space_display_name, resolvedWorkspaceRoot);
 
     assert.equal(listLogsResponse.status, 200);
     assert.deepEqual(
       listedLogsPayload.events.map((event) => event.event),
       ["seed-ui-log"],
     );
-    assert.equal(
-      listedLogsPayload.events[0]?.detail,
-      "Seeded API event for UI log listing.",
-    );
+    const firstListedLog = listedLogsPayload.events[0];
+
+    assert.ok(firstListedLog);
+    assert.equal(firstListedLog.detail, "Seeded API event for UI log listing.");
+    assert.equal(firstListedLog.space_kind, "directory");
+    assert.equal(firstListedLog.space_display_name, resolvedWorkspaceRoot);
 
     assert.equal(deleteMemoryResponse.status, 200);
     assert.equal(deleteMemoryPayload.deleted, true);
@@ -667,6 +701,112 @@ describe("startEngineServer", () => {
 
     assert.equal(finalMemoriesResponse.status, 200);
     assert.deepEqual(finalMemoriesPayload.memories, []);
+  });
+
+  it("supports backend all-spaces memory search with visible space metadata", async (testContext) => {
+    const claudeMemoryHome = await createTempDirectory(
+      "claude-memory-engine-all-spaces-home-",
+    );
+    const firstWorkspaceRoot = await createTempDirectory(
+      "claude-memory-engine-all-spaces-one-",
+    );
+    const secondWorkspaceRoot = await createTempDirectory(
+      "claude-memory-engine-all-spaces-two-",
+    );
+    const resolvedFirstWorkspaceRoot = await realpath(firstWorkspaceRoot);
+    const resolvedSecondWorkspaceRoot = await realpath(secondWorkspaceRoot);
+    const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
+      claudeMemoryHome,
+      pluginRoot: TEST_PLUGIN_ROOT,
+    });
+
+    testContext.after(async () => {
+      await removePath(firstWorkspaceRoot);
+      await removePath(secondWorkspaceRoot);
+      await removePath(claudeMemoryHome);
+    });
+
+    try {
+      const firstSpace = SpaceRegistryRepository.touchResolvedMemorySpace(
+        bootstrapResult.database,
+        {
+          resolution: createResolution(resolvedFirstWorkspaceRoot, {
+            insideWorkTree: false,
+          }),
+          observedAt: "2026-03-14T15:00:00.000Z",
+        },
+      );
+      const secondSpace = SpaceRegistryRepository.touchResolvedMemorySpace(
+        bootstrapResult.database,
+        {
+          resolution: createResolution(resolvedSecondWorkspaceRoot, {
+            insideWorkTree: false,
+          }),
+          observedAt: "2026-03-14T15:01:00.000Z",
+        },
+      );
+
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "all-spaces-memory-one",
+        spaceId: firstSpace.space.id,
+        memoryType: "rule",
+        content: "First all-space memory.",
+        tags: ["shared-ui-search"],
+        updatedAt: "2026-03-14T15:02:00.000Z",
+      });
+      MemoryRepository.createMemory(bootstrapResult.database, {
+        id: "all-spaces-memory-two",
+        spaceId: secondSpace.space.id,
+        memoryType: "fact",
+        content: "Second all-space memory.",
+        tags: ["shared-ui-search"],
+        updatedAt: "2026-03-14T15:03:00.000Z",
+      });
+    } finally {
+      bootstrapResult.database.close();
+    }
+
+    const startedServer = await startEngineServer({
+      claudeMemoryHome,
+      idleTimeoutMs: 10_000,
+      learningWorkerEnabled: false,
+      learningWorkerPollIntervalMs: 60_000,
+      pluginRoot: TEST_PLUGIN_ROOT,
+      registerSignalHandlers: false,
+    });
+
+    testContext.after(async () => {
+      await startedServer.close();
+    });
+
+    const searchResponse = await requestJson(
+      startedServer,
+      "/memories?query=shared-ui-search&limit=100",
+    );
+    const searchPayload = (await searchResponse.json()) as {
+      memories: Array<{
+        id: string;
+        matched_by: string[];
+        space_display_name: string;
+        space_kind: string;
+      }>;
+    };
+
+    assert.equal(searchResponse.status, 200);
+    assert.deepEqual(
+      searchPayload.memories.map((memory) => memory.id).sort(),
+      ["all-spaces-memory-one", "all-spaces-memory-two"],
+    );
+    assert.deepEqual(
+      searchPayload.memories.map((memory) => memory.space_display_name).sort(),
+      [resolvedFirstWorkspaceRoot, resolvedSecondWorkspaceRoot],
+    );
+    assert.ok(
+      searchPayload.memories.every((memory) => memory.space_kind === "directory"),
+    );
+    assert.ok(
+      searchPayload.memories.every((memory) => memory.matched_by.includes("lexical")),
+    );
   });
 
   it("uses Ollama embeddings for semantic memory writes and search when available", async (testContext) => {
@@ -726,6 +866,8 @@ describe("startEngineServer", () => {
     const startedServer = await startEngineServer({
       claudeMemoryHome,
       idleTimeoutMs: 10_000,
+      learningWorkerEnabled: false,
+      learningWorkerPollIntervalMs: 60_000,
       pluginRoot: TEST_PLUGIN_ROOT,
       registerSignalHandlers: false,
     });

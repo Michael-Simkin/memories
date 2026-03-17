@@ -97,7 +97,9 @@ export async function handleSessionStartHook(
   );
 
   return {
-    systemMessage: `Claude Memory UI: ${ensuredEngine.baseUrl}/ui`,
+    systemMessage: `Claude Memory UI: ${ensuredEngine.baseUrl}/ui?cwd=${encodeURIComponent(
+      input.cwd,
+    )}`,
     hookSpecificOutput: {
       hookEventName: "SessionStart",
       additionalContext: buildStartupAdditionalContext(pinnedMemories),

@@ -4,3 +4,4 @@ dist/
 !plugins/memories/dist/**
 coverage/
 .DS_Store
+.memories/

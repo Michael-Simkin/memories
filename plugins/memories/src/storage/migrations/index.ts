@@ -3,6 +3,7 @@ import { memoriesAndPathMatchersMigration } from "./002-memories-and-path-matche
 import { memoryFtsMigration } from "./003-memory-fts.js";
 import { learningJobsAndEventsMigration } from "./004-learning-jobs-and-events.js";
 import { vecMemoryMigration } from "./005-vec-memory.js";
+import { learningJobEnqueueKeyMigration } from "./006-learning-job-enqueue-key.js";
 
 export const STORAGE_MIGRATIONS = [
   memorySpacesAndSpaceRootsMigration,
@@ -10,4 +11,5 @@ export const STORAGE_MIGRATIONS = [
   memoryFtsMigration,
   learningJobsAndEventsMigration,
   vecMemoryMigration,
+  learningJobEnqueueKeyMigration,
 ];

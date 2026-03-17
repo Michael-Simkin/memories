@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { realpath } from "node:fs/promises";
+import { realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 
@@ -178,6 +178,57 @@ describe("ActiveSpaceLearningJobRepository", () => {
 
     assert.equal(secondJob.space_id, firstJob.space_id);
     assert.equal(secondJob.root_path, firstJob.root_path);
+  });
+
+  it("reuses the active job when the same transcript snapshot is enqueued twice", async (testContext) => {
+    const workspacePath = await createTempDirectory(
+      "claude-memory-active-job-dedupe-",
+    );
+    const transcriptPath = path.join(workspacePath, "transcript.jsonl");
+    const bootstrapResult = DatabaseBootstrapRepository.bootstrapDatabase({
+      databasePath: ":memory:",
+    });
+
+    testContext.after(async () => {
+      bootstrapResult.database.close();
+      await removePath(workspacePath);
+    });
+
+    await writeFile(transcriptPath, '{"event":"assistant","text":"Remember this"}\n');
+
+    const firstJob = await ActiveSpaceLearningJobRepository.enqueueLearningJob(
+      bootstrapResult.database,
+      {
+        context: {
+          cwd: workspacePath,
+        },
+        id: "learning-job-dedupe-1",
+        transcriptPath,
+      },
+    );
+    const secondJob = await ActiveSpaceLearningJobRepository.enqueueLearningJob(
+      bootstrapResult.database,
+      {
+        context: {
+          cwd: workspacePath,
+        },
+        id: "learning-job-dedupe-2",
+        transcriptPath,
+      },
+    );
+    const queuedJobs = LearningJobRepository.listLearningJobs(
+      bootstrapResult.database,
+      {
+        spaceId: firstJob.space_id,
+      },
+    );
+
+    assert.equal(firstJob.id, "learning-job-dedupe-1");
+    assert.equal(secondJob.id, "learning-job-dedupe-1");
+    assert.deepEqual(
+      queuedJobs.map((job) => job.id),
+      ["learning-job-dedupe-1"],
+    );
   });
 
   it("requires either an explicit space id or a resolvable context", async () => {

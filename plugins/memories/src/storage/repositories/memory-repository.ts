@@ -647,43 +647,20 @@ export class MemoryRepository {
       database,
       options.spaceId
     );
-    const matchExpression = MemoryRepository.buildLexicalMatchExpression(
-      options.query
-    );
-    const limit = MemoryRepository.normalizeSearchLimit(options.limit);
-    const rows = database
-      .prepare(
-        `SELECT
-          memories.id,
-          memories.space_id,
-          memory_spaces.space_kind,
-          memory_spaces.display_name AS space_display_name,
-          memory_spaces.origin_url_normalized,
-          memories.memory_type,
-          memories.content,
-          memories.tags_json,
-          memories.is_pinned,
-          memories.created_at,
-          memories.updated_at,
-          CAST(-bm25(memory_fts) AS REAL) AS lexical_score
-        FROM memory_fts
-        INNER JOIN memories ON memories.id = memory_fts.id
-        INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
-        WHERE memories.space_id = ? AND memory_fts MATCH ?
-        ORDER BY lexical_score DESC, memories.is_pinned DESC, memories.updated_at DESC, memories.id ASC
-        LIMIT ${String(limit)}`
-      )
-      .all(options.spaceId, matchExpression) as Record<string, unknown>[];
-
     return {
       space,
-      results: rows.map((row) =>
-        MemoryRepository.mapLexicalSearchRow(
-          MemoryRepository.hydrateLexicalSearchRow(row),
-          MemoryRepository.readPathMatchers(database, row["id"] as string)
-        )
-      ),
+      results: MemoryRepository.searchMemoriesByTagsInternal(database, options),
     };
+  }
+
+  static searchAllMemoriesByTags(
+    database: DatabaseSync,
+    options: {
+      query: string;
+      limit?: number | undefined;
+    }
+  ): PersistedMemorySearchResponse["results"] {
+    return MemoryRepository.searchMemoriesByTagsInternal(database, options);
   }
 
   static searchMemoriesBySemantic(
@@ -694,44 +671,20 @@ export class MemoryRepository {
       database,
       options.spaceId
     );
-    const limit = MemoryRepository.normalizeSearchLimit(options.limit);
-    const rows = database
-      .prepare(
-        `SELECT
-          memories.id,
-          memories.space_id,
-          memory_spaces.space_kind,
-          memory_spaces.display_name AS space_display_name,
-          memory_spaces.origin_url_normalized,
-          memories.memory_type,
-          memories.content,
-          memories.tags_json,
-          memories.is_pinned,
-          memories.created_at,
-          memories.updated_at,
-          CAST(1.0 - distance AS REAL) AS semantic_score
-        FROM vec_memory
-        INNER JOIN memories ON memories.id = vec_memory.memory_id
-        INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
-        WHERE memories.space_id = ?
-          AND vec_memory.embedding MATCH ?
-          AND k = ${String(limit)}
-        ORDER BY distance ASC, memories.is_pinned DESC, memories.updated_at DESC, memories.id ASC`
-      )
-      .all(
-        options.spaceId,
-        serializeSemanticEmbedding(options.queryEmbedding)
-      ) as Record<string, unknown>[];
-
     return {
       space,
-      results: rows.map((row) =>
-        MemoryRepository.mapSemanticSearchRow(
-          MemoryRepository.hydrateSemanticSearchRow(row),
-          MemoryRepository.readPathMatchers(database, row["id"] as string)
-        )
-      ),
+      results: MemoryRepository.searchMemoriesBySemanticInternal(database, options),
     };
+  }
+
+  static searchAllMemoriesBySemantic(
+    database: DatabaseSync,
+    options: {
+      queryEmbedding: number[];
+      limit?: number | undefined;
+    }
+  ): PersistedMemorySearchResponse["results"] {
+    return MemoryRepository.searchMemoriesBySemanticInternal(database, options);
   }
 
   static searchMemoriesByPaths(
@@ -800,6 +753,116 @@ export class MemoryRepository {
         )
       ),
     };
+  }
+
+  private static searchMemoriesByTagsInternal(
+    database: DatabaseSync,
+    options: {
+      query: string;
+      spaceId?: string | undefined;
+      limit?: number | undefined;
+    }
+  ): PersistedMemorySearchResponse["results"] {
+    const normalizedSpaceId = normalizeNonEmptyString(options.spaceId);
+    const matchExpression = MemoryRepository.buildLexicalMatchExpression(
+      options.query
+    );
+    const limit = MemoryRepository.normalizeSearchLimit(options.limit);
+    const parameters = normalizedSpaceId
+      ? [normalizedSpaceId, matchExpression]
+      : [matchExpression];
+    let query = `SELECT
+        memories.id,
+        memories.space_id,
+        memory_spaces.space_kind,
+        memory_spaces.display_name AS space_display_name,
+        memory_spaces.origin_url_normalized,
+        memories.memory_type,
+        memories.content,
+        memories.tags_json,
+        memories.is_pinned,
+        memories.created_at,
+        memories.updated_at,
+        CAST(-bm25(memory_fts) AS REAL) AS lexical_score
+      FROM memory_fts
+      INNER JOIN memories ON memories.id = memory_fts.id
+      INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
+      WHERE `;
+
+    if (normalizedSpaceId) {
+      query += "memories.space_id = ? AND ";
+    }
+
+    query += `memory_fts MATCH ?
+      ORDER BY lexical_score DESC, memories.is_pinned DESC, memories.updated_at DESC, memories.id ASC
+      LIMIT ${String(limit)}`;
+
+    const rows = database.prepare(query).all(...parameters) as Record<
+      string,
+      unknown
+    >[];
+
+    return rows.map((row) =>
+      MemoryRepository.mapLexicalSearchRow(
+        MemoryRepository.hydrateLexicalSearchRow(row),
+        MemoryRepository.readPathMatchers(database, row["id"] as string)
+      )
+    );
+  }
+
+  private static searchMemoriesBySemanticInternal(
+    database: DatabaseSync,
+    options: {
+      queryEmbedding: number[];
+      spaceId?: string | undefined;
+      limit?: number | undefined;
+    }
+  ): PersistedMemorySearchResponse["results"] {
+    const normalizedSpaceId = normalizeNonEmptyString(options.spaceId);
+    const limit = MemoryRepository.normalizeSearchLimit(options.limit);
+    const serializedQueryEmbedding = serializeSemanticEmbedding(
+      options.queryEmbedding
+    );
+    const parameters = normalizedSpaceId
+      ? [normalizedSpaceId, serializedQueryEmbedding]
+      : [serializedQueryEmbedding];
+    let query = `SELECT
+        memories.id,
+        memories.space_id,
+        memory_spaces.space_kind,
+        memory_spaces.display_name AS space_display_name,
+        memory_spaces.origin_url_normalized,
+        memories.memory_type,
+        memories.content,
+        memories.tags_json,
+        memories.is_pinned,
+        memories.created_at,
+        memories.updated_at,
+        CAST(1.0 - distance AS REAL) AS semantic_score
+      FROM vec_memory
+      INNER JOIN memories ON memories.id = vec_memory.memory_id
+      INNER JOIN memory_spaces ON memory_spaces.id = memories.space_id
+      WHERE `;
+
+    if (normalizedSpaceId) {
+      query += "memories.space_id = ? AND ";
+    }
+
+    query += `vec_memory.embedding MATCH ?
+      AND k = ${String(limit)}
+      ORDER BY distance ASC, memories.is_pinned DESC, memories.updated_at DESC, memories.id ASC`;
+
+    const rows = database.prepare(query).all(...parameters) as Record<
+      string,
+      unknown
+    >[];
+
+    return rows.map((row) =>
+      MemoryRepository.mapSemanticSearchRow(
+        MemoryRepository.hydrateSemanticSearchRow(row),
+        MemoryRepository.readPathMatchers(database, row["id"] as string)
+      )
+    );
   }
 
   static updateMemory(

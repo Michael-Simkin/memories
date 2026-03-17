@@ -3,6 +3,7 @@ import { once } from "node:events";
 
 import { ZodError } from "zod";
 
+import type { LearningActionDocument } from "../extraction/learning-actions.js";
 import {
   apiCreateMemoryRequestSchema,
   apiDeleteMemoryRequestSchema,
@@ -33,18 +34,36 @@ import { DatabaseBootstrapRepository } from "../storage/repositories/database-bo
 import { EventRepository } from "../storage/repositories/event-repository.js";
 import { LearningJobRepository } from "../storage/repositories/learning-job-repository.js";
 import { MemoryRepository } from "../storage/repositories/memory-repository.js";
+import { MemoryRetrievalRepository } from "../storage/repositories/memory-retrieval-repository.js";
 import { SpaceRegistryRepository } from "../storage/repositories/space-registry-repository.js";
 import { StorageStatsRepository } from "../storage/repositories/storage-stats-repository.js";
-import type { UpdateActiveMemoryInput } from "../storage/types/memory.js";
+import type {
+  PersistedMemoryRecord,
+  PersistedMemorySearchResponse,
+  UpdateActiveMemoryInput,
+} from "../storage/types/memory.js";
 import { resolveEngineIdleTimeoutMs } from "./config.js";
+import {
+  startLearningWorker,
+  type RunLearningModelInput,
+  type StartedLearningWorker,
+} from "./learning-worker.js";
+import { readUiHtml } from "./ui-service.js";
 
 interface StartEngineServerOptions
   extends ResolveStoragePathsOptions,
     PluginPathResolutionInput {
   host?: string | undefined;
   idleTimeoutMs?: number | undefined;
+  learningWorkerEnabled?: boolean | undefined;
+  learningWorkerHeartbeatIntervalMs?: number | undefined;
+  learningWorkerLeaseDurationMs?: number | undefined;
+  learningWorkerPollIntervalMs?: number | undefined;
   port?: number | undefined;
   registerSignalHandlers?: boolean | undefined;
+  runLearningModel?:
+    | ((input: RunLearningModelInput) => Promise<LearningActionDocument>)
+    | undefined;
 }
 
 export interface StartedEngineServer {
@@ -67,6 +86,7 @@ const KNOWN_ROUTE_PATHS = new Set([
   "/spaces",
   "/spaces/touch",
   "/stats",
+  "/ui",
 ]);
 
 function writeJsonResponse(
@@ -77,6 +97,16 @@ function writeJsonResponse(
   response.statusCode = statusCode;
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.end(`${JSON.stringify(body)}\n`);
+}
+
+function writeHtmlResponse(
+  response: ServerResponse,
+  statusCode: number,
+  body: string,
+): void {
+  response.statusCode = statusCode;
+  response.setHeader("content-type", "text/html; charset=utf-8");
+  response.end(body);
 }
 
 function readRequestUrl(request: IncomingMessage): URL {
@@ -366,6 +396,12 @@ export async function startEngineServer(
           return;
         }
 
+        if (requestMethod === "GET" && requestPath === "/ui") {
+          await touchActivity();
+          writeHtmlResponse(response, 200, await readUiHtml(options));
+          return;
+        }
+
         if (requestMethod === "POST" && requestPath === "/spaces/touch") {
           const parsedBody = spaceTouchRequestSchema.parse(
             await readJsonRequestBody(request),
@@ -438,6 +474,15 @@ export async function startEngineServer(
               sessionId: parsedBody.session_id,
             },
           );
+          EventRepository.recordEvent(bootstrapResult.database, {
+            event: "job-enqueued",
+            kind: "learning_job",
+            status: "info",
+            jobId: queuedJob.id,
+            spaceId: queuedJob.space_id,
+            rootPath: queuedJob.root_path,
+            sessionId: queuedJob.session_id,
+          });
 
           await touchActivity();
           writeJsonResponse(response, 201, {
@@ -447,12 +492,44 @@ export async function startEngineServer(
         }
 
         if (requestMethod === "GET" && requestPath === "/memories") {
-          const memories = MemoryRepository.listMemories(bootstrapResult.database, {
-            spaceId: readOptionalQueryText(requestUrl, "space_id"),
-            limit: readOptionalPositiveIntegerQueryValue(requestUrl, "limit", {
-              max: 100,
-            }),
+          const query = readOptionalQueryText(requestUrl, "query");
+          const spaceId = readOptionalQueryText(requestUrl, "space_id");
+          const limit = readOptionalPositiveIntegerQueryValue(requestUrl, "limit", {
+            max: 100,
           });
+          let memories:
+            | PersistedMemoryRecord[]
+            | PersistedMemorySearchResponse["results"];
+
+          if (query) {
+            const queryEmbedding = await tryEmbedText(query);
+
+            if (spaceId) {
+              memories = MemoryRetrievalRepository.searchMemories(
+                bootstrapResult.database,
+                {
+                  spaceId,
+                  query,
+                  queryEmbedding,
+                  limit,
+                },
+              ).results;
+            } else {
+              memories = MemoryRetrievalRepository.searchAllMemories(
+                bootstrapResult.database,
+                {
+                  query,
+                  queryEmbedding,
+                  limit,
+                },
+              );
+            }
+          } else {
+            memories = MemoryRepository.listMemories(bootstrapResult.database, {
+              spaceId,
+              limit,
+            });
+          }
 
           await touchActivity();
           writeJsonResponse(response, 200, {
@@ -603,6 +680,7 @@ export async function startEngineServer(
       }
     })();
   });
+  let learningWorker: StartedLearningWorker | null = null;
 
   const close = async (): Promise<void> => {
     if (closePromise) {
@@ -616,6 +694,7 @@ export async function startEngineServer(
 
       isClosing = true;
       clearInterval(idleInterval);
+      await learningWorker?.close();
 
       for (const [signal, handler] of signalHandlers) {
         process.off(signal, handler);
@@ -684,6 +763,18 @@ export async function startEngineServer(
     for (const [signal, handler] of signalHandlers) {
       process.on(signal, handler);
     }
+  }
+
+  if (options.learningWorkerEnabled !== false) {
+    learningWorker = startLearningWorker({
+      database: bootstrapResult.database,
+      embedText: tryEmbedText,
+      heartbeatIntervalMs: options.learningWorkerHeartbeatIntervalMs,
+      leaseDurationMs: options.learningWorkerLeaseDurationMs,
+      pollIntervalMs: options.learningWorkerPollIntervalMs,
+      runLearningModel: options.runLearningModel,
+      touchActivity,
+    });
   }
 
   return {

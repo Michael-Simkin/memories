@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { realpath, stat } from "node:fs/promises";
+import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import { ActiveMemorySpaceService } from "../../shared/services/active-memory-space-service.js";
@@ -17,6 +20,44 @@ interface ResolvedLearningJobSpace {
 }
 
 export class ActiveSpaceLearningJobRepository {
+  private static async createEnqueueKey(
+    spaceId: string,
+    transcriptPath: string,
+    sessionId: string | null | undefined,
+  ): Promise<string> {
+    let resolvedTranscriptPath = path.resolve(transcriptPath);
+
+    try {
+      resolvedTranscriptPath = await realpath(transcriptPath);
+    } catch {
+      // Fall back to the normalized absolute path if the transcript disappears.
+    }
+
+    let transcriptSize: number | null = null;
+    let transcriptModifiedAtMs: number | null = null;
+
+    try {
+      const transcriptStats = await stat(resolvedTranscriptPath);
+
+      transcriptSize = transcriptStats.size;
+      transcriptModifiedAtMs = Math.trunc(transcriptStats.mtimeMs);
+    } catch {
+      // Missing transcripts are still handled explicitly during execution.
+    }
+
+    return createHash("sha256")
+      .update(
+        JSON.stringify({
+          spaceId,
+          resolvedTranscriptPath,
+          sessionId: sessionId ?? null,
+          transcriptSize,
+          transcriptModifiedAtMs,
+        }),
+      )
+      .digest("hex");
+  }
+
   private static toWorkingPathSelectionInput(
     context: CurrentContext,
   ): WorkingPathSelectionInput {
@@ -70,12 +111,18 @@ export class ActiveSpaceLearningJobRepository {
       database,
       input,
     );
+    const enqueueKey = await ActiveSpaceLearningJobRepository.createEnqueueKey(
+      resolvedSpace.spaceId,
+      input.transcriptPath,
+      input.sessionId,
+    );
 
     return LearningJobRepository.enqueueLearningJob(database, {
       id: input.id,
       spaceId: resolvedSpace.spaceId,
       rootPath: resolvedSpace.rootPath,
       transcriptPath: input.transcriptPath,
+      enqueueKey,
       lastAssistantMessage: input.lastAssistantMessage,
       sessionId: input.sessionId,
       enqueuedAt: input.enqueuedAt,

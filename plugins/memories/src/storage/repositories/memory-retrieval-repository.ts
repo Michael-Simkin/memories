@@ -5,6 +5,7 @@ import { normalizeNonEmptyString } from "../../shared/utils/strings.js";
 import { MemoryRepository } from "./memory-repository.js";
 import type {
   PersistedMemorySearchResponse,
+  SearchAllMemoriesOptions,
   SearchMemoriesOptions,
 } from "../types/memory.js";
 
@@ -208,5 +209,38 @@ export class MemoryRetrievalRepository {
       space,
       results: mergedResults.slice(0, limit),
     };
+  }
+
+  static searchAllMemories(
+    database: DatabaseSync,
+    options: SearchAllMemoriesOptions,
+  ): PersistedMemorySearchResponse["results"] {
+    const normalizedQuery = normalizeNonEmptyString(options.query);
+    const hasQueryEmbedding = options.queryEmbedding !== undefined;
+
+    if (!normalizedQuery && !hasQueryEmbedding) {
+      throw new Error(
+        "All-space memory retrieval requires a non-empty query, query embedding, or both.",
+      );
+    }
+
+    const lexicalResults = normalizedQuery
+      ? MemoryRepository.searchAllMemoriesByTags(database, {
+          query: normalizedQuery,
+          limit: options.limit,
+        })
+      : [];
+    const semanticResults = options.queryEmbedding
+      ? MemoryRepository.searchAllMemoriesBySemantic(database, {
+          queryEmbedding: options.queryEmbedding,
+          limit: options.limit,
+        })
+      : [];
+    const limit = options.limit ?? 10;
+
+    return MemoryRetrievalRepository.mergeHybridBranchResults(
+      lexicalResults,
+      semanticResults,
+    ).slice(0, limit);
   }
 }

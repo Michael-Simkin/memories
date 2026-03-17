@@ -4,6 +4,7 @@ import {
   nonEmptyStringSchema,
   nullableNonEmptyStringSchema,
 } from "./common.js";
+import { spaceKindSchema } from "./space.js";
 
 export const eventKindSchema = z.enum([
   "engine",
@@ -24,6 +25,9 @@ export const eventRecordSchema = z
   .object({
     at: nonEmptyStringSchema,
     space_id: nullableNonEmptyStringSchema,
+    space_kind: spaceKindSchema.nullable(),
+    space_display_name: nullableNonEmptyStringSchema,
+    origin_url_normalized: nullableNonEmptyStringSchema,
     root_path: nullableNonEmptyStringSchema,
     event: nonEmptyStringSchema,
     kind: eventKindSchema,
