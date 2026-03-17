@@ -26,6 +26,10 @@ async function runNoopHook() {
   } catch {
   }
 }
+function writeHookJsonResponse(value) {
+  process.stdout.write(`${JSON.stringify(value)}
+`);
+}
 function isMainModule(importMetaUrl) {
   const invokedPath = process.argv[1];
   if (!invokedPath) {
@@ -37,5 +41,6 @@ export {
   isMainModule,
   readHookInputJson,
   readHookInputText,
-  runNoopHook
+  runNoopHook,
+  writeHookJsonResponse
 };

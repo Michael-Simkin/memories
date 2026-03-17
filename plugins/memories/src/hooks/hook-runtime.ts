@@ -37,6 +37,10 @@ export async function runNoopHook(): Promise<void> {
   }
 }
 
+export function writeHookJsonResponse(value: unknown): void {
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
 export function isMainModule(importMetaUrl: string): boolean {
   const invokedPath = process.argv[1];
 
