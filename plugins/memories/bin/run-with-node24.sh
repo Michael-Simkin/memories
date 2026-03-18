@@ -15,6 +15,7 @@ if [ -n "$current_node_bin" ]; then
   current_node_major="${current_node_major%%.*}"
 
   if [ "$current_node_major" = "24" ]; then
+    export NODE_NO_WARNINGS=1
     exec "$current_node_bin" "$@"
   fi
 fi
@@ -33,6 +34,7 @@ if [ -n "$configured_node24_bin" ]; then
     exit 1
   fi
 
+  export NODE_NO_WARNINGS=1
   exec "$configured_node24_bin" "$@"
 fi
 

@@ -17,6 +17,8 @@ import { DatabaseBootstrapRepository } from "../../storage/repositories/database
 import { MemoryRepository } from "../../storage/repositories/memory-repository.js";
 import { SpaceRegistryRepository } from "../../storage/repositories/space-registry-repository.js";
 import {
+  consumeLineDelimitedBuffer,
+  consumeFrameBuffer,
   handleJsonRpcMessage,
   serializeJsonRpcMessage,
 } from "../search-server.js";
@@ -262,5 +264,90 @@ describe("search-server", () => {
     assert.match(serializedMessage, /"jsonrpc":"2\.0"/u);
     assert.match(serializedMessage, /"id":6/u);
     assert.match(serializedMessage, /"ok":true/u);
+  });
+
+  it("serializes JSON-RPC responses as newline-delimited JSON when requested", () => {
+    const serializedMessage = serializeJsonRpcMessage(
+      {
+        jsonrpc: "2.0",
+        id: 7,
+        result: {
+          ok: true,
+        },
+      },
+      "newline-delimited",
+    );
+
+    assert.equal(
+      serializedMessage,
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 7,
+        result: {
+          ok: true,
+        },
+      })}\n`,
+    );
+  });
+
+  it("parses LF-only Content-Length frames from Claude's MCP client", () => {
+    const bodyText = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 8,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+      },
+    });
+    const framedMessage = Buffer.from(
+      `Content-Length: ${String(Buffer.byteLength(bodyText, "utf8"))}\n\n${bodyText}`,
+      "utf8",
+    );
+    const consumedFrameResult = consumeFrameBuffer(framedMessage);
+
+    assert.equal(consumedFrameResult.remainingBuffer.byteLength, 0);
+    assert.deepEqual(consumedFrameResult.messages, [
+      {
+        jsonrpc: "2.0",
+        id: 8,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+        },
+      },
+    ]);
+  });
+
+  it("parses newline-delimited JSON-RPC messages from Claude's MCP client", () => {
+    const lineDelimitedMessage = Buffer.from(
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 9,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {
+            roots: {},
+          },
+        },
+      })}\n`,
+      "utf8",
+    );
+    const consumedLineResult = consumeLineDelimitedBuffer(lineDelimitedMessage);
+
+    assert.equal(consumedLineResult.remainingBuffer.byteLength, 0);
+    assert.deepEqual(consumedLineResult.messages, [
+      {
+        jsonrpc: "2.0",
+        id: 9,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {
+            roots: {},
+          },
+        },
+      },
+    ]);
   });
 });

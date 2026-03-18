@@ -270,8 +270,8 @@ async function main() {
   );
   assert.equal(
     pluginManifest.hooks,
-    "./hooks/hooks.json",
-    'Plugin manifest must wire hooks from "./hooks/hooks.json".',
+    undefined,
+    "Plugin manifest must not explicitly wire the standard hooks/hooks.json because Claude loads it automatically.",
   );
   assert.equal(
     pluginManifest.mcpServers,
