@@ -106,31 +106,6 @@ function logError(message, data) {
   writeLog("error", message, data);
 }
 
-// src/shared/logs.ts
-import { readFile as readFile2 } from "fs/promises";
-
-// src/shared/fs-utils.ts
-import { appendFile, readFile, rename, rm, writeFile } from "fs/promises";
-import path from "path";
-async function readJsonFile(filePath) {
-  try {
-    const raw = await readFile(filePath, "utf8");
-    return JSON.parse(raw);
-  } catch (error48) {
-    if (isErrnoException(error48) && error48.code === "ENOENT") {
-      return null;
-    }
-    throw error48;
-  }
-}
-async function appendJsonLine(filePath, payload) {
-  await appendFile(filePath, `${JSON.stringify(payload)}
-`, "utf8");
-}
-function isErrnoException(error48) {
-  return typeof error48 === "object" && error48 !== null && "code" in error48;
-}
-
 // ../../node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
@@ -898,10 +873,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path4) {
-  if (!path4)
+function getElementAtPath(obj, path) {
+  if (!path)
     return obj;
-  return path4.reduce((acc, key) => acc?.[key], obj);
+  return path.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -1284,11 +1259,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path4, issues) {
+function prefixIssues(path, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path4);
+    iss.path.unshift(path);
     return iss;
   });
 }
@@ -1471,7 +1446,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path4 = []) => {
+  const processError = (error49, path = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1481,7 +1456,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path4, ...issue2.path];
+        const fullpath = [...path, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1513,8 +1488,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path4 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path4) {
+  const path = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13491,13 +13466,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path4 = ref.slice(1).split("/").filter(Boolean);
-  if (path4.length === 0) {
+  const path = ref.slice(1).split("/").filter(Boolean);
+  if (path.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path4[0] === defsKey) {
-    const key = path4[1];
+  if (path[0] === defsKey) {
+    const key = path[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -13899,300 +13874,6 @@ function date4(params) {
 // ../../node_modules/zod/v4/classic/external.js
 config(en_default());
 
-// src/shared/constants.ts
-var LOOPBACK_HOST = "127.0.0.1";
-var LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, "localhost", "::1"];
-var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
-var MEMORY_DB_FILE = "ai_memory.db";
-var ENGINE_LOCK_FILE = "engine.lock.json";
-var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
-var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
-var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
-var DEFAULT_SEARCH_LIMIT = 10;
-var MAX_SEARCH_LIMIT = 50;
-var DEFAULT_SEMANTIC_K = 30;
-var DEFAULT_LEXICAL_K = 30;
-var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
-var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
-
-// src/shared/types.ts
-var memoryTypeSchema = external_exports.enum(MEMORY_TYPES);
-var pathMatcherSchema = external_exports.object({
-  path_matcher: external_exports.string().trim().min(1).max(512)
-});
-var memoryRecordSchema = external_exports.object({
-  id: external_exports.string().min(1),
-  memory_type: memoryTypeSchema,
-  content: external_exports.string().min(1),
-  tags: external_exports.array(external_exports.string()),
-  is_pinned: external_exports.boolean(),
-  path_matchers: external_exports.array(pathMatcherSchema),
-  created_at: external_exports.string().min(1),
-  updated_at: external_exports.string().min(1)
-});
-var addMemoryInputSchema = external_exports.object({
-  memory_type: memoryTypeSchema,
-  content: external_exports.string().trim().min(1),
-  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
-  is_pinned: external_exports.boolean().default(false),
-  path_matchers: external_exports.array(pathMatcherSchema).default([])
-});
-var updateMemoryInputSchema = external_exports.object({
-  content: external_exports.string().trim().min(1).optional(),
-  tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
-  is_pinned: external_exports.boolean().optional(),
-  path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "At least one field must be updated");
-var searchRequestSchema = external_exports.object({
-  query: external_exports.string().default(""),
-  limit: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT),
-  target_paths: external_exports.array(external_exports.string()).default([]),
-  memory_types: external_exports.array(memoryTypeSchema).optional(),
-  include_pinned: external_exports.boolean().default(true),
-  semantic_k: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEMANTIC_K),
-  lexical_k: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_LEXICAL_K),
-  response_token_budget: external_exports.number().int().min(200).max(2e4).default(DEFAULT_RESPONSE_TOKEN_BUDGET)
-});
-var searchMatchSourceSchema = external_exports.enum(["path", "lexical", "semantic"]);
-var searchResultSchema = external_exports.object({
-  id: external_exports.string(),
-  memory_type: memoryTypeSchema,
-  content: external_exports.string(),
-  tags: external_exports.array(external_exports.string()),
-  is_pinned: external_exports.boolean(),
-  path_matchers: external_exports.array(external_exports.string()),
-  score: external_exports.number().min(0).max(1),
-  source: external_exports.enum(["path", "hybrid"]),
-  matched_by: external_exports.array(searchMatchSourceSchema).optional(),
-  path_score: external_exports.number().min(0).max(1).optional(),
-  lexical_score: external_exports.number().min(0).max(1).optional(),
-  semantic_score: external_exports.number().min(0).max(1).optional(),
-  rrf_score: external_exports.number().nonnegative().optional(),
-  updated_at: external_exports.string()
-});
-var searchResponseSchema = external_exports.object({
-  results: external_exports.array(searchResultSchema),
-  meta: external_exports.object({
-    query: external_exports.string(),
-    returned: external_exports.number().int().nonnegative(),
-    duration_ms: external_exports.number().int().nonnegative(),
-    source: external_exports.literal("hybrid")
-  })
-});
-var memoryEventLogSchema = external_exports.object({
-  at: external_exports.string().min(1),
-  event: external_exports.string().min(1),
-  status: external_exports.enum(["ok", "error", "skipped"]),
-  kind: external_exports.enum(["hook", "operation", "system"]),
-  session_id: external_exports.string().optional(),
-  memory_id: external_exports.string().optional(),
-  detail: external_exports.string().optional(),
-  data: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
-});
-var backgroundHookRecordSchema = external_exports.object({
-  id: external_exports.string().trim().min(1),
-  hook_name: external_exports.string().trim().min(1),
-  state: external_exports.literal("running"),
-  started_at: external_exports.string().min(1),
-  last_heartbeat_at: external_exports.string().min(1),
-  stale_at: external_exports.string().min(1),
-  hard_timeout_at: external_exports.string().min(1),
-  session_id: external_exports.string().trim().min(1).optional(),
-  detail: external_exports.string().trim().min(1).optional(),
-  pid: external_exports.number().int().positive().optional()
-});
-var backgroundHooksResponseSchema = external_exports.object({
-  items: external_exports.array(backgroundHookRecordSchema),
-  meta: external_exports.object({
-    active: external_exports.number().int().nonnegative(),
-    now: external_exports.string().min(1)
-  })
-});
-var createActionSchema = external_exports.object({
-  action: external_exports.literal("create"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_type: memoryTypeSchema,
-  content: external_exports.string().trim().min(1),
-  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
-  is_pinned: external_exports.boolean().default(false),
-  path_matchers: external_exports.array(pathMatcherSchema).default([])
-});
-var updateFieldsSchema = external_exports.object({
-  content: external_exports.string().trim().min(1).optional(),
-  tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
-  is_pinned: external_exports.boolean().optional(),
-  path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "Update action requires at least one field");
-var updateActionSchema = external_exports.object({
-  action: external_exports.literal("update"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_id: external_exports.string().trim().min(1),
-  updates: updateFieldsSchema
-});
-var deleteActionSchema = external_exports.object({
-  action: external_exports.literal("delete"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_id: external_exports.string().trim().min(1)
-});
-var skipActionSchema = external_exports.object({
-  action: external_exports.literal("skip"),
-  confidence: external_exports.number().min(0).max(1).default(1),
-  reason: external_exports.string().optional()
-});
-var extractionActionSchema = external_exports.discriminatedUnion("action", [
-  createActionSchema,
-  updateActionSchema,
-  deleteActionSchema,
-  skipActionSchema
-]);
-var extractionActionsPayloadSchema = external_exports.object({
-  actions: external_exports.array(extractionActionSchema).default([])
-});
-
-// src/shared/logs.ts
-var SECRET_PATTERNS = [
-  /sk-[A-Za-z0-9_-]{12,}/g,
-  /AIza[0-9A-Za-z\-_]{20,}/g,
-  /\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b/g,
-  /(?<=token[=:]\s?)[A-Za-z0-9._-]+/gi
-];
-function redactSecrets(value) {
-  if (typeof value === "string") {
-    let redacted = value;
-    for (const pattern of SECRET_PATTERNS) {
-      redacted = redacted.replaceAll(pattern, "[REDACTED]");
-    }
-    return redacted;
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactSecrets(entry));
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        redactSecrets(entry)
-      ])
-    );
-  }
-  return value;
-}
-async function appendEventLog(logPath, event) {
-  const validated = memoryEventLogSchema.parse(event);
-  await appendJsonLine(logPath, redactSecrets(validated));
-}
-
-// src/shared/paths.ts
-import { mkdir } from "fs/promises";
-import path2 from "path";
-import { fileURLToPath } from "url";
-function resolveProjectRoot(explicitProjectRoot) {
-  if (explicitProjectRoot && path2.isAbsolute(explicitProjectRoot)) {
-    return explicitProjectRoot;
-  }
-  const envProjectRoot = process.env.CLAUDE_PROJECT_DIR;
-  if (envProjectRoot && path2.isAbsolute(envProjectRoot)) {
-    return envProjectRoot;
-  }
-  return process.cwd();
-}
-function getProjectPaths(projectRoot) {
-  const memoriesDir = path2.join(projectRoot, ".memories");
-  return {
-    projectRoot,
-    memoriesDir,
-    dbPath: path2.join(memoriesDir, MEMORY_DB_FILE),
-    lockPath: path2.join(memoriesDir, ENGINE_LOCK_FILE),
-    startupLockPath: path2.join(memoriesDir, ENGINE_STARTUP_LOCK_FILE),
-    engineStderrPath: path2.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
-    eventLogPath: path2.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
-  };
-}
-async function ensureProjectDirectories(projectRoot) {
-  const projectPaths = getProjectPaths(projectRoot);
-  await mkdir(projectPaths.memoriesDir, { recursive: true });
-  return projectPaths;
-}
-
-// src/hooks/common.ts
-import path3 from "path";
-
-// src/shared/lockfile.ts
-var lockMetadataSchema = external_exports.object({
-  host: external_exports.string().trim().min(1),
-  port: external_exports.number().int().min(1).max(65535),
-  pid: external_exports.number().int().positive(),
-  started_at: external_exports.string().min(1),
-  connected_session_ids: external_exports.array(external_exports.string().trim().min(1)).default([])
-});
-function isLoopback(host) {
-  return LOOPBACK_HOST_ALIASES.includes(host);
-}
-async function readLockMetadata(lockPath) {
-  const raw = await readJsonFile(lockPath);
-  if (!raw) {
-    return null;
-  }
-  const parsed = lockMetadataSchema.safeParse(raw);
-  if (!parsed.success) {
-    return null;
-  }
-  if (!isLoopback(parsed.data.host)) {
-    return null;
-  }
-  return {
-    ...parsed.data,
-    connected_session_ids: uniqueNonEmpty(parsed.data.connected_session_ids)
-  };
-}
-function uniqueNonEmpty(values) {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-
-// src/hooks/common.ts
-function resolveHookProjectRoot(payload) {
-  if (payload.project_root && path3.isAbsolute(payload.project_root)) {
-    return payload.project_root;
-  }
-  if (payload.cwd && path3.isAbsolute(payload.cwd)) {
-    return payload.cwd;
-  }
-  return resolveProjectRoot();
-}
-async function resolveEndpointFromLock(projectRoot) {
-  const paths = getProjectPaths(projectRoot);
-  const lock = await readLockMetadata(paths.lockPath);
-  if (!lock) {
-    throw new Error("ENGINE_UNAVAILABLE: lock metadata not found");
-  }
-  if (!LOOPBACK_HOST_ALIASES.includes(lock.host)) {
-    throw new Error(`ENGINE_UNAVAILABLE: lock host is not loopback (${lock.host})`);
-  }
-  return {
-    host: lock.host,
-    port: lock.port,
-    lockPath: paths.lockPath
-  };
-}
-function isEngineUnavailableError(error48) {
-  if (!(error48 instanceof Error)) {
-    return false;
-  }
-  return error48.message.includes("ENGINE_UNAVAILABLE:");
-}
-async function postEngineJson(endpoint, route, payload) {
-  const response = await fetch(`http://${endpoint.host}:${endpoint.port}${route}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`ENGINE_UNAVAILABLE: ${response.status} ${response.statusText} ${body}`);
-  }
-  return await response.json();
-}
-
 // src/hooks/schemas.ts
 var sessionStartPayloadSchema = external_exports.object({
   cwd: external_exports.string().optional(),
@@ -14224,62 +13905,13 @@ var sessionEndPayloadSchema = external_exports.object({
 }).catchall(external_exports.unknown());
 
 // src/hooks/session-end.ts
-var defaultDependencies = {
-  appendEventLogFn: appendEventLog,
-  ensureProjectDirectoriesFn: ensureProjectDirectories,
-  postEngineJsonFn: postEngineJson,
-  resolveEndpointFromLockFn: resolveEndpointFromLock
-};
-async function handleSessionEnd(payload, dependencies = defaultDependencies) {
-  const projectRoot = resolveHookProjectRoot(payload);
-  const paths = await dependencies.ensureProjectDirectoriesFn(projectRoot);
-  try {
-    const endpoint = await dependencies.resolveEndpointFromLockFn(projectRoot);
-    await dependencies.postEngineJsonFn(endpoint, "/sessions/disconnect", {
-      session_id: payload.session_id
-    });
-    await dependencies.appendEventLogFn(paths.eventLogPath, {
-      at: (/* @__PURE__ */ new Date()).toISOString(),
-      event: "SessionEnd",
-      kind: "hook",
-      status: "ok",
-      session_id: payload.session_id
-    });
-    return { continue: true };
-  } catch (error48) {
-    if (isEngineUnavailableError(error48)) {
-      await dependencies.appendEventLogFn(paths.eventLogPath, {
-        at: (/* @__PURE__ */ new Date()).toISOString(),
-        event: "SessionEnd",
-        kind: "hook",
-        status: "skipped",
-        session_id: payload.session_id,
-        detail: error48 instanceof Error ? error48.message : String(error48)
-      });
-      return { continue: true };
-    }
-    await dependencies.appendEventLogFn(paths.eventLogPath, {
-      at: (/* @__PURE__ */ new Date()).toISOString(),
-      event: "SessionEnd",
-      kind: "hook",
-      status: "error",
-      session_id: payload.session_id,
-      detail: error48 instanceof Error ? error48.message : String(error48)
-    });
-    logError("SessionEnd hook failed", {
-      error: error48 instanceof Error ? error48.message : String(error48)
-    });
-    return { continue: true };
-  }
-}
 async function run() {
   const payload = await readJsonFromStdin(sessionEndPayloadSchema);
   if (!payload) {
     writeFailOpenOutput();
     return;
   }
-  const output = await handleSessionEnd(payload);
-  writeHookOutput(output);
+  writeHookOutput({ continue: true });
 }
 void run().catch((error48) => {
   logError("SessionEnd hook entrypoint failed", {
@@ -14287,7 +13919,4 @@ void run().catch((error48) => {
   });
   writeFailOpenOutput();
 });
-export {
-  handleSessionEnd
-};
 //# sourceMappingURL=session-end.js.map

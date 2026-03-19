@@ -21,26 +21,26 @@ class FakeStore {
   public memoriesById = new Map<string, SearchResult>();
   public embeddings: FakeEmbeddingRow[] = [];
 
-  public lexicalSearch(): SearchResult[] {
+  public lexicalSearch(_repoId: string): SearchResult[] {
     return this.lexicalResults;
   }
 
-  public listPathMatchers(): Array<{ memory_id: string; path_matcher: string }> {
+  public listPathMatchers(_repoId: string): Array<{ memory_id: string; path_matcher: string }> {
     return this.pathMatchers;
   }
 
-  public getMemoriesByIds(ids: string[]): SearchResult[] {
+  public getMemoriesByIds(_repoId: string, ids: string[]): SearchResult[] {
     return ids.flatMap((id) => {
       const value = this.memoriesById.get(id);
       return value ? [value] : [];
     });
   }
 
-  public listEmbeddings(): FakeEmbeddingRow[] {
+  public listEmbeddings(_repoId: string): FakeEmbeddingRow[] {
     return this.embeddings;
   }
 
-  public getMemory(id: string): MemoryRecord | null {
+  public getMemory(_repoId: string, id: string): MemoryRecord | null {
     const result = this.memoriesById.get(id);
     if (!result) {
       return null;
@@ -150,7 +150,7 @@ describe('RetrievalService', () => {
       new FakeEmbeddingClient(null) as unknown as EmbeddingClient,
     );
 
-    const results = await retrieval.search({
+    const results = await retrieval.search('test-repo-id-0001', {
       query: '',
       limit: 10,
       includePinned: true,
@@ -220,7 +220,7 @@ describe('RetrievalService', () => {
       new FakeEmbeddingClient([1, 0]) as unknown as EmbeddingClient,
     );
 
-    const results = await retrieval.search({
+    const results = await retrieval.search('test-repo-id-0001', {
       query: 'query',
       limit: 5,
       includePinned: true,
@@ -252,7 +252,7 @@ describe('RetrievalService', () => {
       new FakeEmbeddingClient(null) as unknown as EmbeddingClient,
     );
 
-    const results = await retrieval.search({
+    const results = await retrieval.search('test-repo-id-0001', {
       query: 'whatever',
       limit: 5,
       includePinned: true,
@@ -282,7 +282,7 @@ describe('RetrievalService', () => {
       new FakeEmbeddingClient(null) as unknown as EmbeddingClient,
     );
 
-    const results = await retrieval.search({
+    const results = await retrieval.search('test-repo-id-0001', {
       query: 'long',
       limit: 10,
       includePinned: true,

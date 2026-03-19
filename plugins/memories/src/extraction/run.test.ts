@@ -7,6 +7,7 @@ function createPayload(): WorkerPayload {
   return {
     endpoint: { host: '127.0.0.1', port: 4301 },
     project_root: '/tmp/project',
+    repo_id: 'test-repo-id-0001',
     transcript_path: '/tmp/project/transcript.jsonl',
     session_id: 'session-1',
     last_assistant_message: 'remember important project constraints',

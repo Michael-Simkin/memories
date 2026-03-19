@@ -8,7 +8,6 @@ const lockMetadataSchema = z.object({
   port: z.number().int().min(1).max(65535),
   pid: z.number().int().positive(),
   started_at: z.string().min(1),
-  connected_session_ids: z.array(z.string().trim().min(1)).default([]),
 });
 
 export type LockMetadata = z.infer<typeof lockMetadataSchema>;
@@ -31,38 +30,15 @@ export async function readLockMetadata(lockPath: string): Promise<LockMetadata |
     return null;
   }
 
-  return {
-    ...parsed.data,
-    connected_session_ids: uniqueNonEmpty(parsed.data.connected_session_ids),
-  };
+  return parsed.data;
 }
 
 export async function writeLockMetadata(lockPath: string, payload: LockMetadata): Promise<void> {
-  const normalized = lockMetadataSchema.parse({
-    ...payload,
-    connected_session_ids: uniqueNonEmpty(payload.connected_session_ids),
-  });
+  const normalized = lockMetadataSchema.parse(payload);
   if (!isLoopback(normalized.host)) {
     throw new Error(`Lock host must be loopback, received: ${normalized.host}`);
   }
   await atomicWriteJson(lockPath, normalized);
-}
-
-export async function updateConnectedSessions(
-  lockPath: string,
-  updater: (sessions: string[]) => string[],
-): Promise<LockMetadata | null> {
-  const current = await readLockMetadata(lockPath);
-  if (!current) {
-    return null;
-  }
-
-  const next: LockMetadata = {
-    ...current,
-    connected_session_ids: uniqueNonEmpty(updater(current.connected_session_ids)),
-  };
-  await writeLockMetadata(lockPath, next);
-  return next;
 }
 
 export async function removeLockIfOwned(lockPath: string, ownerPid: number): Promise<void> {
@@ -71,8 +47,4 @@ export async function removeLockIfOwned(lockPath: string, ownerPid: number): Pro
     return;
   }
   await removeFileIfExists(lockPath);
-}
-
-function uniqueNonEmpty(values: string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }

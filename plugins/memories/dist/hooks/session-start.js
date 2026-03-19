@@ -6,8 +6,8 @@ var __export = (target, all) => {
 };
 
 // src/hooks/session-start.ts
-import { execFile as execFile3 } from "child_process";
-import { promisify as promisify3 } from "util";
+import { execFile as execFile4 } from "child_process";
+import { promisify as promisify4 } from "util";
 
 // src/engine/ensure-engine.ts
 import { execFile as execFile2, spawn } from "child_process";
@@ -13873,8 +13873,7 @@ var lockMetadataSchema = external_exports.object({
   host: external_exports.string().trim().min(1),
   port: external_exports.number().int().min(1).max(65535),
   pid: external_exports.number().int().positive(),
-  started_at: external_exports.string().min(1),
-  connected_session_ids: external_exports.array(external_exports.string().trim().min(1)).default([])
+  started_at: external_exports.string().min(1)
 });
 function isLoopback(host) {
   return LOOPBACK_HOST_ALIASES.includes(host);
@@ -13891,13 +13890,7 @@ async function readLockMetadata(lockPath) {
   if (!isLoopback(parsed.data.host)) {
     return null;
   }
-  return {
-    ...parsed.data,
-    connected_session_ids: uniqueNonEmpty(parsed.data.connected_session_ids)
-  };
-}
-function uniqueNonEmpty(values) {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  return parsed.data;
 }
 
 // src/shared/logger.ts
@@ -13976,6 +13969,7 @@ function logError(message, data) {
 
 // src/shared/paths.ts
 import { mkdir } from "fs/promises";
+import os from "os";
 import path2 from "path";
 import { fileURLToPath } from "url";
 function resolveProjectRoot(explicitProjectRoot) {
@@ -13997,10 +13991,9 @@ function resolvePluginRoot() {
   const moduleDirectory = path2.dirname(currentFilePath);
   return path2.resolve(moduleDirectory, "..", "..");
 }
-function getProjectPaths(projectRoot) {
-  const memoriesDir = path2.join(projectRoot, ".memories");
+function getGlobalPaths() {
+  const memoriesDir = path2.join(os.homedir(), ".claude", "memories");
   return {
-    projectRoot,
     memoriesDir,
     dbPath: path2.join(memoriesDir, MEMORY_DB_FILE),
     lockPath: path2.join(memoriesDir, ENGINE_LOCK_FILE),
@@ -14009,16 +14002,16 @@ function getProjectPaths(projectRoot) {
     eventLogPath: path2.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
   };
 }
-async function ensureProjectDirectories(projectRoot) {
-  const projectPaths = getProjectPaths(projectRoot);
-  await mkdir(projectPaths.memoriesDir, { recursive: true });
-  return projectPaths;
+async function ensureGlobalDirectories() {
+  const globalPaths = getGlobalPaths();
+  await mkdir(globalPaths.memoriesDir, { recursive: true });
+  return globalPaths;
 }
 
 // src/engine/node-runtime.ts
 import { execFile } from "child_process";
 import { existsSync, readdirSync } from "fs";
-import os from "os";
+import os2 from "os";
 import path3 from "path";
 import { promisify } from "util";
 var execFileAsync = promisify(execFile);
@@ -14123,7 +14116,7 @@ function listVersionedNodeBins(rootDirectory) {
   return versions.map((version2) => path3.join(rootDirectory, version2, "bin", "node"));
 }
 function candidateNodeExecutables() {
-  const homeDirectory = os.homedir();
+  const homeDirectory = os2.homedir();
   const nvmDirectory = process.env.NVM_DIR || path3.join(homeDirectory, ".nvm");
   return dedupeCandidates([
     process.env.MEMORIES_NODE_BIN ?? "",
@@ -14317,9 +14310,6 @@ function normalizeCommand(command) {
   return command.replaceAll("\\", "/").trim();
 }
 async function isEngineProcess(pid, engineEntrypoint) {
-  if (process.platform === "win32") {
-    return false;
-  }
   try {
     const { stdout } = await execFileAsync2("ps", ["-p", String(pid), "-o", "command="]);
     const command = normalizeCommand(String(stdout));
@@ -14357,9 +14347,9 @@ async function stopUnhealthyEngine(pid, engineEntrypoint, pollMs) {
 function isErrnoException2(error48) {
   return typeof error48 === "object" && error48 !== null && "code" in error48;
 }
-async function ensureEngine(projectRoot) {
+async function ensureEngine() {
   ensureNodeRuntimeSupported();
-  const paths = await ensureProjectDirectories(projectRoot);
+  const paths = await ensureGlobalDirectories();
   const pluginRoot = resolvePluginRoot();
   const engineEntrypoint = `${pluginRoot}/dist/engine/main.js`;
   const maxWaitMs = parseTimeoutMs("MEMORIES_ENGINE_BOOT_TIMEOUT_MS", DEFAULT_BOOT_TIMEOUT_MS);
@@ -14411,8 +14401,7 @@ async function ensureEngine(projectRoot) {
       }
       logWarn("Existing engine stayed unhealthy; attempting a verified restart", {
         engineEntrypoint,
-        pid: existingLock.pid,
-        projectRoot
+        pid: existingLock.pid
       });
       const stopped = await stopUnhealthyEngine(existingLock.pid, engineEntrypoint, pollMs);
       if (!stopped) {
@@ -14432,7 +14421,7 @@ async function ensureEngine(projectRoot) {
     }
     await appendEngineStderrMarker(
       paths.engineStderrPath,
-      `Launching engine for ${projectRoot} via ${nodeRuntime.executable} (v${nodeRuntime.version})`
+      `Launching global engine via ${nodeRuntime.executable} (v${nodeRuntime.version})`
     );
     const spawnState = {
       exit: null,
@@ -14445,8 +14434,7 @@ async function ensureEngine(projectRoot) {
         detached: true,
         env: {
           ...process.env,
-          CLAUDE_PLUGIN_ROOT: pluginRoot,
-          PROJECT_ROOT: projectRoot
+          CLAUDE_PLUGIN_ROOT: pluginRoot
         },
         stdio: ["ignore", "ignore", stderrFd]
       });
@@ -14542,6 +14530,7 @@ var memoryRecordSchema = external_exports.object({
   updated_at: external_exports.string().min(1)
 });
 var addMemoryInputSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   memory_type: memoryTypeSchema,
   content: external_exports.string().trim().min(1),
   tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
@@ -14549,12 +14538,17 @@ var addMemoryInputSchema = external_exports.object({
   path_matchers: external_exports.array(pathMatcherSchema).default([])
 });
 var updateMemoryInputSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   content: external_exports.string().trim().min(1).optional(),
   tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
   is_pinned: external_exports.boolean().optional(),
   path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "At least one field must be updated");
+}).refine(
+  (value) => value.content !== void 0 || value.tags !== void 0 || value.is_pinned !== void 0 || value.path_matchers !== void 0,
+  "At least one update field must be provided"
+);
 var searchRequestSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   query: external_exports.string().default(""),
   limit: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT),
   target_paths: external_exports.array(external_exports.string()).default([]),
@@ -14619,46 +14613,6 @@ var backgroundHooksResponseSchema = external_exports.object({
     now: external_exports.string().min(1)
   })
 });
-var createActionSchema = external_exports.object({
-  action: external_exports.literal("create"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_type: memoryTypeSchema,
-  content: external_exports.string().trim().min(1),
-  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
-  is_pinned: external_exports.boolean().default(false),
-  path_matchers: external_exports.array(pathMatcherSchema).default([])
-});
-var updateFieldsSchema = external_exports.object({
-  content: external_exports.string().trim().min(1).optional(),
-  tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
-  is_pinned: external_exports.boolean().optional(),
-  path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "Update action requires at least one field");
-var updateActionSchema = external_exports.object({
-  action: external_exports.literal("update"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_id: external_exports.string().trim().min(1),
-  updates: updateFieldsSchema
-});
-var deleteActionSchema = external_exports.object({
-  action: external_exports.literal("delete"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_id: external_exports.string().trim().min(1)
-});
-var skipActionSchema = external_exports.object({
-  action: external_exports.literal("skip"),
-  confidence: external_exports.number().min(0).max(1).default(1),
-  reason: external_exports.string().optional()
-});
-var extractionActionSchema = external_exports.discriminatedUnion("action", [
-  createActionSchema,
-  updateActionSchema,
-  deleteActionSchema,
-  skipActionSchema
-]);
-var extractionActionsPayloadSchema = external_exports.object({
-  actions: external_exports.array(extractionActionSchema).default([])
-});
 
 // src/shared/logs.ts
 var SECRET_PATTERNS = [
@@ -14691,30 +14645,6 @@ function redactSecrets(value) {
 async function appendEventLog(logPath, event) {
   const validated = memoryEventLogSchema.parse(event);
   await appendJsonLine(logPath, redactSecrets(validated));
-}
-async function readEventLogs(logPath, limit = 200) {
-  try {
-    const raw = await readFile3(logPath, "utf8");
-    const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
-    const selected = lines.slice(Math.max(0, lines.length - limit));
-    return selected.flatMap((line) => {
-      try {
-        const parsed = JSON.parse(line);
-        const validated = memoryEventLogSchema.safeParse(parsed);
-        return validated.success ? [validated.data] : [];
-      } catch {
-        return [];
-      }
-    });
-  } catch (error48) {
-    if (isErrnoException3(error48) && error48.code === "ENOENT") {
-      return [];
-    }
-    throw error48;
-  }
-}
-function isErrnoException3(error48) {
-  return typeof error48 === "object" && error48 !== null && "code" in error48;
 }
 
 // src/shared/markdown.ts
@@ -14793,6 +14723,98 @@ function groupByMemoryType(results) {
   return grouped;
 }
 
+// src/shared/repo-identity.ts
+import { execFile as execFile3 } from "child_process";
+import { createHash } from "crypto";
+import { realpath } from "fs/promises";
+import { promisify as promisify3 } from "util";
+var execFileAsync3 = promisify3(execFile3);
+var GIT_TIMEOUT_MS = 3e3;
+var repoIdCache = /* @__PURE__ */ new Map();
+var repoLabelCache = /* @__PURE__ */ new Map();
+function hashIdentity(identity) {
+  return createHash("sha256").update(identity).digest("hex").slice(0, 16);
+}
+function normalizeRemoteUrl(url2) {
+  let normalized = url2.trim();
+  normalized = normalized.replace(/\.git\/?$/, "");
+  normalized = normalized.replace(/\/+$/, "");
+  const sshMatch = normalized.match(/^[\w.-]+@([\w.-]+):(.*)/);
+  if (sshMatch) {
+    const host = sshMatch[1].toLowerCase();
+    const path5 = sshMatch[2];
+    return `${host}/${path5}`;
+  }
+  const httpsMatch = normalized.match(/^https?:\/\/([\w.-]+(?::\d+)?)\/(.*)/);
+  if (httpsMatch) {
+    const host = httpsMatch[1].toLowerCase();
+    const path5 = httpsMatch[2];
+    return `${host}/${path5}`;
+  }
+  const sshProtoMatch = normalized.match(/^ssh:\/\/[\w.-]+@([\w.-]+(?::\d+)?)\/(.*)/);
+  if (sshProtoMatch) {
+    const host = sshProtoMatch[1].toLowerCase();
+    const path5 = sshProtoMatch[2];
+    return `${host}/${path5}`;
+  }
+  return normalized;
+}
+async function gitExec(projectRoot, args) {
+  try {
+    const { stdout } = await execFileAsync3("git", ["-C", projectRoot, ...args], {
+      timeout: GIT_TIMEOUT_MS
+    });
+    const trimmed = stdout.trim();
+    return trimmed || null;
+  } catch {
+    return null;
+  }
+}
+async function resolveIdentity(projectRoot) {
+  const originUrl = await gitExec(projectRoot, ["remote", "get-url", "origin"]);
+  if (originUrl) {
+    const normalized = normalizeRemoteUrl(originUrl);
+    return { id: hashIdentity(normalized), label: normalized };
+  }
+  const toplevel = await gitExec(projectRoot, ["rev-parse", "--show-toplevel"]);
+  if (toplevel) {
+    let resolved2;
+    try {
+      resolved2 = await realpath(toplevel);
+    } catch {
+      resolved2 = toplevel;
+    }
+    return { id: hashIdentity(resolved2), label: resolved2 };
+  }
+  let resolved;
+  try {
+    resolved = await realpath(projectRoot);
+  } catch {
+    resolved = projectRoot;
+  }
+  return { id: hashIdentity(resolved), label: resolved };
+}
+async function resolveRepoId(projectRoot) {
+  const cached2 = repoIdCache.get(projectRoot);
+  if (cached2) {
+    return cached2;
+  }
+  const { id, label } = await resolveIdentity(projectRoot);
+  repoIdCache.set(projectRoot, id);
+  repoLabelCache.set(projectRoot, label);
+  return id;
+}
+async function resolveRepoLabel(projectRoot) {
+  const cached2 = repoLabelCache.get(projectRoot);
+  if (cached2) {
+    return cached2;
+  }
+  const { id, label } = await resolveIdentity(projectRoot);
+  repoIdCache.set(projectRoot, id);
+  repoLabelCache.set(projectRoot, label);
+  return label;
+}
+
 // src/hooks/common.ts
 import path4 from "path";
 function resolveHookProjectRoot(payload) {
@@ -14862,19 +14884,18 @@ var sessionEndPayloadSchema = external_exports.object({
 }).catchall(external_exports.unknown());
 
 // src/hooks/session-start.ts
-var execFileAsync3 = promisify3(execFile3);
+var execFileAsync4 = promisify4(execFile4);
 var GENERIC_STARTUP_FAILURE_MESSAGE = "Memories could not be launched, see details in the logs";
 var MAX_SESSION_START_OLLAMA_TIMEOUT_MS = 2500;
-var RECENT_RESUME_BOOTSTRAP_WINDOW_MS = 5e3;
 var defaultDependencies = {
   appendEventLogFn: appendEventLog,
   diagnoseOllamaFn: diagnoseOllamaStartupIssue,
   ensureEngineFn: ensureEngine,
-  ensureProjectDirectoriesFn: ensureProjectDirectories,
+  ensureGlobalDirectoriesFn: ensureGlobalDirectories,
   getEngineJsonFn: getEngineJson,
   postEngineJsonFn: postEngineJson,
-  readEventLogsFn: readEventLogs,
-  readLockMetadataFn: readLockMetadata
+  resolveRepoIdFn: resolveRepoId,
+  resolveRepoLabelFn: resolveRepoLabel
 };
 var OllamaServiceNotRunningError = class extends Error {
 };
@@ -14974,7 +14995,7 @@ function detectNodeRuntimeStartupIssue(error48) {
 }
 async function isOllamaInstalled() {
   try {
-    await execFileAsync3("ollama", ["--version"]);
+    await execFileAsync4("ollama", ["--version"]);
     return true;
   } catch (error48) {
     if (error48?.code === "ENOENT") {
@@ -15071,87 +15092,14 @@ async function diagnoseOllamaStartupIssue() {
   }
   return null;
 }
-function normalizeSessionStartSource(rawSource) {
-  const source = rawSource?.trim();
-  switch (source) {
-    case "startup":
-    case "resume":
-    case "clear":
-    case "compact":
-      return source;
-    default:
-      return void 0;
-  }
-}
-function shouldRegisterLiveSession(source) {
-  return source !== "compact";
-}
-function parseEventTimestamp(at) {
-  const timestamp = Date.parse(at);
-  return Number.isFinite(timestamp) ? timestamp : null;
-}
-async function shouldSkipResumeBootstrapConnect(currentSessionId, dependencies, paths) {
-  const lock = await dependencies.readLockMetadataFn(paths.lockPath);
-  if (!lock) {
-    return false;
-  }
-  return lock.connected_session_ids.some((sessionId) => sessionId !== currentSessionId);
-}
-async function disconnectRecentResumeBootstrapSessions(currentSessionId, endpoint, dependencies, paths) {
-  const lock = await dependencies.readLockMetadataFn(paths.lockPath);
-  if (!lock) {
-    return [];
-  }
-  const connectedOtherSessions = lock.connected_session_ids.filter((sessionId) => sessionId !== currentSessionId);
-  if (connectedOtherSessions.length === 0) {
-    return [];
-  }
-  const recentEvents = await dependencies.readEventLogsFn(paths.eventLogPath, 100);
-  const latestResumeStartAt = /* @__PURE__ */ new Map();
-  const latestSessionEndAt = /* @__PURE__ */ new Map();
-  const nowMs = Date.now();
-  const cutoffMs = nowMs - RECENT_RESUME_BOOTSTRAP_WINDOW_MS;
-  for (const event of recentEvents) {
-    if (!event.session_id) {
-      continue;
-    }
-    const eventAtMs = parseEventTimestamp(event.at);
-    if (eventAtMs === null) {
-      continue;
-    }
-    if (event.event === "SessionStart" && event.status === "ok" && event.data?.source === "resume" && eventAtMs >= cutoffMs) {
-      latestResumeStartAt.set(event.session_id, eventAtMs);
-      continue;
-    }
-    if (event.event === "SessionEnd") {
-      latestSessionEndAt.set(event.session_id, eventAtMs);
-    }
-  }
-  const bootstrapResumeSessionIds = connectedOtherSessions.filter((sessionId) => {
-    const resumeStartAt = latestResumeStartAt.get(sessionId);
-    if (resumeStartAt === void 0) {
-      return false;
-    }
-    const sessionEndAt = latestSessionEndAt.get(sessionId) ?? Number.NEGATIVE_INFINITY;
-    return sessionEndAt < resumeStartAt;
-  });
-  const lockStartedAtMs = parseEventTimestamp(lock.started_at);
-  const shouldFallbackToRecentSiblings = bootstrapResumeSessionIds.length === 0 && lockStartedAtMs !== null && nowMs - lockStartedAtMs <= RECENT_RESUME_BOOTSTRAP_WINDOW_MS;
-  const fallbackBootstrapSessionIds = shouldFallbackToRecentSiblings ? connectedOtherSessions : [];
-  const targetsToDisconnect = bootstrapResumeSessionIds.length > 0 ? bootstrapResumeSessionIds : fallbackBootstrapSessionIds;
-  for (const sessionId of targetsToDisconnect) {
-    await dependencies.postEngineJsonFn(endpoint, "/sessions/disconnect", { session_id: sessionId });
-  }
-  return targetsToDisconnect;
-}
 async function handleSessionStart(payload, dependencies = defaultDependencies) {
   const projectRoot = resolveHookProjectRoot(payload);
   const sessionId = payload.session_id?.trim();
-  const source = normalizeSessionStartSource(payload.source);
   let eventLogPath = null;
   try {
-    const paths = await dependencies.ensureProjectDirectoriesFn(projectRoot);
+    const paths = await dependencies.ensureGlobalDirectoriesFn();
     eventLogPath = paths.eventLogPath;
+    const repoId = await dependencies.resolveRepoIdFn(projectRoot);
     const ollamaIssue = await dependencies.diagnoseOllamaFn();
     if (ollamaIssue) {
       await dependencies.appendEventLogFn(paths.eventLogPath, {
@@ -15160,7 +15108,6 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
         kind: "hook",
         status: "skipped",
         ...sessionId ? { session_id: sessionId } : {},
-        ...source ? { data: { source } } : {},
         detail: ollamaIssue.detail
       });
       return {
@@ -15172,15 +15119,16 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
         }
       };
     }
-    const endpoint = await dependencies.ensureEngineFn(projectRoot);
-    const skippedResumeBootstrapConnect = source === "resume" && sessionId ? await shouldSkipResumeBootstrapConnect(sessionId, dependencies, paths) : false;
-    if (sessionId && shouldRegisterLiveSession(source)) {
-      if (!skippedResumeBootstrapConnect) {
-        await dependencies.postEngineJsonFn(endpoint, "/sessions/connect", { session_id: sessionId });
-      }
+    const repoLabel = await dependencies.resolveRepoLabelFn(projectRoot);
+    const endpoint = await dependencies.ensureEngineFn();
+    try {
+      await dependencies.postEngineJsonFn(endpoint, "/repos/label", { repo_id: repoId, label: repoLabel });
+    } catch {
     }
-    const evictedResumeSessionIds = source === "startup" && sessionId ? await disconnectRecentResumeBootstrapSessions(sessionId, endpoint, dependencies, paths) : [];
-    const pinned = await dependencies.getEngineJsonFn(endpoint, "/memories/pinned");
+    const pinned = await dependencies.getEngineJsonFn(
+      endpoint,
+      `/memories/pinned?repo_id=${encodeURIComponent(repoId)}`
+    );
     const markdown = formatMemoryRecallMarkdown({
       query: "session-start:pinned",
       results: pinned.results,
@@ -15194,14 +15142,8 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
       kind: "hook",
       status: "ok",
       ...sessionId ? { session_id: sessionId } : {},
-      ...source || evictedResumeSessionIds.length > 0 || skippedResumeBootstrapConnect ? {
-        data: {
-          ...source ? { source } : {},
-          ...evictedResumeSessionIds.length > 0 ? { evicted_resume_session_ids: evictedResumeSessionIds } : {},
-          ...skippedResumeBootstrapConnect ? { skipped_resume_bootstrap_connect: true } : {}
-        }
-      } : {},
-      detail: `${source ? `source=${source}; ` : ""}ui=${memoryUiUrl}${evictedResumeSessionIds.length > 0 ? `; evicted_resume_sessions=${evictedResumeSessionIds.join(",")}` : ""}${skippedResumeBootstrapConnect ? "; skipped_resume_bootstrap_connect=true" : ""}`
+      detail: `repo_id=${repoId}; ui=${memoryUiUrl}`,
+      data: { repo_id: repoId }
     });
     return {
       continue: true,
@@ -15220,7 +15162,6 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
         kind: "hook",
         status: "skipped",
         ...sessionId ? { session_id: sessionId } : {},
-        ...source ? { data: { source } } : {},
         detail: nodeRuntimeIssue.detail
       });
       return {
@@ -15239,7 +15180,6 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
         kind: "hook",
         status: "skipped",
         ...sessionId ? { session_id: sessionId } : {},
-        ...source ? { data: { source } } : {},
         detail: error48 instanceof Error ? error48.message : String(error48)
       });
       return {
@@ -15254,7 +15194,6 @@ async function handleSessionStart(payload, dependencies = defaultDependencies) {
         kind: "hook",
         status: "error",
         ...sessionId ? { session_id: sessionId } : {},
-        ...source ? { data: { source } } : {},
         detail: error48 instanceof Error ? error48.message : String(error48)
       });
     }

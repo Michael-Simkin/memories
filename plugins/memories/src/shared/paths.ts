@@ -1,4 +1,5 @@
 import { mkdir } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,8 +11,7 @@ import {
   MEMORY_EVENTS_LOG_FILE,
 } from './constants.js';
 
-export interface ProjectPaths {
-  projectRoot: string;
+export interface GlobalPaths {
   memoriesDir: string;
   dbPath: string;
   lockPath: string;
@@ -44,10 +44,9 @@ export function resolvePluginRoot(): string {
   return path.resolve(moduleDirectory, '..', '..');
 }
 
-export function getProjectPaths(projectRoot: string): ProjectPaths {
-  const memoriesDir = path.join(projectRoot, '.memories');
+export function getGlobalPaths(): GlobalPaths {
+  const memoriesDir = path.join(os.homedir(), '.claude', 'memories');
   return {
-    projectRoot,
     memoriesDir,
     dbPath: path.join(memoriesDir, MEMORY_DB_FILE),
     lockPath: path.join(memoriesDir, ENGINE_LOCK_FILE),
@@ -57,8 +56,8 @@ export function getProjectPaths(projectRoot: string): ProjectPaths {
   };
 }
 
-export async function ensureProjectDirectories(projectRoot: string): Promise<ProjectPaths> {
-  const projectPaths = getProjectPaths(projectRoot);
-  await mkdir(projectPaths.memoriesDir, { recursive: true });
-  return projectPaths;
+export async function ensureGlobalDirectories(): Promise<GlobalPaths> {
+  const globalPaths = getGlobalPaths();
+  await mkdir(globalPaths.memoriesDir, { recursive: true });
+  return globalPaths;
 }

@@ -7,6 +7,7 @@ import {
   fetchBackgroundHooks,
   fetchLogs,
   fetchMemories,
+  fetchRepos,
   fetchStats,
   searchMemories,
   updateMemory,
@@ -281,6 +282,16 @@ function toDisplayMemoryFromSearch(result: MemorySearchResult): DisplayMemory {
   };
 }
 
+function formatRepoLabel(label: string): string {
+  if (label.includes('/')) {
+    const parts = label.split('/');
+    if (parts.length >= 2) {
+      return parts.slice(-2).join('/');
+    }
+  }
+  return label;
+}
+
 export function App() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<Tab>('memories');
@@ -289,6 +300,8 @@ export function App() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<DisplayMemory | null>(null);
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(() => new Set());
+  const [selectedRepoId, setSelectedRepoId] = useState<string | null>(null);
+  const [repoFilter, setRepoFilter] = useState('');
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -298,6 +311,28 @@ export function App() {
       window.clearTimeout(timeout);
     };
   }, [searchInput]);
+
+  const reposQuery = useQuery({
+    queryKey: ['repos'],
+    queryFn: fetchRepos,
+    refetchInterval: 10000,
+  });
+
+  useEffect(() => {
+    const repos = reposQuery.data;
+    if (repos && repos.length > 0 && !selectedRepoId) {
+      setSelectedRepoId(repos[0]!.repo_id);
+    }
+  }, [reposQuery.data, selectedRepoId]);
+
+  const filteredRepos = useMemo(() => {
+    const repos = reposQuery.data ?? [];
+    const filter = repoFilter.trim().toLowerCase();
+    if (!filter) return repos;
+    return repos.filter(
+      (repo) => repo.label.toLowerCase().includes(filter) || repo.repo_id.includes(filter),
+    );
+  }, [reposQuery.data, repoFilter]);
 
   const statsQuery = useQuery({
     queryKey: ['stats'],
@@ -313,17 +348,17 @@ export function App() {
   });
 
   const memoriesQuery = useQuery({
-    queryKey: ['memories'],
-    queryFn: fetchMemories,
+    queryKey: ['memories', selectedRepoId],
+    queryFn: () => fetchMemories(selectedRepoId!),
+    enabled: !!selectedRepoId,
     refetchInterval: activeTab === 'memories' ? 2000 : false,
   });
 
   const searchResultsQuery = useQuery({
-    queryKey: ['memory-search', searchQuery],
-    queryFn: ({ signal }) => searchMemories(searchQuery, { signal }),
-    enabled: activeTab === 'memories' && searchQuery.length >= MIN_SEARCH_QUERY_LENGTH,
-    refetchInterval:
-      activeTab === 'memories' && searchQuery.length >= MIN_SEARCH_QUERY_LENGTH ? 2000 : false,
+    queryKey: ['memory-search', selectedRepoId, searchQuery],
+    queryFn: ({ signal }) => searchMemories(selectedRepoId!, searchQuery, { signal }),
+    enabled: !!selectedRepoId && activeTab === 'memories' && searchQuery.length >= MIN_SEARCH_QUERY_LENGTH,
+    refetchInterval: activeTab === 'memories' && searchQuery.length >= MIN_SEARCH_QUERY_LENGTH ? 2000 : false,
   });
 
   const logsQuery = useQuery({
@@ -334,7 +369,7 @@ export function App() {
   });
 
   const createMutation = useMutation({
-    mutationFn: createMemory,
+    mutationFn: (payload: Parameters<typeof createMemory>[1]) => createMemory(selectedRepoId!, payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['memories'] });
       void queryClient.invalidateQueries({ queryKey: ['stats'] });
@@ -343,7 +378,7 @@ export function App() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: updateMemory,
+    mutationFn: (payload: Parameters<typeof updateMemory>[1]) => updateMemory(selectedRepoId!, payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['memories'] });
       void queryClient.invalidateQueries({ queryKey: ['logs'] });
@@ -351,7 +386,7 @@ export function App() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: deleteMemory,
+    mutationFn: (memoryId: string) => deleteMemory(selectedRepoId!, memoryId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['memories'] });
       void queryClient.invalidateQueries({ queryKey: ['stats'] });
@@ -405,16 +440,38 @@ export function App() {
   }
 
   return (
-    <main>
+    <div className="app-layout">
+      <aside className="repo-sidebar">
+        <h2 className="sidebar-title">Repositories</h2>
+        <input
+          type="text"
+          className="repo-filter-input"
+          placeholder="Filter repos..."
+          value={repoFilter}
+          onChange={(event) => setRepoFilter(event.currentTarget.value)}
+        />
+        <ul className="repo-list">
+          {filteredRepos.map((repo) => (
+            <li key={repo.repo_id}>
+              <button
+                type="button"
+                className={`repo-item ${selectedRepoId === repo.repo_id ? 'selected' : ''}`}
+                onClick={() => setSelectedRepoId(repo.repo_id)}
+                title={repo.label}
+              >
+                <span className="repo-name">{formatRepoLabel(repo.label)}</span>
+                <span className="repo-id">{repo.repo_id}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </aside>
+      <main className="main-content">
       <header className="stats-bar">
-        <span>Memories: {statsQuery.data?.memory_count ?? '—'}</span>
-        <span>Sessions: {statsQuery.data?.active_sessions ?? '—'}</span>
-        <span>Background Hooks: {statsQuery.data?.active_background_hooks ?? '—'}</span>
+        <span>Hooks: {statsQuery.data?.active_background_hooks ?? '—'}</span>
         <span>Uptime: {statsQuery.data ? Math.floor(statsQuery.data.uptime_ms / 1000) : '—'}s</span>
-        <span>Status: {statsQuery.data?.online ? 'online' : 'offline'}</span>
-        <span>
-          Shutdown: {statsQuery.data?.shutdown_blocked ? 'blocked by hooks' : 'clear'}
-        </span>
+        <span>Idle: {statsQuery.data ? Math.floor(statsQuery.data.idle_remaining_ms / 1000) : '—'}s</span>
+        <span>{statsQuery.data?.online ? 'Online' : 'Offline'}</span>
       </header>
 
       <nav className="tabs">
@@ -692,6 +749,7 @@ export function App() {
           }}
         />
       ) : null}
-    </main>
+      </main>
+    </div>
   );
 }

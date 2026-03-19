@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { isPidAlive, removeFileIfExists } from '../shared/fs-utils.js';
 import { readLockMetadata } from '../shared/lockfile.js';
 import { logInfo, logWarn } from '../shared/logger.js';
-import { ensureProjectDirectories, resolvePluginRoot } from '../shared/paths.js';
+import { ensureGlobalDirectories, resolvePluginRoot } from '../shared/paths.js';
 import { resolveEngineNodeRuntime } from './node-runtime.js';
 
 export interface EngineEndpoint {
@@ -229,10 +229,6 @@ function normalizeCommand(command: string): string {
 }
 
 async function isEngineProcess(pid: number, engineEntrypoint: string): Promise<boolean> {
-  if (process.platform === 'win32') {
-    return false;
-  }
-
   try {
     const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'command=']);
     const command = normalizeCommand(String(stdout));
@@ -280,10 +276,10 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
   return typeof error === 'object' && error !== null && 'code' in error;
 }
 
-export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint> {
+export async function ensureEngine(): Promise<EngineEndpoint> {
   ensureNodeRuntimeSupported();
 
-  const paths = await ensureProjectDirectories(projectRoot);
+  const paths = await ensureGlobalDirectories();
   const pluginRoot = resolvePluginRoot();
   const engineEntrypoint = `${pluginRoot}/dist/engine/main.js`;
   const maxWaitMs = parseTimeoutMs('MEMORIES_ENGINE_BOOT_TIMEOUT_MS', DEFAULT_BOOT_TIMEOUT_MS);
@@ -345,7 +341,6 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
       logWarn('Existing engine stayed unhealthy; attempting a verified restart', {
         engineEntrypoint,
         pid: existingLock.pid,
-        projectRoot,
       });
       const stopped = await stopUnhealthyEngine(existingLock.pid, engineEntrypoint, pollMs);
       if (!stopped) {
@@ -366,7 +361,7 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
     }
     await appendEngineStderrMarker(
       paths.engineStderrPath,
-      `Launching engine for ${projectRoot} via ${nodeRuntime.executable} (v${nodeRuntime.version})`,
+      `Launching global engine via ${nodeRuntime.executable} (v${nodeRuntime.version})`,
     );
 
     const spawnState: { exit: EngineExitState | null; failure: Error | null } = {
@@ -381,7 +376,6 @@ export async function ensureEngine(projectRoot: string): Promise<EngineEndpoint>
         env: {
           ...process.env,
           CLAUDE_PLUGIN_ROOT: pluginRoot,
-          PROJECT_ROOT: projectRoot,
         },
         stdio: ['ignore', 'ignore', stderrFd],
       });

@@ -1,20 +1,26 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { access } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { writeLockMetadata } from '../shared/lockfile.js';
+import { getGlobalPaths } from '../shared/paths.js';
 import { ensureEngine } from './ensure-engine.js';
 import { REQUIRED_ENGINE_NODE_MAJOR } from './node-runtime.js';
 
 const originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
 const originalNodeBin = process.env.MEMORIES_NODE_BIN;
 const originalBootTimeout = process.env.MEMORIES_ENGINE_BOOT_TIMEOUT_MS;
+const globalPaths = getGlobalPaths();
 
-afterEach(() => {
+beforeEach(async () => {
+  await mkdir(path.dirname(globalPaths.lockPath), { recursive: true });
+});
+
+afterEach(async () => {
   if (originalPluginRoot === undefined) {
     delete process.env.CLAUDE_PLUGIN_ROOT;
   } else {
@@ -32,17 +38,10 @@ afterEach(() => {
   } else {
     process.env.MEMORIES_ENGINE_BOOT_TIMEOUT_MS = originalBootTimeout;
   }
-});
 
-async function createProjectRoot(): Promise<{ lockPath: string; projectRoot: string }> {
-  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'memories-engine-'));
-  const memoriesPath = path.join(projectRoot, '.memories');
-  await mkdir(memoriesPath, { recursive: true });
-  return {
-    lockPath: path.join(memoriesPath, 'engine.lock.json'),
-    projectRoot,
-  };
-}
+  await rm(globalPaths.lockPath, { force: true });
+  await rm(globalPaths.startupLockPath, { force: true });
+});
 
 async function createPluginRootWithEngineEntrypoint(contents: string): Promise<string> {
   const pluginRoot = await mkdtemp(path.join(os.tmpdir(), 'memories-plugin-'));
@@ -90,19 +89,18 @@ async function createHealthServer(): Promise<{
 
 describe('ensureEngine', () => {
   it('reuses a healthy lock endpoint when pid is alive', async () => {
-    const { projectRoot, lockPath } = await createProjectRoot();
     const healthServer = await createHealthServer();
-    process.env.CLAUDE_PLUGIN_ROOT = projectRoot;
+    const pluginRoot = await mkdtemp(path.join(os.tmpdir(), 'memories-plugin-'));
+    process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
 
-    await writeLockMetadata(lockPath, {
+    await writeLockMetadata(globalPaths.lockPath, {
       host: '127.0.0.1',
       port: healthServer.port,
       pid: process.pid,
       started_at: new Date().toISOString(),
-      connected_session_ids: [],
     });
 
-    const endpoint = await ensureEngine(projectRoot);
+    const endpoint = await ensureEngine();
     expect(endpoint).toEqual({
       host: '127.0.0.1',
       port: healthServer.port,
@@ -112,38 +110,36 @@ describe('ensureEngine', () => {
   });
 
   it('cleans stale lock when pid is dead before spawn path', async () => {
-    const { projectRoot, lockPath } = await createProjectRoot();
-    process.env.CLAUDE_PLUGIN_ROOT = projectRoot;
+    const pluginRoot = await mkdtemp(path.join(os.tmpdir(), 'memories-plugin-'));
+    process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
 
-    await writeLockMetadata(lockPath, {
+    await writeLockMetadata(globalPaths.lockPath, {
       host: '127.0.0.1',
       port: 4100,
       pid: 999_999_999,
       started_at: new Date().toISOString(),
-      connected_session_ids: [],
     });
 
-    await expect(ensureEngine(projectRoot)).rejects.toThrow('Engine entrypoint missing');
-    await expect(access(lockPath)).rejects.toThrow();
+    await expect(ensureEngine()).rejects.toThrow('Engine entrypoint missing');
+    await expect(access(globalPaths.lockPath)).rejects.toThrow();
   });
 
   it('does not trust non-loopback lock host entries', async () => {
-    const { projectRoot, lockPath } = await createProjectRoot();
-    process.env.CLAUDE_PLUGIN_ROOT = projectRoot;
+    const pluginRoot = await mkdtemp(path.join(os.tmpdir(), 'memories-plugin-'));
+    process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
 
     await writeFile(
-      lockPath,
+      globalPaths.lockPath,
       JSON.stringify({
         host: '192.168.0.8',
         port: 4444,
         pid: process.pid,
         started_at: new Date().toISOString(),
-        connected_session_ids: [],
       }),
       'utf8',
     );
 
-    await expect(ensureEngine(projectRoot)).rejects.toThrow('Engine entrypoint missing');
+    await expect(ensureEngine()).rejects.toThrow('Engine entrypoint missing');
   });
 
   it('fails fast when the spawned engine exits before becoming healthy', async () => {
@@ -152,7 +148,6 @@ describe('ensureEngine', () => {
       return;
     }
 
-    const { projectRoot } = await createProjectRoot();
     const pluginRoot = await createPluginRootWithEngineEntrypoint(
       [
         "process.stderr.write(JSON.stringify({ message: 'Engine bootstrap failed', data: { error: 'boom' } }) + '\\n');",
@@ -164,7 +159,7 @@ describe('ensureEngine', () => {
     process.env.MEMORIES_ENGINE_BOOT_TIMEOUT_MS = '30000';
 
     const startedAt = Date.now();
-    await expect(ensureEngine(projectRoot)).rejects.toThrow(
+    await expect(ensureEngine()).rejects.toThrow(
       /Engine process exited before becoming healthy.*Engine bootstrap failed: boom/i,
     );
     expect(Date.now() - startedAt).toBeLessThan(5_000);

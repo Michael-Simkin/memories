@@ -4,6 +4,7 @@ import type {
   Memory,
   MemorySearchResult,
   MemoryType,
+  RepoInfo,
   StatsResponse,
 } from './types.js';
 
@@ -25,11 +26,19 @@ export async function fetchBackgroundHooks(): Promise<BackgroundHooksResponse> {
   return parseJson<BackgroundHooksResponse>(await fetch('/background-hooks'));
 }
 
-export async function fetchMemories(): Promise<{ items: Memory[]; total: number }> {
-  return parseJson<{ items: Memory[]; total: number }>(await fetch('/memories?limit=200&offset=0'));
+export async function fetchRepos(): Promise<RepoInfo[]> {
+  const payload = await parseJson<{ repos: RepoInfo[] }>(await fetch('/repos'));
+  return payload.repos;
+}
+
+export async function fetchMemories(repoId: string): Promise<{ items: Memory[]; total: number }> {
+  return parseJson<{ items: Memory[]; total: number }>(
+    await fetch(`/memories?repo_id=${encodeURIComponent(repoId)}&limit=200&offset=0`),
+  );
 }
 
 export async function searchMemories(
+  repoId: string,
   query: string,
   options?: { limit?: number; signal?: AbortSignal },
 ): Promise<MemorySearchResult[]> {
@@ -37,13 +46,13 @@ export async function searchMemories(
   if (!normalizedQuery) {
     return [];
   }
-
   const limit = Math.max(1, Math.min(MAX_SEARCH_LIMIT, options?.limit ?? 30));
   const response = await fetch('/memories/search', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     ...(options?.signal ? { signal: options.signal } : {}),
     body: JSON.stringify({
+      repo_id: repoId,
       query: normalizedQuery,
       limit,
       include_pinned: true,
@@ -53,7 +62,7 @@ export async function searchMemories(
   return payload.results;
 }
 
-export async function createMemory(payload: {
+export async function createMemory(repoId: string, payload: {
   memory_type: MemoryType;
   content: string;
   tags: string[];
@@ -63,13 +72,13 @@ export async function createMemory(payload: {
   const response = await fetch('/memories/add', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, repo_id: repoId }),
   });
   const data = await parseJson<{ memory: Memory }>(response);
   return data.memory;
 }
 
-export async function updateMemory(payload: {
+export async function updateMemory(repoId: string, payload: {
   id: string;
   content: string;
   tags: string[];
@@ -80,6 +89,7 @@ export async function updateMemory(payload: {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
+      repo_id: repoId,
       content: payload.content,
       tags: payload.tags,
       is_pinned: payload.is_pinned,
@@ -90,9 +100,9 @@ export async function updateMemory(payload: {
   return data.memory;
 }
 
-export async function deleteMemory(memoryId: string): Promise<void> {
+export async function deleteMemory(repoId: string, memoryId: string): Promise<void> {
   await parseJson<{ deleted: boolean; id: string }>(
-    await fetch(`/memories/${memoryId}`, { method: 'DELETE' }),
+    await fetch(`/memories/${memoryId}?repo_id=${encodeURIComponent(repoId)}`, { method: 'DELETE' }),
   );
 }
 

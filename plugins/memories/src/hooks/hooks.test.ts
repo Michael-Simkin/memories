@@ -1,12 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-  SessionEndPayload,
   SessionStartPayload,
   StopPayload,
   UserPromptSubmitPayload,
 } from './schemas.js';
-import { handleSessionEnd } from './session-end.js';
 import { handleSessionStart } from './session-start.js';
 import { handleStopHook } from './stop.js';
 import {
@@ -20,11 +18,12 @@ function createSessionStartDependencies(
   return {
     appendEventLogFn: vi.fn().mockResolvedValue(undefined),
     diagnoseOllamaFn: vi.fn().mockResolvedValue(null),
-    ensureProjectDirectoriesFn: vi.fn().mockResolvedValue({
-      projectRoot: '/tmp',
+    ensureGlobalDirectoriesFn: vi.fn().mockResolvedValue({
       memoriesDir: '/tmp/.memories',
       dbPath: '/tmp/.memories/ai_memory.db',
       lockPath: '/tmp/.memories/engine.lock.json',
+      startupLockPath: '/tmp/.memories/engine.startup.lock',
+      engineStderrPath: '/tmp/.memories/engine.stderr.log',
       eventLogPath: '/tmp/events.log',
     }),
     ensureEngineFn: vi.fn().mockResolvedValue({ host: '127.0.0.1', port: 4312 }),
@@ -50,8 +49,8 @@ function createSessionStartDependencies(
       ],
     }),
     postEngineJsonFn: vi.fn().mockResolvedValue({ ok: true }),
-    readEventLogsFn: vi.fn().mockResolvedValue([]),
-    readLockMetadataFn: vi.fn().mockResolvedValue(null),
+    resolveRepoIdFn: vi.fn().mockResolvedValue('test-repo-id-0001'),
+    resolveRepoLabelFn: vi.fn().mockResolvedValue('github.com/test-org/test-repo'),
     ...overrides,
   };
 }
@@ -63,13 +62,11 @@ describe('hook handlers', () => {
       source: 'startup',
     };
     const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
-    const postEngineJsonFn = vi.fn().mockResolvedValue({ ok: true });
 
     const output = await handleSessionStart(
       payload,
       createSessionStartDependencies({
         appendEventLogFn,
-        postEngineJsonFn,
       }),
     );
 
@@ -88,11 +85,6 @@ describe('hook handlers', () => {
     expect(output.hookSpecificOutput?.additionalContext).toContain('contains only pinned memories');
     expect(output.hookSpecificOutput?.additionalContext).toContain('# Memory Recall');
     expect(output.hookSpecificOutput?.additionalContext).not.toContain('id: memory-1');
-    expect(postEngineJsonFn).toHaveBeenCalledWith(
-      { host: '127.0.0.1', port: 4312 },
-      '/sessions/connect',
-      { session_id: 'session-abc' },
-    );
   });
 
   it('SessionStart does not register another live session on compact', async () => {
@@ -101,128 +93,42 @@ describe('hook handlers', () => {
       source: 'compact',
     };
     const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
-    const postEngineJsonFn = vi.fn().mockResolvedValue({ ok: true });
 
     const output = await handleSessionStart(
       payload,
       createSessionStartDependencies({
         appendEventLogFn,
-        postEngineJsonFn,
       }),
     );
 
     expect(output.continue).toBe(true);
     expect(output.systemMessage).toContain('Memory UI:');
-    expect(postEngineJsonFn).not.toHaveBeenCalled();
     expect(appendEventLogFn).toHaveBeenCalledWith(
       '/tmp/events.log',
       expect.objectContaining({
-        detail: expect.stringContaining('source=compact; ui=http://127.0.0.1:4312/ui'),
         event: 'SessionStart',
         session_id: 'session-compact',
         status: 'ok',
-        data: { source: 'compact' },
       }),
     );
   });
 
-  it('SessionStart skips bootstrap resume connect when startup session is already connected', async () => {
+  it('SessionStart completes for resume source', async () => {
     const payload: SessionStartPayload = {
       session_id: 'session-resume',
       source: 'resume',
     };
     const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
-    const postEngineJsonFn = vi.fn().mockResolvedValue({ ok: true });
-    const now = new Date().toISOString();
 
     const output = await handleSessionStart(
       payload,
       createSessionStartDependencies({
         appendEventLogFn,
-        postEngineJsonFn,
-        readLockMetadataFn: vi.fn().mockResolvedValue({
-          host: '127.0.0.1',
-          port: 4312,
-          pid: 999,
-          started_at: now,
-          connected_session_ids: ['session-startup'],
-        }),
       }),
     );
 
     expect(output.continue).toBe(true);
-    expect(postEngineJsonFn).not.toHaveBeenCalled();
-    expect(appendEventLogFn).toHaveBeenCalledWith(
-      '/tmp/events.log',
-      expect.objectContaining({
-        detail: expect.stringContaining('skipped_resume_bootstrap_connect=true'),
-        event: 'SessionStart',
-        session_id: 'session-resume',
-        status: 'ok',
-        data: {
-          source: 'resume',
-          skipped_resume_bootstrap_connect: true,
-        },
-      }),
-    );
-  });
-
-  it('SessionStart evicts a bootstrap resume session when startup follows continue', async () => {
-    const payload: SessionStartPayload = {
-      session_id: 'session-startup',
-      source: 'startup',
-    };
-    const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
-    const postEngineJsonFn = vi.fn().mockResolvedValue({ ok: true });
-    const now = new Date().toISOString();
-
-    const output = await handleSessionStart(
-      payload,
-      createSessionStartDependencies({
-        appendEventLogFn,
-        postEngineJsonFn,
-        readEventLogsFn: vi.fn().mockResolvedValue([
-          {
-            at: now,
-            event: 'SessionStart',
-            kind: 'hook',
-            status: 'ok',
-            session_id: 'session-resume',
-            data: { source: 'resume' },
-          },
-        ]),
-        readLockMetadataFn: vi.fn().mockResolvedValue({
-          host: '127.0.0.1',
-          port: 4312,
-          pid: 999,
-          started_at: now,
-          connected_session_ids: ['session-resume', 'session-startup'],
-        }),
-      }),
-    );
-
-    expect(output.continue).toBe(true);
-    expect(postEngineJsonFn.mock.calls).toEqual([
-      [{ host: '127.0.0.1', port: 4312 }, '/sessions/connect', { session_id: 'session-startup' }],
-      [
-        { host: '127.0.0.1', port: 4312 },
-        '/sessions/disconnect',
-        { session_id: 'session-resume' },
-      ],
-    ]);
-    expect(appendEventLogFn).toHaveBeenCalledWith(
-      '/tmp/events.log',
-      expect.objectContaining({
-        detail: expect.stringContaining('evicted_resume_sessions=session-resume'),
-        event: 'SessionStart',
-        session_id: 'session-startup',
-        status: 'ok',
-        data: {
-          source: 'startup',
-          evicted_resume_session_ids: ['session-resume'],
-        },
-      }),
-    );
+    expect(output.systemMessage).toContain('Memory UI:');
   });
 
   for (const testCase of [
@@ -401,16 +307,18 @@ describe('hook handlers', () => {
     const output = await handleStopHook(payload, {
       accessFn: vi.fn().mockResolvedValue(undefined),
       appendEventLogFn: vi.fn().mockResolvedValue(undefined),
-      ensureProjectDirectoriesFn: vi.fn().mockResolvedValue({
-        projectRoot: '/tmp',
+      ensureGlobalDirectoriesFn: vi.fn().mockResolvedValue({
         memoriesDir: '/tmp/.memories',
         dbPath: '/tmp/.memories/ai_memory.db',
         lockPath: '/tmp/.memories/engine.lock.json',
+        startupLockPath: '/tmp/.memories/engine.startup.lock',
+        engineStderrPath: '/tmp/.memories/engine.stderr.log',
         eventLogPath: '/tmp/events.log',
       }),
       finishBackgroundHookFn,
       registerBackgroundHookFn,
       resolveEndpointFromLockFn: vi.fn().mockResolvedValue({ host: '127.0.0.1', port: 4322 }),
+      resolveRepoIdFn: vi.fn().mockResolvedValue('test-repo-id-0001'),
       spawnStopWorkerFn,
     });
 
@@ -456,57 +364,4 @@ describe('hook handlers', () => {
     );
   });
 
-  it('SessionEnd remains fail-open when disconnect fails', async () => {
-    const payload: SessionEndPayload = {
-      session_id: 'session-end',
-    };
-
-    const output = await handleSessionEnd(payload, {
-      appendEventLogFn: vi.fn().mockResolvedValue(undefined),
-      ensureProjectDirectoriesFn: vi.fn().mockResolvedValue({
-        projectRoot: '/tmp',
-        memoriesDir: '/tmp/.memories',
-        dbPath: '/tmp/.memories/ai_memory.db',
-        lockPath: '/tmp/.memories/engine.lock.json',
-        eventLogPath: '/tmp/events.log',
-      }),
-      postEngineJsonFn: vi.fn().mockRejectedValue(new Error('network failure')),
-      resolveEndpointFromLockFn: vi.fn().mockResolvedValue({ host: '127.0.0.1', port: 4400 }),
-    });
-
-    expect(output).toEqual({ continue: true });
-  });
-
-  it('SessionEnd records a skipped event when lock metadata is missing', async () => {
-    const payload: SessionEndPayload = {
-      session_id: 'session-missing-lock',
-    };
-    const appendEventLogFn = vi.fn().mockResolvedValue(undefined);
-
-    const output = await handleSessionEnd(payload, {
-      appendEventLogFn,
-      ensureProjectDirectoriesFn: vi.fn().mockResolvedValue({
-        projectRoot: '/tmp',
-        memoriesDir: '/tmp/.memories',
-        dbPath: '/tmp/.memories/ai_memory.db',
-        lockPath: '/tmp/.memories/engine.lock.json',
-        eventLogPath: '/tmp/events.log',
-      }),
-      postEngineJsonFn: vi.fn(),
-      resolveEndpointFromLockFn: vi
-        .fn()
-        .mockRejectedValue(new Error('ENGINE_UNAVAILABLE: lock metadata not found')),
-    });
-
-    expect(output).toEqual({ continue: true });
-    expect(appendEventLogFn).toHaveBeenCalledWith(
-      '/tmp/events.log',
-      expect.objectContaining({
-        detail: 'ENGINE_UNAVAILABLE: lock metadata not found',
-        event: 'SessionEnd',
-        session_id: 'session-missing-lock',
-        status: 'skipped',
-      }),
-    );
-  });
 });

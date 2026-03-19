@@ -10,14 +10,15 @@ import {
 } from '../shared/hook-io.js';
 import { logError } from '../shared/logger.js';
 import { appendEventLog } from '../shared/logs.js';
-import { ensureProjectDirectories, resolvePluginRoot } from '../shared/paths.js';
+import { ensureGlobalDirectories, resolvePluginRoot } from '../shared/paths.js';
+import { resolveRepoId } from '../shared/repo-identity.js';
 import {
   isEngineUnavailableError,
   postEngineJson,
   resolveEndpointFromLock,
   resolveHookProjectRoot,
 } from './common.js';
-import { type StopPayload,stopPayloadSchema } from './schemas.js';
+import { type StopPayload, stopPayloadSchema } from './schemas.js';
 
 const STOP_EXTRACTION_BACKGROUND_HOOK_NAME = 'stop/extraction';
 
@@ -28,6 +29,7 @@ interface StopWorkerHandoff {
     port: number;
   };
   project_root: string;
+  repo_id: string;
   transcript_path: string;
   last_assistant_message?: string;
   session_id?: string;
@@ -75,7 +77,6 @@ function spawnStopWorker(handoff: StopWorkerHandoff): Promise<{ pid?: number }> 
       env: {
         ...process.env,
         CLAUDE_PLUGIN_ROOT: pluginRoot,
-        PROJECT_ROOT: handoff.project_root,
       },
       stdio: 'ignore',
     });
@@ -90,20 +91,22 @@ function spawnStopWorker(handoff: StopWorkerHandoff): Promise<{ pid?: number }> 
 interface StopHookDependencies {
   accessFn: typeof access;
   appendEventLogFn: typeof appendEventLog;
-  ensureProjectDirectoriesFn: typeof ensureProjectDirectories;
+  ensureGlobalDirectoriesFn: typeof ensureGlobalDirectories;
   finishBackgroundHookFn: typeof finishBackgroundHook;
   registerBackgroundHookFn: typeof registerBackgroundHook;
   resolveEndpointFromLockFn: typeof resolveEndpointFromLock;
+  resolveRepoIdFn: typeof resolveRepoId;
   spawnStopWorkerFn: typeof spawnStopWorker;
 }
 
 const defaultDependencies: StopHookDependencies = {
   accessFn: access,
   appendEventLogFn: appendEventLog,
-  ensureProjectDirectoriesFn: ensureProjectDirectories,
+  ensureGlobalDirectoriesFn: ensureGlobalDirectories,
   finishBackgroundHookFn: finishBackgroundHook,
   registerBackgroundHookFn: registerBackgroundHook,
   resolveEndpointFromLockFn: resolveEndpointFromLock,
+  resolveRepoIdFn: resolveRepoId,
   spawnStopWorkerFn: spawnStopWorker,
 };
 
@@ -112,7 +115,7 @@ export async function handleStopHook(
   dependencies: StopHookDependencies = defaultDependencies,
 ): Promise<HookResult> {
   const projectRoot = resolveHookProjectRoot(payload);
-  const paths = await dependencies.ensureProjectDirectoriesFn(projectRoot);
+  const paths = await dependencies.ensureGlobalDirectoriesFn();
 
   if (payload.stop_hook_active === true) {
     await dependencies.appendEventLogFn(paths.eventLogPath, {
@@ -128,7 +131,8 @@ export async function handleStopHook(
 
   try {
     await dependencies.accessFn(payload.transcript_path);
-    const endpoint = await dependencies.resolveEndpointFromLockFn(projectRoot);
+    const repoId = await dependencies.resolveRepoIdFn(projectRoot);
+    const endpoint = await dependencies.resolveEndpointFromLockFn();
     const backgroundHookId = randomUUID();
     await dependencies.registerBackgroundHookFn(endpoint, {
       id: backgroundHookId,
@@ -146,6 +150,7 @@ export async function handleStopHook(
           port: endpoint.port,
         },
         project_root: projectRoot,
+        repo_id: repoId,
         transcript_path: payload.transcript_path,
         ...(payload.last_assistant_message
           ? { last_assistant_message: payload.last_assistant_message }
@@ -166,7 +171,7 @@ export async function handleStopHook(
       kind: 'hook',
       status: 'ok',
       ...(payload.session_id ? { session_id: payload.session_id } : {}),
-      detail: `handoff=${payload.transcript_path}; hook_id=${backgroundHookId}${typeof spawnedWorker.pid === 'number' ? `; pid=${spawnedWorker.pid}` : ''}`,
+      detail: `handoff=${payload.transcript_path}; hook_id=${backgroundHookId}; repo_id=${repoId}${typeof spawnedWorker.pid === 'number' ? `; pid=${spawnedWorker.pid}` : ''}`,
     });
     return { continue: true };
   } catch (error) {

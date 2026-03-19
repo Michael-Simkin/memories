@@ -10,14 +10,6 @@ const bundledRuntimeDependencies = [
   'zod',
 ];
 
-const nativeRuntimeDependencies = [
-  'better-sqlite3',
-  'sqlite-vec-darwin-arm64',
-  'sqlite-vec-darwin-x64',
-  'sqlite-vec-linux-arm64',
-  'sqlite-vec-linux-x64',
-];
-
 export default defineConfig({
   banner: {
     js: "import { createRequire as __memoriesCreateRequire } from 'node:module'; const require = __memoriesCreateRequire(import.meta.url);",
@@ -33,12 +25,12 @@ export default defineConfig({
     'hooks/user-prompt-submit': 'src/hooks/user-prompt-submit.ts',
     'mcp/search-server': 'src/mcp/search-server.ts',
   },
-  external: nativeRuntimeDependencies,
   format: ['esm'],
   noExternal: bundledRuntimeDependencies,
+  onSuccess: `sed -i '' 's/from "sqlite"/from "node:sqlite"/g' dist/engine/main.js`,
   outDir: 'dist',
   platform: 'node',
   sourcemap: true,
   splitting: false,
-  target: 'node20',
+  target: 'node24',
 });

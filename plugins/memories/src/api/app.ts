@@ -10,13 +10,12 @@ import {
   DEFAULT_BACKGROUND_HOOK_HEARTBEAT_TIMEOUT_MS,
   DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS,
   DEFAULT_BACKGROUND_HOOK_SWEEP_INTERVAL_MS,
-  DEFAULT_ENGINE_DRAIN_GRACE_MS,
-  LOOPBACK_HOST,
+  DEFAULT_IDLE_CHECK_INTERVAL_MS,
+  DEFAULT_IDLE_TIMEOUT_MS,
   OLLAMA_PROFILE_CONFIG,
   resolveOllamaProfile,
 } from '../shared/constants.js';
 import { isPidAlive } from '../shared/fs-utils.js';
-import { readLockMetadata, writeLockMetadata } from '../shared/lockfile.js';
 import { logError, logWarn } from '../shared/logger.js';
 import { appendEventLog, readEventLogs } from '../shared/logs.js';
 import {
@@ -31,13 +30,14 @@ import { sendError } from './errors.js';
 
 export interface EngineAppOptions {
   pluginRoot: string;
-  projectRoot: string;
+  dbPath: string;
   lockPath: string;
   eventLogPath: string;
   port: number;
   sqliteVecExtensionPath: string | null;
-  onSessionDrain: () => Promise<void>;
-  drainGraceMs?: number;
+  onIdleTimeout: () => Promise<void>;
+  idleTimeoutMs?: number;
+  idleCheckIntervalMs?: number;
   backgroundHookPolicy?: Partial<{
     heartbeatTimeoutMs: number;
     maxRuntimeMs: number;
@@ -48,16 +48,22 @@ export interface EngineAppOptions {
 export interface EngineAppRuntime {
   app: express.Express;
   close: () => void;
-  getSessionCount: () => number;
 }
 
-const sessionsPayloadSchema = z.object({
-  session_id: z.string().trim().min(1),
+const repoIdSchema = z.string().trim().min(1);
+
+const repoIdQuerySchema = z.object({
+  repo_id: repoIdSchema,
 });
 
 const listMemoriesQuerySchema = z.object({
+  repo_id: repoIdSchema,
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
+});
+
+const pinnedQuerySchema = z.object({
+  repo_id: repoIdSchema,
 });
 
 const logsQuerySchema = z.object({
@@ -116,116 +122,30 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
     sweepIntervalMs:
       options.backgroundHookPolicy?.sweepIntervalMs ?? DEFAULT_BACKGROUND_HOOK_SWEEP_INTERVAL_MS,
   };
-  const drainGraceMs = options.drainGraceMs ?? DEFAULT_ENGINE_DRAIN_GRACE_MS;
+  const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const idleCheckIntervalMs = options.idleCheckIntervalMs ?? DEFAULT_IDLE_CHECK_INTERVAL_MS;
   const profile = resolveOllamaProfile(process.env.MEMORIES_OLLAMA_PROFILE);
   const store = new MemoryStore({
-    dbPath: path.join(options.projectRoot, '.memories', 'ai_memory.db'),
-    pluginRoot: options.pluginRoot,
+    dbPath: options.dbPath,
     sqliteVecExtensionPath: options.sqliteVecExtensionPath,
     embeddingDimensions: OLLAMA_PROFILE_CONFIG[profile].dimensions,
   });
   const embeddingClient = new EmbeddingClient();
   const retrieval = new RetrievalService(store, embeddingClient);
-  let activeSessions = new Set<string>();
   const activeBackgroundHooks = new Map<string, ActiveBackgroundHook>();
-  let drainTriggered = false;
-  let drainTimer: ReturnType<typeof setTimeout> | null = null;
-  let sessionMutationQueue: Promise<void> = Promise.resolve();
+  let lastInteractionAtMs = Date.now();
+  let idleShutdownTriggered = false;
 
-  function clearDrainTimer(): void {
-    if (!drainTimer) {
-      return;
+  function resetIdleTimer(): void {
+    lastInteractionAtMs = Date.now();
+  }
+
+  app.use((request: Request, _response: Response, next: express.NextFunction) => {
+    if (request.path !== '/health') {
+      resetIdleTimer();
     }
-    clearTimeout(drainTimer);
-    drainTimer = null;
-  }
-
-  function cancelDrain(): void {
-    clearDrainTimer();
-    drainTriggered = false;
-  }
-
-  function setActiveSessions(nextSessionIds: string[]): void {
-    activeSessions = new Set(nextSessionIds);
-  }
-
-  function currentSessionIds(): string[] {
-    return [...activeSessions].sort();
-  }
-
-  function sameSessionSnapshot(nextSessionIds: string[]): boolean {
-    if (activeSessions.size !== nextSessionIds.length) {
-      return false;
-    }
-    return nextSessionIds.every((sessionId) => activeSessions.has(sessionId));
-  }
-
-  function queueSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
-    const result = sessionMutationQueue.then(operation, operation);
-    sessionMutationQueue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  }
-
-  async function writeOwnedSessionSnapshot(nextSessionIds: string[]): Promise<string[]> {
-    const currentLock = await readLockMetadata(options.lockPath);
-    if (currentLock && currentLock.pid !== process.pid && isPidAlive(currentLock.pid)) {
-      throw new Error(`Engine lock is owned by another live process (${currentLock.pid})`);
-    }
-
-    const startedAt = currentLock?.pid === process.pid ? currentLock.started_at : new Date(startedAtMs).toISOString();
-    const sessionIds = [...new Set(nextSessionIds.map((sessionId) => sessionId.trim()).filter(Boolean))].sort();
-    await writeLockMetadata(options.lockPath, {
-      host: LOOPBACK_HOST,
-      port: options.port,
-      pid: process.pid,
-      started_at: startedAt,
-      connected_session_ids: sessionIds,
-    });
-    return sessionIds;
-  }
-
-  async function reconcileSessionsWithLock(): Promise<void> {
-    const currentLock = await readLockMetadata(options.lockPath);
-    if (!currentLock) {
-      if (activeSessions.size > 0) {
-        logWarn('Engine lock metadata disappeared; recreating it from active sessions', {
-          sessions: currentSessionIds(),
-        });
-        const restoredSessions = await writeOwnedSessionSnapshot(currentSessionIds());
-        setActiveSessions(restoredSessions);
-      }
-      return;
-    }
-
-    if (currentLock.pid === process.pid) {
-      if (!sameSessionSnapshot(currentLock.connected_session_ids)) {
-        logWarn('Reconciled in-memory sessions from owned lock metadata', {
-          in_memory_sessions: currentSessionIds(),
-          lock_sessions: currentLock.connected_session_ids,
-        });
-        setActiveSessions(currentLock.connected_session_ids);
-      }
-      return;
-    }
-
-    if (!isPidAlive(currentLock.pid)) {
-      const restoredSessions = await writeOwnedSessionSnapshot(currentSessionIds());
-      setActiveSessions(restoredSessions);
-      return;
-    }
-
-    if (activeSessions.size > 0) {
-      logWarn('Detected a second live engine for this project; clearing local ghost sessions', {
-        in_memory_sessions: currentSessionIds(),
-        lock_owner_pid: currentLock.pid,
-        lock_sessions: currentLock.connected_session_ids,
-      });
-      setActiveSessions([]);
-    }
-  }
+    next();
+  });
 
   function serializeBackgroundHook(hook: ActiveBackgroundHook): BackgroundHookRecord {
     return {
@@ -242,29 +162,22 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
     };
   }
 
-  async function maybeTriggerDrain(): Promise<void> {
-    if (
-      drainTriggered ||
-      drainTimer ||
-      activeSessions.size > 0 ||
-      activeBackgroundHooks.size > 0
-    ) {
+  function checkIdleTimeout(): void {
+    if (idleShutdownTriggered) {
       return;
     }
-
-    drainTimer = setTimeout(() => {
-      drainTimer = null;
-      if (drainTriggered || activeSessions.size > 0 || activeBackgroundHooks.size > 0) {
-        return;
-      }
-      drainTriggered = true;
-      void options.onSessionDrain().catch((error) => {
-        logError('Session drain callback failed', {
-          error: error instanceof Error ? error.message : String(error),
-        });
+    if (activeBackgroundHooks.size > 0) {
+      return;
+    }
+    if (Date.now() - lastInteractionAtMs < idleTimeoutMs) {
+      return;
+    }
+    idleShutdownTriggered = true;
+    void options.onIdleTimeout().catch((error) => {
+      logError('Idle timeout callback failed', {
+        error: error instanceof Error ? error.message : String(error),
       });
-    }, drainGraceMs);
-    drainTimer.unref?.();
+    });
   }
 
   async function appendBackgroundHookLifecycleEvent(
@@ -333,8 +246,6 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
         entry.detail,
       );
     }
-
-    await maybeTriggerDrain();
   }
 
   const backgroundHookSweepTimer = setInterval(() => {
@@ -345,6 +256,11 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
     });
   }, backgroundHookPolicy.sweepIntervalMs);
   backgroundHookSweepTimer.unref?.();
+
+  const idleCheckTimer = setInterval(() => {
+    checkIdleTimeout();
+  }, idleCheckIntervalMs);
+  idleCheckTimer.unref?.();
 
   const staticUiDir = path.join(options.pluginRoot, 'web', 'dist');
   if (existsSync(staticUiDir)) {
@@ -367,81 +283,32 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
 
   app.get('/stats', async (_request: Request, response: Response) => {
     await sweepExpiredBackgroundHooks();
-    await queueSessionMutation(async () => {
-      await reconcileSessionsWithLock();
-    });
-    await maybeTriggerDrain();
+    const now = Date.now();
     response.json({
-      active_sessions: activeSessions.size,
       active_background_hooks: activeBackgroundHooks.size,
-      memory_count: store.memoryCount(),
       online: true,
-      shutdown_blocked: activeSessions.size === 0 && activeBackgroundHooks.size > 0,
-      uptime_ms: Date.now() - startedAtMs,
+      uptime_ms: now - startedAtMs,
+      last_interaction_at: new Date(lastInteractionAtMs).toISOString(),
+      idle_timeout_ms: idleTimeoutMs,
+      idle_remaining_ms: Math.max(0, idleTimeoutMs - (now - lastInteractionAtMs)),
     });
   });
 
-  app.post('/sessions/connect', async (request: Request, response: Response) => {
-    const parsed = sessionsPayloadSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return sendError(response, 400, 'INVALID_SESSION_ID', parsed.error.message);
-    }
-
-    const sessionId = parsed.data.session_id;
-    cancelDrain();
-    const activeSessionCount = await queueSessionMutation(async () => {
-      await reconcileSessionsWithLock();
-      const nextSessionIds = new Set(currentSessionIds());
-      nextSessionIds.add(sessionId);
-      const persistedSessions = await writeOwnedSessionSnapshot([...nextSessionIds]);
-      setActiveSessions(persistedSessions);
-      return activeSessions.size;
-    });
-
-    await appendEventLog(
-      options.eventLogPath,
-      toEventLog({
-        at: new Date().toISOString(),
-        event: 'sessions/connect',
-        kind: 'hook',
-        status: 'ok',
-        session_id: sessionId,
-      }),
-    );
-
-    return response.json({ active_sessions: activeSessionCount, ok: true });
+  app.get('/repos', (_request: Request, response: Response) => {
+    const repos = store.listRepos();
+    return response.json({ repos });
   });
 
-  app.post('/sessions/disconnect', async (request: Request, response: Response) => {
-    const parsed = sessionsPayloadSchema.safeParse(request.body);
+  app.post('/repos/label', (request: Request, response: Response) => {
+    const parsed = z.object({
+      repo_id: z.string().trim().min(1),
+      label: z.string().trim().min(1),
+    }).safeParse(request.body);
     if (!parsed.success) {
-      return sendError(response, 400, 'INVALID_SESSION_ID', parsed.error.message);
+      return sendError(response, 400, 'INVALID_PAYLOAD', parsed.error.message);
     }
-
-    const sessionId = parsed.data.session_id;
-    const activeSessionCount = await queueSessionMutation(async () => {
-      await reconcileSessionsWithLock();
-      const persistedSessions = await writeOwnedSessionSnapshot(
-        currentSessionIds().filter((value) => value !== sessionId),
-      );
-      setActiveSessions(persistedSessions);
-      return activeSessions.size;
-    });
-
-    await appendEventLog(
-      options.eventLogPath,
-      toEventLog({
-        at: new Date().toISOString(),
-        event: 'sessions/disconnect',
-        kind: 'hook',
-        status: 'ok',
-        session_id: sessionId,
-      }),
-    );
-
-    await maybeTriggerDrain();
-
-    return response.json({ active_sessions: activeSessionCount, ok: true });
+    store.upsertRepoLabel(parsed.data.repo_id, parsed.data.label);
+    return response.json({ ok: true });
   });
 
   app.get('/background-hooks', async (_request: Request, response: Response) => {
@@ -465,7 +332,6 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
     }
 
     await sweepExpiredBackgroundHooks();
-    cancelDrain();
 
     const now = Date.now();
     const nextHook: ActiveBackgroundHook = {
@@ -542,13 +408,17 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
       parsedBody.data.status,
       parsedBody.data.detail,
     );
-    await maybeTriggerDrain();
     return response.json({ active: false, ok: true });
   });
 
-  app.get('/memories/pinned', (_request: Request, response: Response) => {
+  app.get('/memories/pinned', (request: Request, response: Response) => {
+    const parsed = pinnedQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return sendError(response, 400, 'INVALID_QUERY', parsed.error.message);
+    }
+
     const startedAt = Date.now();
-    const results = store.getPinnedMemories();
+    const results = store.getPinnedMemories(parsed.data.repo_id);
     return response.json({
       meta: {
         duration_ms: Date.now() - startedAt,
@@ -567,7 +437,7 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
     }
 
     const startedAt = Date.now();
-    const results = await retrieval.search({
+    const results = await retrieval.search(parsed.data.repo_id, {
       query: parsed.data.query,
       limit: parsed.data.limit,
       includePinned: parsed.data.include_pinned,
@@ -611,7 +481,7 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
       vector = await embeddingClient.embed(parsed.data.content);
     }
 
-    const created = store.createMemory(parsed.data, vector);
+    const created = store.createMemory(parsed.data.repo_id, parsed.data, vector);
     await appendEventLog(
       options.eventLogPath,
       toEventLog({
@@ -632,10 +502,10 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
       return sendError(response, 400, 'INVALID_QUERY', parsed.error.message);
     }
 
-    const items = store.listMemories(parsed.data.limit, parsed.data.offset);
+    const items = store.listMemories(parsed.data.repo_id, parsed.data.limit, parsed.data.offset);
     return response.json({
       items,
-      total: store.memoryCount(),
+      total: store.memoryCount(parsed.data.repo_id),
     });
   });
 
@@ -659,7 +529,7 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
       }
     }
 
-    const updated = store.updateMemory(parsedId.data.id, parsedBody.data, vector);
+    const updated = store.updateMemory(parsedBody.data.repo_id, parsedId.data.id, parsedBody.data, vector);
     if (!updated) {
       return sendError(response, 404, 'NOT_FOUND', `Memory ${parsedId.data.id} was not found`);
     }
@@ -684,7 +554,12 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
       return sendError(response, 400, 'INVALID_MEMORY_ID', parsedId.error.message);
     }
 
-    const deleted = store.deleteMemory(parsedId.data.id);
+    const parsedQuery = repoIdQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) {
+      return sendError(response, 400, 'INVALID_QUERY', parsedQuery.error.message);
+    }
+
+    const deleted = store.deleteMemory(parsedQuery.data.repo_id, parsedId.data.id);
     if (!deleted) {
       return sendError(response, 404, 'NOT_FOUND', `Memory ${parsedId.data.id} was not found`);
     }
@@ -722,10 +597,9 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
   return {
     app,
     close: () => {
-      clearDrainTimer();
       clearInterval(backgroundHookSweepTimer);
+      clearInterval(idleCheckTimer);
       store.close();
     },
-    getSessionCount: () => activeSessions.size,
   };
 }

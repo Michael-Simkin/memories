@@ -35823,8 +35823,7 @@ var lockMetadataSchema = external_exports3.object({
   host: external_exports3.string().trim().min(1),
   port: external_exports3.number().int().min(1).max(65535),
   pid: external_exports3.number().int().positive(),
-  started_at: external_exports3.string().min(1),
-  connected_session_ids: external_exports3.array(external_exports3.string().trim().min(1)).default([])
+  started_at: external_exports3.string().min(1)
 });
 function isLoopback(host) {
   return LOOPBACK_HOST_ALIASES.includes(host);
@@ -35841,13 +35840,7 @@ async function readLockMetadata(lockPath) {
   if (!isLoopback(parsed.data.host)) {
     return null;
   }
-  return {
-    ...parsed.data,
-    connected_session_ids: uniqueNonEmpty(parsed.data.connected_session_ids)
-  };
-}
-function uniqueNonEmpty(values) {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  return parsed.data;
 }
 
 // src/shared/logger.ts
@@ -35996,6 +35989,7 @@ function groupByMemoryType(results) {
 
 // src/shared/paths.ts
 import { mkdir } from "fs/promises";
+import os from "os";
 import path2 from "path";
 import { fileURLToPath } from "url";
 function resolveProjectRoot(explicitProjectRoot) {
@@ -36008,10 +36002,9 @@ function resolveProjectRoot(explicitProjectRoot) {
   }
   return process.cwd();
 }
-function getProjectPaths(projectRoot) {
-  const memoriesDir = path2.join(projectRoot, ".memories");
+function getGlobalPaths() {
+  const memoriesDir = path2.join(os.homedir(), ".claude", "memories");
   return {
-    projectRoot,
     memoriesDir,
     dbPath: path2.join(memoriesDir, MEMORY_DB_FILE),
     lockPath: path2.join(memoriesDir, ENGINE_LOCK_FILE),
@@ -36019,6 +36012,88 @@ function getProjectPaths(projectRoot) {
     engineStderrPath: path2.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
     eventLogPath: path2.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
   };
+}
+
+// src/shared/repo-identity.ts
+import { execFile } from "child_process";
+import { createHash } from "crypto";
+import { realpath } from "fs/promises";
+import { promisify } from "util";
+var execFileAsync = promisify(execFile);
+var GIT_TIMEOUT_MS = 3e3;
+var repoIdCache = /* @__PURE__ */ new Map();
+var repoLabelCache = /* @__PURE__ */ new Map();
+function hashIdentity(identity) {
+  return createHash("sha256").update(identity).digest("hex").slice(0, 16);
+}
+function normalizeRemoteUrl(url2) {
+  let normalized = url2.trim();
+  normalized = normalized.replace(/\.git\/?$/, "");
+  normalized = normalized.replace(/\/+$/, "");
+  const sshMatch = normalized.match(/^[\w.-]+@([\w.-]+):(.*)/);
+  if (sshMatch) {
+    const host = sshMatch[1].toLowerCase();
+    const path3 = sshMatch[2];
+    return `${host}/${path3}`;
+  }
+  const httpsMatch = normalized.match(/^https?:\/\/([\w.-]+(?::\d+)?)\/(.*)/);
+  if (httpsMatch) {
+    const host = httpsMatch[1].toLowerCase();
+    const path3 = httpsMatch[2];
+    return `${host}/${path3}`;
+  }
+  const sshProtoMatch = normalized.match(/^ssh:\/\/[\w.-]+@([\w.-]+(?::\d+)?)\/(.*)/);
+  if (sshProtoMatch) {
+    const host = sshProtoMatch[1].toLowerCase();
+    const path3 = sshProtoMatch[2];
+    return `${host}/${path3}`;
+  }
+  return normalized;
+}
+async function gitExec(projectRoot, args) {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", projectRoot, ...args], {
+      timeout: GIT_TIMEOUT_MS
+    });
+    const trimmed = stdout.trim();
+    return trimmed || null;
+  } catch {
+    return null;
+  }
+}
+async function resolveIdentity(projectRoot) {
+  const originUrl = await gitExec(projectRoot, ["remote", "get-url", "origin"]);
+  if (originUrl) {
+    const normalized = normalizeRemoteUrl(originUrl);
+    return { id: hashIdentity(normalized), label: normalized };
+  }
+  const toplevel = await gitExec(projectRoot, ["rev-parse", "--show-toplevel"]);
+  if (toplevel) {
+    let resolved2;
+    try {
+      resolved2 = await realpath(toplevel);
+    } catch {
+      resolved2 = toplevel;
+    }
+    return { id: hashIdentity(resolved2), label: resolved2 };
+  }
+  let resolved;
+  try {
+    resolved = await realpath(projectRoot);
+  } catch {
+    resolved = projectRoot;
+  }
+  return { id: hashIdentity(resolved), label: resolved };
+}
+async function resolveRepoId(projectRoot) {
+  const cached2 = repoIdCache.get(projectRoot);
+  if (cached2) {
+    return cached2;
+  }
+  const { id, label } = await resolveIdentity(projectRoot);
+  repoIdCache.set(projectRoot, id);
+  repoLabelCache.set(projectRoot, label);
+  return id;
 }
 
 // src/shared/types.ts
@@ -36037,6 +36112,7 @@ var memoryRecordSchema = external_exports3.object({
   updated_at: external_exports3.string().min(1)
 });
 var addMemoryInputSchema = external_exports3.object({
+  repo_id: external_exports3.string().trim().min(1),
   memory_type: memoryTypeSchema,
   content: external_exports3.string().trim().min(1),
   tags: external_exports3.array(external_exports3.string().trim().min(1)).default([]),
@@ -36044,12 +36120,17 @@ var addMemoryInputSchema = external_exports3.object({
   path_matchers: external_exports3.array(pathMatcherSchema).default([])
 });
 var updateMemoryInputSchema = external_exports3.object({
+  repo_id: external_exports3.string().trim().min(1),
   content: external_exports3.string().trim().min(1).optional(),
   tags: external_exports3.array(external_exports3.string().trim().min(1)).optional(),
   is_pinned: external_exports3.boolean().optional(),
   path_matchers: external_exports3.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "At least one field must be updated");
+}).refine(
+  (value) => value.content !== void 0 || value.tags !== void 0 || value.is_pinned !== void 0 || value.path_matchers !== void 0,
+  "At least one update field must be provided"
+);
 var searchRequestSchema = external_exports3.object({
+  repo_id: external_exports3.string().trim().min(1),
   query: external_exports3.string().default(""),
   limit: external_exports3.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT),
   target_paths: external_exports3.array(external_exports3.string()).default([]),
@@ -36114,46 +36195,6 @@ var backgroundHooksResponseSchema = external_exports3.object({
     now: external_exports3.string().min(1)
   })
 });
-var createActionSchema = external_exports3.object({
-  action: external_exports3.literal("create"),
-  confidence: external_exports3.number().min(0).max(1),
-  memory_type: memoryTypeSchema,
-  content: external_exports3.string().trim().min(1),
-  tags: external_exports3.array(external_exports3.string().trim().min(1)).default([]),
-  is_pinned: external_exports3.boolean().default(false),
-  path_matchers: external_exports3.array(pathMatcherSchema).default([])
-});
-var updateFieldsSchema = external_exports3.object({
-  content: external_exports3.string().trim().min(1).optional(),
-  tags: external_exports3.array(external_exports3.string().trim().min(1)).optional(),
-  is_pinned: external_exports3.boolean().optional(),
-  path_matchers: external_exports3.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "Update action requires at least one field");
-var updateActionSchema = external_exports3.object({
-  action: external_exports3.literal("update"),
-  confidence: external_exports3.number().min(0).max(1),
-  memory_id: external_exports3.string().trim().min(1),
-  updates: updateFieldsSchema
-});
-var deleteActionSchema = external_exports3.object({
-  action: external_exports3.literal("delete"),
-  confidence: external_exports3.number().min(0).max(1),
-  memory_id: external_exports3.string().trim().min(1)
-});
-var skipActionSchema = external_exports3.object({
-  action: external_exports3.literal("skip"),
-  confidence: external_exports3.number().min(0).max(1).default(1),
-  reason: external_exports3.string().optional()
-});
-var extractionActionSchema = external_exports3.discriminatedUnion("action", [
-  createActionSchema,
-  updateActionSchema,
-  deleteActionSchema,
-  skipActionSchema
-]);
-var extractionActionsPayloadSchema = external_exports3.object({
-  actions: external_exports3.array(extractionActionSchema).default([])
-});
 
 // src/mcp/search-server.ts
 var recallInvocationPolicyText = "Main memory brain for this project. REQUIRED: call recall before acting; do not skip, especially before commands, file edits, updates, creations, deletions, or recommendations. If a user names a file, path, command, or requested change, validate it against memory first; direct instructions do not override remembered project rules. Re-run when scope changes or when broader context may matter.";
@@ -36179,7 +36220,8 @@ function parseTimeoutMs(rawValue) {
 async function runRecall(rawInput) {
   const parsed = recallInputSchema.parse(rawInput);
   const projectRoot = resolveProjectRoot(parsed.project_root);
-  const lockPath = getProjectPaths(projectRoot).lockPath;
+  const repoId = await resolveRepoId(projectRoot);
+  const lockPath = getGlobalPaths().lockPath;
   const lock = await readLockMetadata(lockPath);
   if (!lock) {
     throw new Error(`ENGINE_NOT_FOUND: lock metadata not found at ${lockPath}`);
@@ -36196,6 +36238,7 @@ async function runRecall(rawInput) {
       headers: { "content-type": "application/json" },
       signal: controller.signal,
       body: JSON.stringify({
+        repo_id: repoId,
         query: parsed.query,
         limit: parsed.limit ?? DEFAULT_SEARCH_LIMIT,
         include_pinned: parsed.include_pinned ?? true,

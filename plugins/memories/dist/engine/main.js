@@ -15317,11 +15317,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path7) {
-      if (!path7 || typeof path7 !== "string") {
+    function lookup(path5) {
+      if (!path5 || typeof path5 !== "string") {
         return false;
       }
-      var extension2 = extname("x." + path7).toLowerCase().slice(1);
+      var extension2 = extname("x." + path5).toLowerCase().slice(1);
       if (!extension2) {
         return false;
       }
@@ -18795,13 +18795,13 @@ var require_view = __commonJS({
   "../../node_modules/express/lib/view.js"(exports, module) {
     "use strict";
     var debug = require_src()("express:view");
-    var path7 = __require("path");
+    var path5 = __require("path");
     var fs = __require("fs");
-    var dirname = path7.dirname;
-    var basename = path7.basename;
-    var extname = path7.extname;
-    var join = path7.join;
-    var resolve = path7.resolve;
+    var dirname = path5.dirname;
+    var basename = path5.basename;
+    var extname = path5.extname;
+    var join = path5.join;
+    var resolve = path5.resolve;
     module.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -18830,17 +18830,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path8;
+      var path6;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i = 0; i < roots.length && !path8; i++) {
+      for (var i = 0; i < roots.length && !path6; i++) {
         var root = roots[i];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file2 = basename(loc);
-        path8 = this.resolve(dir, file2);
+        path6 = this.resolve(dir, file2);
       }
-      return path8;
+      return path6;
     };
     View.prototype.render = function render(options, callback) {
       var sync = true;
@@ -18862,21 +18862,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file2) {
       var ext = this.ext;
-      var path8 = join(dir, file2);
-      var stat = tryStat(path8);
+      var path6 = join(dir, file2);
+      var stat = tryStat(path6);
       if (stat && stat.isFile()) {
-        return path8;
+        return path6;
       }
-      path8 = join(dir, basename(file2, ext), "index" + ext);
-      stat = tryStat(path8);
+      path6 = join(dir, basename(file2, ext), "index" + ext);
+      stat = tryStat(path6);
       if (stat && stat.isFile()) {
-        return path8;
+        return path6;
       }
     };
-    function tryStat(path8) {
-      debug('stat "%s"', path8);
+    function tryStat(path6) {
+      debug('stat "%s"', path6);
       try {
-        return fs.statSync(path8);
+        return fs.statSync(path6);
       } catch (e) {
         return void 0;
       }
@@ -20078,15 +20078,15 @@ var require_dist = __commonJS({
           if (token.type === endType)
             break;
           if (token.type === "char" || token.type === "escape") {
-            let path7 = token.value;
+            let path5 = token.value;
             let cur = tokens[pos];
             while (cur.type === "char" || cur.type === "escape") {
-              path7 += cur.value;
+              path5 += cur.value;
               cur = tokens[++pos];
             }
             output.push({
               type: "text",
-              value: encodePath(path7)
+              value: encodePath(path5)
             });
             continue;
           }
@@ -20110,16 +20110,16 @@ var require_dist = __commonJS({
       }
       return new TokenData(consumeUntil("end"), str);
     }
-    function compile(path7, options = {}) {
+    function compile(path5, options = {}) {
       const { encode: encode3 = encodeURIComponent, delimiter = DEFAULT_DELIMITER } = options;
-      const data = typeof path7 === "object" ? path7 : parse3(path7, options);
+      const data = typeof path5 === "object" ? path5 : parse3(path5, options);
       const fn = tokensToFunction(data.tokens, delimiter, encode3);
-      return function path8(params = {}) {
-        const [path9, ...missing] = fn(params);
+      return function path6(params = {}) {
+        const [path7, ...missing] = fn(params);
         if (missing.length) {
           throw new TypeError(`Missing parameters: ${missing.join(", ")}`);
         }
-        return path9;
+        return path7;
       };
     }
     function tokensToFunction(tokens, delimiter, encode3) {
@@ -20175,9 +20175,9 @@ var require_dist = __commonJS({
         return [encodeValue(value)];
       };
     }
-    function match(path7, options = {}) {
+    function match(path5, options = {}) {
       const { decode: decode3 = decodeURIComponent, delimiter = DEFAULT_DELIMITER } = options;
-      const { regexp, keys } = pathToRegexp(path7, options);
+      const { regexp, keys } = pathToRegexp(path5, options);
       const decoders = keys.map((key) => {
         if (decode3 === false)
           return NOOP_VALUE;
@@ -20189,7 +20189,7 @@ var require_dist = __commonJS({
         const m = regexp.exec(input);
         if (!m)
           return false;
-        const path8 = m[0];
+        const path6 = m[0];
         const params = /* @__PURE__ */ Object.create(null);
         for (let i = 1; i < m.length; i++) {
           if (m[i] === void 0)
@@ -20198,15 +20198,15 @@ var require_dist = __commonJS({
           const decoder = decoders[i - 1];
           params[key.name] = decoder(m[i]);
         }
-        return { path: path8, params };
+        return { path: path6, params };
       };
     }
-    function pathToRegexp(path7, options = {}) {
+    function pathToRegexp(path5, options = {}) {
       const { delimiter = DEFAULT_DELIMITER, end = true, sensitive = false, trailing = true } = options;
       const keys = [];
       const flags = sensitive ? "" : "i";
       const sources = [];
-      for (const input of pathsToArray(path7, [])) {
+      for (const input of pathsToArray(path5, [])) {
         const data = typeof input === "object" ? input : parse3(input, options);
         for (const tokens of flatten(data.tokens, 0, [])) {
           sources.push(toRegExpSource(tokens, delimiter, keys, data.originalPath));
@@ -20336,18 +20336,18 @@ var require_layer = __commonJS({
     var TRAILING_SLASH_REGEXP = /\/+$/;
     var MATCHING_GROUP_REGEXP = /\((?:\?<(.*?)>)?(?!\?)/g;
     module.exports = Layer;
-    function Layer(path7, options, fn) {
+    function Layer(path5, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path7, options, fn);
+        return new Layer(path5, options, fn);
       }
-      debug("new %o", path7);
+      debug("new %o", path5);
       const opts = options || {};
       this.handle = fn;
       this.keys = [];
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.slash = path7 === "/" && opts.end === false;
+      this.slash = path5 === "/" && opts.end === false;
       function matcher(_path) {
         if (_path instanceof RegExp) {
           const keys = [];
@@ -20386,7 +20386,7 @@ var require_layer = __commonJS({
           decode: decodeParam
         });
       }
-      this.matchers = Array.isArray(path7) ? path7.map(matcher) : [matcher(path7)];
+      this.matchers = Array.isArray(path5) ? path5.map(matcher) : [matcher(path5)];
     }
     Layer.prototype.handleError = function handleError(error48, req, res, next) {
       const fn = this.handle;
@@ -20426,9 +20426,9 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match(path7) {
+    Layer.prototype.match = function match(path5) {
       let match2;
-      if (path7 != null) {
+      if (path5 != null) {
         if (this.slash) {
           this.params = {};
           this.path = "";
@@ -20436,7 +20436,7 @@ var require_layer = __commonJS({
         }
         let i = 0;
         while (!match2 && i < this.matchers.length) {
-          match2 = this.matchers[i](path7);
+          match2 = this.matchers[i](path5);
           i++;
         }
       }
@@ -20464,13 +20464,13 @@ var require_layer = __commonJS({
         throw err;
       }
     }
-    function loosen(path7) {
-      if (path7 instanceof RegExp || path7 === "/") {
-        return path7;
+    function loosen(path5) {
+      if (path5 instanceof RegExp || path5 === "/") {
+        return path5;
       }
-      return Array.isArray(path7) ? path7.map(function(p) {
+      return Array.isArray(path5) ? path5.map(function(p) {
         return loosen(p);
-      }) : String(path7).replace(TRAILING_SLASH_REGEXP, "");
+      }) : String(path5).replace(TRAILING_SLASH_REGEXP, "");
     }
   }
 });
@@ -20486,9 +20486,9 @@ var require_route = __commonJS({
     var flatten = Array.prototype.flat;
     var methods = METHODS.map((method) => method.toLowerCase());
     module.exports = Route;
-    function Route(path7) {
-      debug("new %o", path7);
-      this.path = path7;
+    function Route(path5) {
+      debug("new %o", path5);
+      this.path = path5;
       this.stack = [];
       this.methods = /* @__PURE__ */ Object.create(null);
     }
@@ -20696,8 +20696,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        const path7 = getPathname(req);
-        if (path7 == null) {
+        const path5 = getPathname(req);
+        if (path5 == null) {
           return done(layerError);
         }
         let layer;
@@ -20705,7 +20705,7 @@ var require_router = __commonJS({
         let route;
         while (match !== true && idx < stack.length) {
           layer = stack[idx++];
-          match = matchLayer(layer, path7);
+          match = matchLayer(layer, path5);
           route = layer.route;
           if (typeof match !== "boolean") {
             layerError = layerError || match;
@@ -20743,18 +20743,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handleRequest(req, res, next);
           } else {
-            trimPrefix(layer, layerError, layerPath, path7);
+            trimPrefix(layer, layerError, layerPath, path5);
           }
           sync = 0;
         });
       }
-      function trimPrefix(layer, layerError, layerPath, path7) {
+      function trimPrefix(layer, layerError, layerPath, path5) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path7.substring(0, layerPath.length)) {
+          if (layerPath !== path5.substring(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          const c = path7[layerPath.length];
+          const c = path5[layerPath.length];
           if (c && c !== "/") {
             next(layerError);
             return;
@@ -20778,7 +20778,7 @@ var require_router = __commonJS({
     };
     Router.prototype.use = function use(handler) {
       let offset = 0;
-      let path7 = "/";
+      let path5 = "/";
       if (typeof handler !== "function") {
         let arg = handler;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -20786,7 +20786,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path7 = handler;
+          path5 = handler;
         }
       }
       const callbacks = flatten.call(slice.call(arguments, offset), Infinity);
@@ -20798,8 +20798,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("argument handler must be a function");
         }
-        debug("use %o %s", path7, fn.name || "<anonymous>");
-        const layer = new Layer(path7, {
+        debug("use %o %s", path5, fn.name || "<anonymous>");
+        const layer = new Layer(path5, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -20809,9 +20809,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    Router.prototype.route = function route(path7) {
-      const route2 = new Route(path7);
-      const layer = new Layer(path7, {
+    Router.prototype.route = function route(path5) {
+      const route2 = new Route(path5);
+      const layer = new Layer(path5, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -20824,8 +20824,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      Router.prototype[method] = function(path7) {
-        const route = this.route(path7);
+      Router.prototype[method] = function(path5) {
+        const route = this.route(path5);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -20854,9 +20854,9 @@ var require_router = __commonJS({
       const fqdnIndex = url2.substring(0, pathLength).indexOf("://");
       return fqdnIndex !== -1 ? url2.substring(0, url2.indexOf("/", 3 + fqdnIndex)) : void 0;
     }
-    function matchLayer(layer, path7) {
+    function matchLayer(layer, path5) {
       try {
-        return layer.match(path7);
+        return layer.match(path5);
       } catch (err) {
         return err;
       }
@@ -21084,7 +21084,7 @@ var require_application = __commonJS({
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path7 = "/";
+      var path5 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -21092,7 +21092,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path7 = fn;
+          path5 = fn;
         }
       }
       var fns = flatten.call(slice.call(arguments, offset), Infinity);
@@ -21102,12 +21102,12 @@ var require_application = __commonJS({
       var router = this.router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router.use(path7, fn2);
+          return router.use(path5, fn2);
         }
-        debug(".use app under %s", path7);
-        fn2.mountpath = path7;
+        debug(".use app under %s", path5);
+        fn2.mountpath = path5;
         fn2.parent = this;
-        router.use(path7, function mounted_app(req, res, next) {
+        router.use(path5, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             Object.setPrototypeOf(req, orig.request);
@@ -21119,8 +21119,8 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path7) {
-      return this.router.route(path7);
+    app.route = function route(path5) {
+      return this.router.route(path5);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -21163,7 +21163,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path7() {
+    app.path = function path5() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -21179,17 +21179,17 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path7) {
+      app[method] = function(path5) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path7);
+          return this.set(path5);
         }
-        var route = this.route(path7);
+        var route = this.route(path5);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all(path7) {
-      var route = this.route(path7);
+    app.all = function all(path5) {
+      var route = this.route(path5);
       var args = slice.call(arguments, 1);
       for (var i = 0; i < methods.length; i++) {
         route[methods[i]].apply(route, args);
@@ -22099,7 +22099,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP(hostname3) ? hostname3.split(".").reverse() : [hostname3];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path7() {
+    defineGetter(req, "path", function path5() {
       return parse3(this).pathname;
     });
     defineGetter(req, "host", function host() {
@@ -22512,27 +22512,27 @@ var require_send = __commonJS({
     var ms = require_ms();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path7 = __require("path");
+    var path5 = __require("path");
     var statuses = require_statuses();
     var Stream = __require("stream");
     var util = __require("util");
-    var extname = path7.extname;
-    var join = path7.join;
-    var normalize = path7.normalize;
-    var resolve = path7.resolve;
-    var sep = path7.sep;
+    var extname = path5.extname;
+    var join = path5.join;
+    var normalize = path5.normalize;
+    var resolve = path5.resolve;
+    var sep = path5.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module.exports = send;
-    function send(req, path8, options) {
-      return new SendStream(req, path8, options);
+    function send(req, path6, options) {
+      return new SendStream(req, path6, options);
     }
-    function SendStream(req, path8, options) {
+    function SendStream(req, path6, options) {
       Stream.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path8;
+      this.path = path6;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -22646,10 +22646,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path8) {
+    SendStream.prototype.redirect = function redirect(path6) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path8);
+        this.emit("directory", res, path6);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -22669,38 +22669,38 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe2(res) {
       var root = this._root;
       this.res = res;
-      var path8 = decode3(this.path);
-      if (path8 === -1) {
+      var path6 = decode3(this.path);
+      if (path6 === -1) {
         this.error(400);
         return res;
       }
-      if (~path8.indexOf("\0")) {
+      if (~path6.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path8) {
-          path8 = normalize("." + sep + path8);
+        if (path6) {
+          path6 = normalize("." + sep + path6);
         }
-        if (UP_PATH_REGEXP.test(path8)) {
-          debug('malicious path "%s"', path8);
+        if (UP_PATH_REGEXP.test(path6)) {
+          debug('malicious path "%s"', path6);
           this.error(403);
           return res;
         }
-        parts = path8.split(sep);
-        path8 = normalize(join(root, path8));
+        parts = path6.split(sep);
+        path6 = normalize(join(root, path6));
       } else {
-        if (UP_PATH_REGEXP.test(path8)) {
-          debug('malicious path "%s"', path8);
+        if (UP_PATH_REGEXP.test(path6)) {
+          debug('malicious path "%s"', path6);
           this.error(403);
           return res;
         }
-        parts = normalize(path8).split(sep);
-        path8 = resolve(path8);
+        parts = normalize(path6).split(sep);
+        path6 = resolve(path6);
       }
       if (containsDotFile(parts)) {
-        debug('%s dotfile "%s"', this._dotfiles, path8);
+        debug('%s dotfile "%s"', this._dotfiles, path6);
         switch (this._dotfiles) {
           case "allow":
             break;
@@ -22714,13 +22714,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path8);
+        this.sendIndex(path6);
         return res;
       }
-      this.sendFile(path8);
+      this.sendFile(path6);
       return res;
     };
-    SendStream.prototype.send = function send2(path8, stat) {
+    SendStream.prototype.send = function send2(path6, stat) {
       var len = stat.size;
       var options = this.options;
       var opts = {};
@@ -22732,9 +22732,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path8);
-      this.setHeader(path8, stat);
-      this.type(path8);
+      debug('pipe "%s"', path6);
+      this.setHeader(path6, stat);
+      this.type(path6);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -22783,28 +22783,28 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path8, opts);
+      this.stream(path6, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path8) {
+    SendStream.prototype.sendFile = function sendFile(path6) {
       var i = 0;
       var self2 = this;
-      debug('stat "%s"', path8);
-      fs.stat(path8, function onstat(err, stat) {
-        var pathEndsWithSep = path8[path8.length - 1] === sep;
-        if (err && err.code === "ENOENT" && !extname(path8) && !pathEndsWithSep) {
+      debug('stat "%s"', path6);
+      fs.stat(path6, function onstat(err, stat) {
+        var pathEndsWithSep = path6[path6.length - 1] === sep;
+        if (err && err.code === "ENOENT" && !extname(path6) && !pathEndsWithSep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat.isDirectory()) return self2.redirect(path8);
+        if (stat.isDirectory()) return self2.redirect(path6);
         if (pathEndsWithSep) return self2.error(404);
-        self2.emit("file", path8, stat);
-        self2.send(path8, stat);
+        self2.emit("file", path6, stat);
+        self2.send(path6, stat);
       });
       function next(err) {
         if (self2._extensions.length <= i) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path8 + "." + self2._extensions[i++];
+        var p = path6 + "." + self2._extensions[i++];
         debug('stat "%s"', p);
         fs.stat(p, function(err2, stat) {
           if (err2) return next(err2);
@@ -22814,7 +22814,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path8) {
+    SendStream.prototype.sendIndex = function sendIndex(path6) {
       var i = -1;
       var self2 = this;
       function next(err) {
@@ -22822,7 +22822,7 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join(path8, self2._index[i]);
+        var p = join(path6, self2._index[i]);
         debug('stat "%s"', p);
         fs.stat(p, function(err2, stat) {
           if (err2) return next(err2);
@@ -22833,10 +22833,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream(path8, options) {
+    SendStream.prototype.stream = function stream(path6, options) {
       var self2 = this;
       var res = this.res;
-      var stream2 = fs.createReadStream(path8, options);
+      var stream2 = fs.createReadStream(path6, options);
       this.emit("stream", stream2);
       stream2.pipe(res);
       function cleanup() {
@@ -22851,17 +22851,17 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path8) {
+    SendStream.prototype.type = function type(path6) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var ext = extname(path8);
+      var ext = extname(path6);
       var type2 = mime.contentType(ext) || "application/octet-stream";
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2);
     };
-    SendStream.prototype.setHeader = function setHeader(path8, stat) {
+    SendStream.prototype.setHeader = function setHeader(path6, stat) {
       var res = this.res;
-      this.emit("headers", res, path8, stat);
+      this.emit("headers", res, path6, stat);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -22919,9 +22919,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode3(path8) {
+    function decode3(path6) {
       try {
-        return decodeURIComponent(path8);
+        return decodeURIComponent(path6);
       } catch (err) {
         return -1;
       }
@@ -23065,7 +23065,7 @@ var require_response = __commonJS({
     var http = __require("http");
     var onFinished = require_on_finished();
     var mime = require_mime_types();
-    var path7 = __require("path");
+    var path5 = __require("path");
     var pathIsAbsolute = __require("path").isAbsolute;
     var statuses = require_statuses();
     var sign = require_cookie_signature().sign;
@@ -23074,8 +23074,8 @@ var require_response = __commonJS({
     var setCharset = require_utils3().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path7.extname;
-    var resolve = path7.resolve;
+    var extname = path5.extname;
+    var resolve = path5.resolve;
     var vary = require_vary();
     var { Buffer: Buffer2 } = __require("buffer");
     var res = Object.create(http.ServerResponse.prototype);
@@ -23221,26 +23221,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path8, options, callback) {
+    res.sendFile = function sendFile(path6, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path8) {
+      if (!path6) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path8 !== "string") {
+      if (typeof path6 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !pathIsAbsolute(path8)) {
+      if (!opts.root && !pathIsAbsolute(path6)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path8);
+      var pathname = encodeURI(path6);
       opts.etag = this.app.enabled("etag");
       var file2 = send(req, pathname, opts);
       sendfile(res2, file2, opts, function(err) {
@@ -23251,7 +23251,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.download = function download(path8, filename, options, callback) {
+    res.download = function download(path6, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23268,7 +23268,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path8)
+        "Content-Disposition": contentDisposition(name || path6)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23281,7 +23281,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path8) : path8;
+      var fullPath = !opts.root ? resolve(path6) : path6;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23564,11 +23564,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl.original(req);
-        var path7 = parseUrl(req).pathname;
-        if (path7 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path7 = "";
+        var path5 = parseUrl(req).pathname;
+        if (path5 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path5 = "";
         }
-        var stream = send(req, path7, opts);
+        var stream = send(req, path5, opts);
         stream.on("directory", onDirectory);
         if (setHeaders) {
           stream.on("headers", setHeaders);
@@ -23927,8 +23927,8 @@ var require_utils4 = __commonJS({
       }
       return output;
     };
-    exports.basename = (path7, { windows } = {}) => {
-      const segs = path7.split(windows ? /[\\/]/ : "/");
+    exports.basename = (path5, { windows } = {}) => {
+      const segs = path5.split(windows ? /[\\/]/ : "/");
       const last = segs[segs.length - 1];
       if (last === "") {
         return segs[segs.length - 2];
@@ -25194,19 +25194,16 @@ var require_picomatch2 = __commonJS({
 });
 
 // src/engine/main.ts
-import { execFile as execFile2 } from "child_process";
-import { existsSync as existsSync3 } from "fs";
-import { mkdir as mkdir2, rm as rm2, writeFile as writeFile2 } from "fs/promises";
-import { createRequire as createRequire2 } from "module";
+import { existsSync as existsSync2 } from "fs";
 import net from "net";
 import os2 from "os";
-import path6 from "path";
-import { promisify as promisify2 } from "util";
+import path4 from "path";
+import { promisify } from "util";
 
 // src/api/app.ts
 var import_express = __toESM(require_express2(), 1);
 import { existsSync } from "fs";
-import path3 from "path";
+import path2 from "path";
 
 // ../../node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -25975,10 +25972,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path7) {
-  if (!path7)
+function getElementAtPath(obj, path5) {
+  if (!path5)
     return obj;
-  return path7.reduce((acc, key) => acc?.[key], obj);
+  return path5.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -26361,11 +26358,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path7, issues) {
+function prefixIssues(path5, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path7);
+    iss.path.unshift(path5);
     return iss;
   });
 }
@@ -26548,7 +26545,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path7 = []) => {
+  const processError = (error49, path5 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -26558,7 +26555,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path7, ...issue2.path];
+        const fullpath = [...path5, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -26590,8 +26587,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path7 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path7) {
+  const path5 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path5) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -38568,13 +38565,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path7 = ref.slice(1).split("/").filter(Boolean);
-  if (path7.length === 0) {
+  const path5 = ref.slice(1).split("/").filter(Boolean);
+  if (path5.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path7[0] === defsKey) {
-    const key = path7[1];
+  if (path5[0] === defsKey) {
+    const key = path5[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -38992,7 +38989,8 @@ var DEFAULT_LEXICAL_K = 30;
 var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
 var DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 var DEFAULT_OLLAMA_TIMEOUT_MS = 1e4;
-var DEFAULT_ENGINE_DRAIN_GRACE_MS = 500;
+var DEFAULT_IDLE_TIMEOUT_MS = 36e5;
+var DEFAULT_IDLE_CHECK_INTERVAL_MS = 3e4;
 var DEFAULT_BACKGROUND_HOOK_HEARTBEAT_TIMEOUT_MS = 2e4;
 var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
 var DEFAULT_BACKGROUND_HOOK_SWEEP_INTERVAL_MS = 5e3;
@@ -39340,19 +39338,20 @@ var RetrievalService = class {
     this.store = store;
     this.embeddingClient = embeddingClient;
   }
-  async search(options) {
+  async search(repoId, options) {
     const pathMatches = this.findPathMatches(
+      repoId,
       options.targetPaths ?? [],
       options.memoryTypes,
       options.includePinned
     );
-    const lexical = this.store.lexicalSearch({
+    const lexical = this.store.lexicalSearch(repoId, {
       query: options.query,
       limit: options.lexicalK ?? DEFAULT_LEXICAL_K,
       includePinned: options.includePinned,
       ...options.memoryTypes ? { memoryTypes: options.memoryTypes } : {}
     });
-    const semantic = await this.semanticSearch({
+    const semantic = await this.semanticSearch(repoId, {
       query: options.query,
       semanticK: options.semanticK ?? DEFAULT_SEMANTIC_K,
       includePinned: options.includePinned,
@@ -39388,7 +39387,7 @@ var RetrievalService = class {
     const budgeted = typeof options.responseTokenBudget === "number" && options.responseTokenBudget > 0 ? applyTokenBudget(merged, options.responseTokenBudget) : merged;
     return budgeted.slice(0, options.limit);
   }
-  async semanticSearch(input) {
+  async semanticSearch(repoId, input) {
     if (!this.embeddingClient.isConfigured() || !input.query.trim()) {
       return [];
     }
@@ -39396,11 +39395,12 @@ var RetrievalService = class {
     if (!queryVector) {
       return [];
     }
-    const rows = this.store.listEmbeddings(input.memoryTypes, input.includePinned);
+    const rows = this.store.listEmbeddings(repoId, input.memoryTypes, input.includePinned);
     return rows.filter((row) => row.vector.length === queryVector.length).map((row) => {
       const cosine = cosineSimilarity(queryVector, row.vector);
       const normalizedScore = (cosine + 1) / 2;
-      const pathMatchers = this.store.getMemory(row.id)?.path_matchers.map((value) => value.path_matcher) ?? [];
+      const memory = this.store.getMemory(repoId, row.id);
+      const pathMatchers = memory?.path_matchers.map((value) => value.path_matcher) ?? [];
       return {
         id: row.id,
         memory_type: row.memory_type,
@@ -39416,13 +39416,13 @@ var RetrievalService = class {
       };
     }).sort((left, right) => this.sortSearchResults(left, right)).slice(0, input.semanticK);
   }
-  findPathMatches(targetPaths, memoryTypes, includePinned) {
+  findPathMatches(repoId, targetPaths, memoryTypes, includePinned) {
     const normalizedTargets = targetPaths.map((value) => normalizePathForMatch(value)).filter(Boolean);
     if (normalizedTargets.length === 0) {
       return [];
     }
     const bestMatchByMemoryId = /* @__PURE__ */ new Map();
-    for (const matcher of this.store.listPathMatchers()) {
+    for (const matcher of this.store.listPathMatchers(repoId)) {
       if (!this.matchesAnyTarget(matcher.path_matcher, normalizedTargets)) {
         continue;
       }
@@ -39436,7 +39436,7 @@ var RetrievalService = class {
     if (memoryIds.length === 0) {
       return [];
     }
-    const ranked = this.store.getMemoriesByIds(memoryIds).filter((memory) => memoryTypes ? memoryTypes.includes(memory.memory_type) : true).filter((memory) => includePinned ? true : !memory.is_pinned).flatMap((memory) => {
+    const ranked = this.store.getMemoriesByIds(repoId, memoryIds).filter((memory) => memoryTypes ? memoryTypes.includes(memory.memory_type) : true).filter((memory) => includePinned ? true : !memory.is_pinned).flatMap((memory) => {
       const specificity = bestMatchByMemoryId.get(memory.id);
       if (!specificity) {
         return [];
@@ -39610,55 +39610,6 @@ var RetrievalService = class {
   }
 };
 
-// src/shared/lockfile.ts
-var lockMetadataSchema = external_exports.object({
-  host: external_exports.string().trim().min(1),
-  port: external_exports.number().int().min(1).max(65535),
-  pid: external_exports.number().int().positive(),
-  started_at: external_exports.string().min(1),
-  connected_session_ids: external_exports.array(external_exports.string().trim().min(1)).default([])
-});
-function isLoopback(host) {
-  return LOOPBACK_HOST_ALIASES.includes(host);
-}
-async function readLockMetadata(lockPath) {
-  const raw = await readJsonFile(lockPath);
-  if (!raw) {
-    return null;
-  }
-  const parsed = lockMetadataSchema.safeParse(raw);
-  if (!parsed.success) {
-    return null;
-  }
-  if (!isLoopback(parsed.data.host)) {
-    return null;
-  }
-  return {
-    ...parsed.data,
-    connected_session_ids: uniqueNonEmpty(parsed.data.connected_session_ids)
-  };
-}
-async function writeLockMetadata(lockPath, payload) {
-  const normalized = lockMetadataSchema.parse({
-    ...payload,
-    connected_session_ids: uniqueNonEmpty(payload.connected_session_ids)
-  });
-  if (!isLoopback(normalized.host)) {
-    throw new Error(`Lock host must be loopback, received: ${normalized.host}`);
-  }
-  await atomicWriteJson(lockPath, normalized);
-}
-async function removeLockIfOwned(lockPath, ownerPid) {
-  const current = await readLockMetadata(lockPath);
-  if (!current || current.pid !== ownerPid) {
-    return;
-  }
-  await removeFileIfExists(lockPath);
-}
-function uniqueNonEmpty(values) {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-
 // src/shared/logs.ts
 import { readFile as readFile2 } from "fs/promises";
 
@@ -39678,6 +39629,7 @@ var memoryRecordSchema = external_exports.object({
   updated_at: external_exports.string().min(1)
 });
 var addMemoryInputSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   memory_type: memoryTypeSchema,
   content: external_exports.string().trim().min(1),
   tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
@@ -39685,12 +39637,17 @@ var addMemoryInputSchema = external_exports.object({
   path_matchers: external_exports.array(pathMatcherSchema).default([])
 });
 var updateMemoryInputSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   content: external_exports.string().trim().min(1).optional(),
   tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
   is_pinned: external_exports.boolean().optional(),
   path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "At least one field must be updated");
+}).refine(
+  (value) => value.content !== void 0 || value.tags !== void 0 || value.is_pinned !== void 0 || value.path_matchers !== void 0,
+  "At least one update field must be provided"
+);
 var searchRequestSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   query: external_exports.string().default(""),
   limit: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT),
   target_paths: external_exports.array(external_exports.string()).default([]),
@@ -39755,46 +39712,6 @@ var backgroundHooksResponseSchema = external_exports.object({
     now: external_exports.string().min(1)
   })
 });
-var createActionSchema = external_exports.object({
-  action: external_exports.literal("create"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_type: memoryTypeSchema,
-  content: external_exports.string().trim().min(1),
-  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
-  is_pinned: external_exports.boolean().default(false),
-  path_matchers: external_exports.array(pathMatcherSchema).default([])
-});
-var updateFieldsSchema = external_exports.object({
-  content: external_exports.string().trim().min(1).optional(),
-  tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
-  is_pinned: external_exports.boolean().optional(),
-  path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "Update action requires at least one field");
-var updateActionSchema = external_exports.object({
-  action: external_exports.literal("update"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_id: external_exports.string().trim().min(1),
-  updates: updateFieldsSchema
-});
-var deleteActionSchema = external_exports.object({
-  action: external_exports.literal("delete"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_id: external_exports.string().trim().min(1)
-});
-var skipActionSchema = external_exports.object({
-  action: external_exports.literal("skip"),
-  confidence: external_exports.number().min(0).max(1).default(1),
-  reason: external_exports.string().optional()
-});
-var extractionActionSchema = external_exports.discriminatedUnion("action", [
-  createActionSchema,
-  updateActionSchema,
-  deleteActionSchema,
-  skipActionSchema
-]);
-var extractionActionsPayloadSchema = external_exports.object({
-  actions: external_exports.array(extractionActionSchema).default([])
-});
 
 // src/shared/logs.ts
 var SECRET_PATTERNS = [
@@ -39854,7 +39771,7 @@ function isErrnoException2(error48) {
 }
 
 // src/storage/database.ts
-import { createRequire } from "module";
+import { DatabaseSync } from "node:sqlite";
 
 // ../../node_modules/ulid/dist/node/index.js
 import crypto from "crypto";
@@ -39951,43 +39868,7 @@ function ulid3(seedTime, prng) {
   return encodeTime(seed, TIME_LEN) + encodeRandom(RANDOM_LEN, currentPRNG);
 }
 
-// src/shared/native-runtime.ts
-import path2 from "path";
-function resolveNativeRuntimeRoot(pluginRoot, identity = {}) {
-  return path2.join(pluginRoot, "native", nativeRuntimeCacheKey(identity));
-}
-function nativeRuntimeCacheKey(identity = {}) {
-  const abi = identity.abi ?? process.versions.modules ?? "unknown";
-  const platform = identity.platform ?? process.platform;
-  const arch = identity.arch ?? process.arch;
-  return `${platform}-${arch}-abi${abi}`;
-}
-function isNativeAbiMismatchError(error48) {
-  if (!(error48 instanceof Error)) {
-    return false;
-  }
-  return error48.message.includes("NODE_MODULE_VERSION") || /compiled against a different Node\.js version/i.test(error48.message);
-}
-
 // src/storage/database.ts
-function loadBetterSqlite3(pluginRoot) {
-  const nativeRoot = resolveNativeRuntimeRoot(pluginRoot);
-  const requireFromStorage = createRequire(import.meta.url);
-  let resolvedPath;
-  try {
-    resolvedPath = requireFromStorage.resolve("better-sqlite3", { paths: [nativeRoot] });
-  } catch (error48) {
-    throw new Error(
-      `better-sqlite3 is missing from runtime native dependencies at ${nativeRoot}. Run engine startup to install dependencies. ${error48 instanceof Error ? error48.message : String(error48)}`
-    );
-  }
-  const loaded = requireFromStorage(resolvedPath);
-  const constructor = typeof loaded === "object" && loaded !== null && "default" in loaded && typeof loaded.default === "function" ? loaded.default : loaded;
-  if (typeof constructor !== "function") {
-    throw new Error(`better-sqlite3 resolved at ${resolvedPath} but did not export a constructor`);
-  }
-  return constructor;
-}
 function parseTags(raw) {
   try {
     const parsed = JSON.parse(raw);
@@ -40069,53 +39950,46 @@ var MemoryStore = class {
   embeddingDimensions;
   constructor(options) {
     this.embeddingDimensions = options.embeddingDimensions;
-    const BetterSqlite3 = loadBetterSqlite3(options.pluginRoot);
-    this.database = new BetterSqlite3(options.dbPath, {
-      timeout: 5e3
+    this.database = new DatabaseSync(options.dbPath, {
+      allowExtension: true,
+      enableForeignKeyConstraints: true
     });
-    this.database.pragma("foreign_keys = ON");
-    this.database.pragma("journal_mode = WAL");
+    this.database.exec("PRAGMA journal_mode = WAL");
+    this.database.exec("PRAGMA busy_timeout = 5000");
     this.initializeSchema();
+    this.migrateRepoId();
     this.vecEnabled = this.tryEnableVec(options.sqliteVecExtensionPath ?? null);
     this.initializeVecSchemaIfEnabled();
   }
   close() {
     this.database.close();
   }
-  memoryCount() {
-    const row = this.database.prepare("SELECT COUNT(*) AS count FROM memories").get();
+  memoryCount(repoId) {
+    const row = this.database.prepare("SELECT COUNT(*) AS count FROM memories WHERE repo_id = ?").get(repoId);
     return row?.count ?? 0;
   }
-  listMemories(limit, offset) {
+  listMemories(repoId, limit, offset) {
     const rows = this.database.prepare(
-      `
-          SELECT id, memory_type, content, tags_json, is_pinned, created_at, updated_at
-          FROM memories
-          ORDER BY updated_at DESC
-          LIMIT ? OFFSET ?
-        `
-    ).all(limit, offset);
+      `SELECT id, repo_id, memory_type, content, tags_json, is_pinned, created_at, updated_at
+         FROM memories WHERE repo_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?`
+    ).all(repoId, limit, offset);
     return rows.map((row) => this.inflateMemory(row));
   }
-  getMemory(id) {
+  getMemory(repoId, id) {
     const row = this.database.prepare(
       `
-          SELECT id, memory_type, content, tags_json, is_pinned, created_at, updated_at
+          SELECT id, repo_id, memory_type, content, tags_json, is_pinned, created_at, updated_at
           FROM memories
-          WHERE id = ?
+          WHERE id = ? AND repo_id = ?
         `
-    ).get(id);
+    ).get(id, repoId);
     return row ? this.inflateMemory(row) : null;
   }
-  getPinnedMemories() {
+  getPinnedMemories(repoId) {
     const rows = this.database.prepare(
-      `
-          SELECT id, memory_type, content, tags_json, is_pinned, updated_at
-          FROM memories
-          WHERE is_pinned = 1
-          ORDER BY updated_at DESC
-        `
-    ).all();
+      `SELECT id, memory_type, content, tags_json, is_pinned, updated_at
+         FROM memories WHERE is_pinned = 1 AND repo_id = ? ORDER BY updated_at DESC`
+    ).all(repoId);
     return rows.map((row) => ({
       id: row.id,
       memory_type: row.memory_type,
@@ -40128,39 +40002,33 @@ var MemoryStore = class {
       updated_at: row.updated_at
     }));
   }
-  createMemory(input, embeddingVector) {
+  createMemory(repoId, input, embeddingVector) {
     const now = (/* @__PURE__ */ new Date()).toISOString();
     const memoryId = ulid3();
     const normalizedTags = input.tags.map((tag) => tag.trim()).filter(Boolean);
     const normalizedMatchers = normalizeMatchers(input.path_matchers);
-    const transaction = this.database.transaction(() => {
+    this.database.exec("BEGIN");
+    try {
       this.database.prepare(
-        `
-            INSERT INTO memories (id, memory_type, content, tags_json, is_pinned, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `
-      ).run(
-        memoryId,
-        input.memory_type,
-        input.content,
-        JSON.stringify(normalizedTags),
-        input.is_pinned ? 1 : 0,
-        now,
-        now
-      );
+        `INSERT INTO memories (id, repo_id, memory_type, content, tags_json, is_pinned, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(memoryId, repoId, input.memory_type, input.content, JSON.stringify(normalizedTags), input.is_pinned ? 1 : 0, now, now);
       this.syncFts(memoryId, normalizedTags);
       this.replacePathMatchers(memoryId, normalizedMatchers, now);
       this.syncEmbedding(memoryId, embeddingVector, now);
-    });
-    transaction();
-    const created = this.getMemory(memoryId);
+      this.database.exec("COMMIT");
+    } catch (error48) {
+      this.database.exec("ROLLBACK");
+      throw error48;
+    }
+    const created = this.getMemory(repoId, memoryId);
     if (!created) {
       throw new Error("Memory was not found after create transaction");
     }
     return created;
   }
-  updateMemory(memoryId, updates, embeddingVector) {
-    const current = this.getMemory(memoryId);
+  updateMemory(repoId, memoryId, updates, embeddingVector) {
+    const current = this.getMemory(repoId, memoryId);
     if (!current) {
       return null;
     }
@@ -40168,47 +40036,50 @@ var MemoryStore = class {
     const nextTags = updates.tags?.map((tag) => tag.trim()).filter(Boolean) ?? [...current.tags.map((tag) => tag.trim())];
     const nextPinned = updates.is_pinned ?? current.is_pinned;
     const now = (/* @__PURE__ */ new Date()).toISOString();
-    const transaction = this.database.transaction(() => {
-      this.database.prepare(
-        `
-            UPDATE memories
-            SET content = ?, tags_json = ?, is_pinned = ?, updated_at = ?
-            WHERE id = ?
-          `
-      ).run(nextContent, JSON.stringify(nextTags), nextPinned ? 1 : 0, now, memoryId);
+    this.database.exec("BEGIN");
+    try {
+      this.database.prepare("UPDATE memories SET content = ?, tags_json = ?, is_pinned = ?, updated_at = ? WHERE id = ? AND repo_id = ?").run(nextContent, JSON.stringify(nextTags), nextPinned ? 1 : 0, now, memoryId, repoId);
       this.syncFts(memoryId, nextTags);
       if (updates.path_matchers) {
         this.replacePathMatchers(memoryId, normalizeMatchers(updates.path_matchers), now);
       }
       this.syncEmbedding(memoryId, embeddingVector, now);
-    });
-    transaction();
-    return this.getMemory(memoryId);
+      this.database.exec("COMMIT");
+    } catch (error48) {
+      this.database.exec("ROLLBACK");
+      throw error48;
+    }
+    return this.getMemory(repoId, memoryId);
   }
-  deleteMemory(memoryId) {
-    const transaction = this.database.transaction(() => {
-      this.database.prepare("DELETE FROM memory_path_matchers WHERE memory_id = ?").run(memoryId);
+  deleteMemory(repoId, memoryId) {
+    this.database.exec("BEGIN");
+    try {
+      const result = this.database.prepare("DELETE FROM memories WHERE id = ? AND repo_id = ?").run(memoryId, repoId);
+      if (result.changes === 0) {
+        this.database.exec("ROLLBACK");
+        return false;
+      }
       this.database.prepare("DELETE FROM memory_fts WHERE id = ?").run(memoryId);
-      this.database.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(memoryId);
       if (this.vecEnabled) {
         this.database.prepare("DELETE FROM vec_memory WHERE id = ?").run(memoryId);
       }
-      return this.database.prepare("DELETE FROM memories WHERE id = ?").run(memoryId).changes > 0;
-    });
-    return transaction();
+      this.database.exec("COMMIT");
+      return true;
+    } catch (error48) {
+      this.database.exec("ROLLBACK");
+      throw error48;
+    }
   }
-  lexicalSearch(input) {
+  lexicalSearch(repoId, input) {
     const trimmedQuery = input.query.trim();
     if (!trimmedQuery) {
       const rows2 = this.database.prepare(
-        `
-            SELECT id, memory_type, content, tags_json, is_pinned, updated_at
-            FROM memories
-            WHERE (${input.includePinned ? "1=1" : "is_pinned = 0"})
-            ORDER BY updated_at DESC
-            LIMIT ?
-          `
-      ).all(input.limit);
+        `SELECT id, memory_type, content, tags_json, is_pinned, updated_at
+           FROM memories
+           WHERE repo_id = ? AND (${input.includePinned ? "1=1" : "is_pinned = 0"})
+           ORDER BY updated_at DESC
+           LIMIT ?`
+      ).all(repoId, input.limit);
       return rows2.filter((row) => !input.memoryTypes || input.memoryTypes.includes(row.memory_type)).map((row) => ({
         id: row.id,
         memory_type: row.memory_type,
@@ -40229,16 +40100,15 @@ var MemoryStore = class {
     }
     const candidateLimit = Math.min(Math.max(input.limit * 3, input.limit), 200);
     const rows = this.database.prepare(
-      `
-          SELECT m.id, m.memory_type, m.content, m.tags_json, m.is_pinned, m.created_at, m.updated_at, bm25(memory_fts) AS score
-          FROM memory_fts
-          JOIN memories m ON m.id = memory_fts.id
-          WHERE memory_fts MATCH ?
-            AND (${input.includePinned ? "1=1" : "m.is_pinned = 0"})
-          ORDER BY score
-          LIMIT ?
-        `
-    ).all(makeTagFtsQuery(terms), candidateLimit);
+      `SELECT m.id, m.repo_id, m.memory_type, m.content, m.tags_json, m.is_pinned, m.created_at, m.updated_at, bm25(memory_fts) AS score
+         FROM memory_fts
+         JOIN memories m ON m.id = memory_fts.id
+         WHERE memory_fts MATCH ?
+           AND m.repo_id = ?
+           AND (${input.includePinned ? "1=1" : "m.is_pinned = 0"})
+         ORDER BY score
+         LIMIT ?`
+    ).all(makeTagFtsQuery(terms), repoId, candidateLimit);
     const bm25Range = computeBm25Range(rows);
     return rows.filter((row) => !input.memoryTypes || input.memoryTypes.includes(row.memory_type)).map((row) => {
       const tags = parseTags(row.tags_json);
@@ -40263,16 +40133,14 @@ var MemoryStore = class {
       };
     }).sort((left, right) => right.score - left.score || right.updated_at.localeCompare(left.updated_at)).slice(0, input.limit);
   }
-  listEmbeddings(memoryTypes, includePinned = true) {
+  listEmbeddings(repoId, memoryTypes, includePinned = true) {
     const rows = this.database.prepare(
-      `
-          SELECT e.memory_id, e.vector_json, e.updated_at,
-                 m.memory_type, m.content, m.tags_json, m.is_pinned
-          FROM memory_embeddings e
-          JOIN memories m ON m.id = e.memory_id
-          WHERE (${includePinned ? "1=1" : "m.is_pinned = 0"})
-        `
-    ).all();
+      `SELECT e.memory_id, e.vector_json, e.updated_at,
+                m.memory_type, m.content, m.tags_json, m.is_pinned
+         FROM memory_embeddings e
+         JOIN memories m ON m.id = e.memory_id
+         WHERE m.repo_id = ? AND (${includePinned ? "1=1" : "m.is_pinned = 0"})`
+    ).all(repoId);
     return rows.filter((row) => !memoryTypes || memoryTypes.includes(row.memory_type)).map((row) => ({
       id: row.memory_id,
       memory_type: row.memory_type,
@@ -40284,58 +40152,70 @@ var MemoryStore = class {
     }));
   }
   upsertEmbedding(memoryId, vector) {
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    this.syncEmbedding(memoryId, vector, now);
+    this.syncEmbedding(memoryId, vector, (/* @__PURE__ */ new Date()).toISOString());
   }
   removeEmbedding(memoryId) {
     this.syncEmbedding(memoryId, null, (/* @__PURE__ */ new Date()).toISOString());
   }
-  listPathMatchers() {
+  listPathMatchers(repoId) {
     return this.database.prepare(
-      `
-          SELECT memory_id, path_matcher
-          FROM memory_path_matchers
-          ORDER BY created_at DESC
-        `
-    ).all();
+      `SELECT pm.memory_id, pm.path_matcher
+         FROM memory_path_matchers pm
+         JOIN memories m ON m.id = pm.memory_id
+         WHERE m.repo_id = ?
+         ORDER BY pm.created_at DESC`
+    ).all(repoId);
   }
-  getMemoriesByIds(ids) {
+  getMemoriesByIds(repoId, ids) {
     if (ids.length === 0) {
       return [];
     }
     const placeholders = ids.map(() => "?").join(", ");
     const rows = this.database.prepare(
-      `
-          SELECT id, memory_type, content, tags_json, is_pinned, updated_at
-          FROM memories
-          WHERE id IN (${placeholders})
-        `
-    ).all(...ids);
+      `SELECT id, memory_type, content, tags_json, is_pinned, updated_at
+         FROM memories
+         WHERE id IN (${placeholders}) AND repo_id = ?`
+    ).all(...ids, repoId);
     const byId = new Map(rows.map((row) => [row.id, row]));
     return ids.flatMap((id) => {
       const row = byId.get(id);
       if (!row) {
         return [];
       }
-      return [
-        {
-          id: row.id,
-          memory_type: row.memory_type,
-          content: row.content,
-          tags: parseTags(row.tags_json),
-          is_pinned: row.is_pinned === 1,
-          path_matchers: this.getPathMatchersByMemoryId(row.id),
-          score: 1,
-          source: "hybrid",
-          updated_at: row.updated_at
-        }
-      ];
+      return [{
+        id: row.id,
+        memory_type: row.memory_type,
+        content: row.content,
+        tags: parseTags(row.tags_json),
+        is_pinned: row.is_pinned === 1,
+        path_matchers: this.getPathMatchersByMemoryId(row.id),
+        score: 1,
+        source: "hybrid",
+        updated_at: row.updated_at
+      }];
     });
+  }
+  listRepos() {
+    const rows = this.database.prepare(
+      `SELECT DISTINCT m.repo_id, COALESCE(rl.label, m.repo_id) AS label
+         FROM memories m
+         LEFT JOIN repo_labels rl ON rl.repo_id = m.repo_id
+         ORDER BY rl.label, m.repo_id`
+    ).all();
+    return rows;
+  }
+  upsertRepoLabel(repoId, label) {
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    this.database.prepare(
+      `INSERT INTO repo_labels (repo_id, label, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(repo_id) DO UPDATE SET label = excluded.label, updated_at = excluded.updated_at`
+    ).run(repoId, label, now);
   }
   initializeSchema() {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS memories (
         id TEXT PRIMARY KEY,
+        repo_id TEXT NOT NULL DEFAULT '',
         memory_type TEXT NOT NULL,
         content TEXT NOT NULL,
         tags_json TEXT NOT NULL DEFAULT '[]',
@@ -40346,34 +40226,38 @@ var MemoryStore = class {
         CHECK (json_valid(tags_json)),
         CHECK (is_pinned IN (0, 1))
       );
-
+      CREATE INDEX IF NOT EXISTS idx_memories_repo_id ON memories(repo_id);
       CREATE TABLE IF NOT EXISTS memory_path_matchers (
         id TEXT PRIMARY KEY,
         memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
         path_matcher TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
-
       CREATE UNIQUE INDEX IF NOT EXISTS idx_mpm_unique ON memory_path_matchers(memory_id, path_matcher);
       CREATE INDEX IF NOT EXISTS idx_mpm_memory_id ON memory_path_matchers(memory_id);
       CREATE INDEX IF NOT EXISTS idx_mpm_path_matcher ON memory_path_matchers(path_matcher);
-
-      CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-        id UNINDEXED,
-        tags_text
-      );
-
+      CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(id UNINDEXED, tags_text);
       CREATE TABLE IF NOT EXISTS memory_embeddings (
         memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
         vector_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS repo_labels (
+        repo_id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
-  initializeVecSchemaIfEnabled() {
-    if (!this.vecEnabled) {
-      return;
+  migrateRepoId() {
+    const columns = this.database.prepare("PRAGMA table_info(memories)").all();
+    if (!columns.some((col) => col.name === "repo_id")) {
+      this.database.exec(`ALTER TABLE memories ADD COLUMN repo_id TEXT NOT NULL DEFAULT ''`);
+      this.database.exec(`CREATE INDEX IF NOT EXISTS idx_memories_repo_id ON memories(repo_id)`);
     }
+  }
+  initializeVecSchemaIfEnabled() {
+    if (!this.vecEnabled) return;
     try {
       this.database.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
@@ -40388,9 +40272,7 @@ var MemoryStore = class {
     }
   }
   tryEnableVec(extensionPath) {
-    if (!extensionPath) {
-      return false;
-    }
+    if (!extensionPath) return false;
     try {
       this.database.loadExtension(extensionPath);
       return true;
@@ -40408,22 +40290,13 @@ var MemoryStore = class {
       content: row.content,
       tags: parseTags(row.tags_json),
       is_pinned: row.is_pinned === 1,
-      path_matchers: this.getPathMatchersByMemoryId(row.id).map((pathMatcher) => ({
-        path_matcher: pathMatcher
-      })),
+      path_matchers: this.getPathMatchersByMemoryId(row.id).map((pathMatcher) => ({ path_matcher: pathMatcher })),
       created_at: row.created_at,
       updated_at: row.updated_at
     };
   }
   getPathMatchersByMemoryId(memoryId) {
-    const rows = this.database.prepare(
-      `
-          SELECT path_matcher
-          FROM memory_path_matchers
-          WHERE memory_id = ?
-          ORDER BY created_at DESC
-        `
-    ).all(memoryId);
+    const rows = this.database.prepare("SELECT path_matcher FROM memory_path_matchers WHERE memory_id = ? ORDER BY created_at DESC").all(memoryId);
     return rows.map((row) => row.path_matcher);
   }
   syncFts(memoryId, tags) {
@@ -40432,23 +40305,14 @@ var MemoryStore = class {
   }
   replacePathMatchers(memoryId, pathMatchers, createdAt) {
     this.database.prepare("DELETE FROM memory_path_matchers WHERE memory_id = ?").run(memoryId);
-    if (pathMatchers.length === 0) {
-      return;
-    }
-    const insertStatement = this.database.prepare(
-      `
-        INSERT INTO memory_path_matchers (id, memory_id, path_matcher, created_at)
-        VALUES (?, ?, ?, ?)
-      `
-    );
+    if (pathMatchers.length === 0) return;
+    const stmt = this.database.prepare("INSERT INTO memory_path_matchers (id, memory_id, path_matcher, created_at) VALUES (?, ?, ?, ?)");
     for (const matcher of pathMatchers) {
-      insertStatement.run(ulid3(), memoryId, matcher.path_matcher, createdAt);
+      stmt.run(ulid3(), memoryId, matcher.path_matcher, createdAt);
     }
   }
   syncEmbedding(memoryId, vector, updatedAt) {
-    if (vector === void 0) {
-      return;
-    }
+    if (vector === void 0) return;
     if (vector === null) {
       this.database.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(memoryId);
       if (this.vecEnabled) {
@@ -40457,38 +40321,19 @@ var MemoryStore = class {
       return;
     }
     this.database.prepare(
-      `
-          INSERT INTO memory_embeddings (memory_id, vector_json, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(memory_id) DO UPDATE SET
-            vector_json = excluded.vector_json,
-            updated_at = excluded.updated_at
-        `
+      `INSERT INTO memory_embeddings (memory_id, vector_json, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(memory_id) DO UPDATE SET vector_json = excluded.vector_json, updated_at = excluded.updated_at`
     ).run(memoryId, JSON.stringify(vector), updatedAt);
-    if (!this.vecEnabled) {
-      return;
-    }
+    if (!this.vecEnabled) return;
     if (vector.length !== this.embeddingDimensions) {
-      logWarn("Skipping vec_memory sync because embedding dimensions mismatch", {
-        actual: vector.length,
-        expected: this.embeddingDimensions,
-        memoryId
-      });
+      logWarn("Skipping vec_memory sync because embedding dimensions mismatch", { actual: vector.length, expected: this.embeddingDimensions, memoryId });
       return;
     }
     try {
       this.database.prepare("DELETE FROM vec_memory WHERE id = ?").run(memoryId);
-      this.database.prepare(
-        `
-            INSERT INTO vec_memory (id, vector)
-            VALUES (?, ?)
-          `
-      ).run(memoryId, JSON.stringify(vector));
+      this.database.prepare("INSERT INTO vec_memory (id, vector) VALUES (?, ?)").run(memoryId, JSON.stringify(vector));
     } catch (error48) {
-      logWarn("Failed syncing vec_memory row; keeping JSON embedding row", {
-        error: error48 instanceof Error ? error48.message : String(error48),
-        memoryId
-      });
+      logWarn("Failed syncing vec_memory row; keeping JSON embedding row", { error: error48 instanceof Error ? error48.message : String(error48), memoryId });
     }
   }
 };
@@ -40504,12 +40349,17 @@ function sendError(response, status, code, message) {
 }
 
 // src/api/app.ts
-var sessionsPayloadSchema = external_exports.object({
-  session_id: external_exports.string().trim().min(1)
+var repoIdSchema = external_exports.string().trim().min(1);
+var repoIdQuerySchema = external_exports.object({
+  repo_id: repoIdSchema
 });
 var listMemoriesQuerySchema = external_exports.object({
+  repo_id: repoIdSchema,
   limit: external_exports.coerce.number().int().min(1).max(200).default(50),
   offset: external_exports.coerce.number().int().min(0).default(0)
+});
+var pinnedQuerySchema = external_exports.object({
+  repo_id: repoIdSchema
 });
 var logsQuerySchema = external_exports.object({
   limit: external_exports.coerce.number().int().min(1).max(1e3).default(200),
@@ -40546,104 +40396,28 @@ function createEngineApp(options) {
     maxRuntimeMs: options.backgroundHookPolicy?.maxRuntimeMs ?? DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS,
     sweepIntervalMs: options.backgroundHookPolicy?.sweepIntervalMs ?? DEFAULT_BACKGROUND_HOOK_SWEEP_INTERVAL_MS
   };
-  const drainGraceMs = options.drainGraceMs ?? DEFAULT_ENGINE_DRAIN_GRACE_MS;
+  const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const idleCheckIntervalMs = options.idleCheckIntervalMs ?? DEFAULT_IDLE_CHECK_INTERVAL_MS;
   const profile = resolveOllamaProfile(process.env.MEMORIES_OLLAMA_PROFILE);
   const store = new MemoryStore({
-    dbPath: path3.join(options.projectRoot, ".memories", "ai_memory.db"),
-    pluginRoot: options.pluginRoot,
+    dbPath: options.dbPath,
     sqliteVecExtensionPath: options.sqliteVecExtensionPath,
     embeddingDimensions: OLLAMA_PROFILE_CONFIG[profile].dimensions
   });
   const embeddingClient = new EmbeddingClient();
   const retrieval = new RetrievalService(store, embeddingClient);
-  let activeSessions = /* @__PURE__ */ new Set();
   const activeBackgroundHooks = /* @__PURE__ */ new Map();
-  let drainTriggered = false;
-  let drainTimer = null;
-  let sessionMutationQueue = Promise.resolve();
-  function clearDrainTimer() {
-    if (!drainTimer) {
-      return;
+  let lastInteractionAtMs = Date.now();
+  let idleShutdownTriggered = false;
+  function resetIdleTimer() {
+    lastInteractionAtMs = Date.now();
+  }
+  app.use((request, _response, next) => {
+    if (request.path !== "/health") {
+      resetIdleTimer();
     }
-    clearTimeout(drainTimer);
-    drainTimer = null;
-  }
-  function cancelDrain() {
-    clearDrainTimer();
-    drainTriggered = false;
-  }
-  function setActiveSessions(nextSessionIds) {
-    activeSessions = new Set(nextSessionIds);
-  }
-  function currentSessionIds() {
-    return [...activeSessions].sort();
-  }
-  function sameSessionSnapshot(nextSessionIds) {
-    if (activeSessions.size !== nextSessionIds.length) {
-      return false;
-    }
-    return nextSessionIds.every((sessionId) => activeSessions.has(sessionId));
-  }
-  function queueSessionMutation(operation) {
-    const result = sessionMutationQueue.then(operation, operation);
-    sessionMutationQueue = result.then(
-      () => void 0,
-      () => void 0
-    );
-    return result;
-  }
-  async function writeOwnedSessionSnapshot(nextSessionIds) {
-    const currentLock = await readLockMetadata(options.lockPath);
-    if (currentLock && currentLock.pid !== process.pid && isPidAlive(currentLock.pid)) {
-      throw new Error(`Engine lock is owned by another live process (${currentLock.pid})`);
-    }
-    const startedAt = currentLock?.pid === process.pid ? currentLock.started_at : new Date(startedAtMs).toISOString();
-    const sessionIds = [...new Set(nextSessionIds.map((sessionId) => sessionId.trim()).filter(Boolean))].sort();
-    await writeLockMetadata(options.lockPath, {
-      host: LOOPBACK_HOST,
-      port: options.port,
-      pid: process.pid,
-      started_at: startedAt,
-      connected_session_ids: sessionIds
-    });
-    return sessionIds;
-  }
-  async function reconcileSessionsWithLock() {
-    const currentLock = await readLockMetadata(options.lockPath);
-    if (!currentLock) {
-      if (activeSessions.size > 0) {
-        logWarn("Engine lock metadata disappeared; recreating it from active sessions", {
-          sessions: currentSessionIds()
-        });
-        const restoredSessions = await writeOwnedSessionSnapshot(currentSessionIds());
-        setActiveSessions(restoredSessions);
-      }
-      return;
-    }
-    if (currentLock.pid === process.pid) {
-      if (!sameSessionSnapshot(currentLock.connected_session_ids)) {
-        logWarn("Reconciled in-memory sessions from owned lock metadata", {
-          in_memory_sessions: currentSessionIds(),
-          lock_sessions: currentLock.connected_session_ids
-        });
-        setActiveSessions(currentLock.connected_session_ids);
-      }
-      return;
-    }
-    if (!isPidAlive(currentLock.pid)) {
-      const restoredSessions = await writeOwnedSessionSnapshot(currentSessionIds());
-      setActiveSessions(restoredSessions);
-      return;
-    }
-    if (activeSessions.size > 0) {
-      logWarn("Detected a second live engine for this project; clearing local ghost sessions", {
-        in_memory_sessions: currentSessionIds(),
-        lock_owner_pid: currentLock.pid,
-        lock_sessions: currentLock.connected_session_ids
-      });
-      setActiveSessions([]);
-    }
-  }
+    next();
+  });
   function serializeBackgroundHook(hook) {
     return {
       id: hook.id,
@@ -40658,23 +40432,22 @@ function createEngineApp(options) {
       ...typeof hook.pid === "number" ? { pid: hook.pid } : {}
     };
   }
-  async function maybeTriggerDrain() {
-    if (drainTriggered || drainTimer || activeSessions.size > 0 || activeBackgroundHooks.size > 0) {
+  function checkIdleTimeout() {
+    if (idleShutdownTriggered) {
       return;
     }
-    drainTimer = setTimeout(() => {
-      drainTimer = null;
-      if (drainTriggered || activeSessions.size > 0 || activeBackgroundHooks.size > 0) {
-        return;
-      }
-      drainTriggered = true;
-      void options.onSessionDrain().catch((error48) => {
-        logError("Session drain callback failed", {
-          error: error48 instanceof Error ? error48.message : String(error48)
-        });
+    if (activeBackgroundHooks.size > 0) {
+      return;
+    }
+    if (Date.now() - lastInteractionAtMs < idleTimeoutMs) {
+      return;
+    }
+    idleShutdownTriggered = true;
+    void options.onIdleTimeout().catch((error48) => {
+      logError("Idle timeout callback failed", {
+        error: error48 instanceof Error ? error48.message : String(error48)
       });
-    }, drainGraceMs);
-    drainTimer.unref?.();
+    });
   }
   async function appendBackgroundHookLifecycleEvent(event, hook, status, detail) {
     const runtimeMs = Math.max(0, Date.now() - hook.startedAtMs);
@@ -40733,7 +40506,6 @@ function createEngineApp(options) {
         entry.detail
       );
     }
-    await maybeTriggerDrain();
   }
   const backgroundHookSweepTimer = setInterval(() => {
     void sweepExpiredBackgroundHooks().catch((error48) => {
@@ -40743,7 +40515,11 @@ function createEngineApp(options) {
     });
   }, backgroundHookPolicy.sweepIntervalMs);
   backgroundHookSweepTimer.unref?.();
-  const staticUiDir = path3.join(options.pluginRoot, "web", "dist");
+  const idleCheckTimer = setInterval(() => {
+    checkIdleTimeout();
+  }, idleCheckIntervalMs);
+  idleCheckTimer.unref?.();
+  const staticUiDir = path2.join(options.pluginRoot, "web", "dist");
   if (existsSync(staticUiDir)) {
     app.use("/ui", import_express.default.static(staticUiDir));
     app.get("/ui{*path}", (request, response, next) => {
@@ -40751,7 +40527,7 @@ function createEngineApp(options) {
         next();
         return;
       }
-      response.sendFile(path3.join(staticUiDir, "index.html"));
+      response.sendFile(path2.join(staticUiDir, "index.html"));
     });
   }
   app.get("/health", (_request, response) => {
@@ -40762,72 +40538,30 @@ function createEngineApp(options) {
   });
   app.get("/stats", async (_request, response) => {
     await sweepExpiredBackgroundHooks();
-    await queueSessionMutation(async () => {
-      await reconcileSessionsWithLock();
-    });
-    await maybeTriggerDrain();
+    const now = Date.now();
     response.json({
-      active_sessions: activeSessions.size,
       active_background_hooks: activeBackgroundHooks.size,
-      memory_count: store.memoryCount(),
       online: true,
-      shutdown_blocked: activeSessions.size === 0 && activeBackgroundHooks.size > 0,
-      uptime_ms: Date.now() - startedAtMs
+      uptime_ms: now - startedAtMs,
+      last_interaction_at: new Date(lastInteractionAtMs).toISOString(),
+      idle_timeout_ms: idleTimeoutMs,
+      idle_remaining_ms: Math.max(0, idleTimeoutMs - (now - lastInteractionAtMs))
     });
   });
-  app.post("/sessions/connect", async (request, response) => {
-    const parsed = sessionsPayloadSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return sendError(response, 400, "INVALID_SESSION_ID", parsed.error.message);
-    }
-    const sessionId = parsed.data.session_id;
-    cancelDrain();
-    const activeSessionCount = await queueSessionMutation(async () => {
-      await reconcileSessionsWithLock();
-      const nextSessionIds = new Set(currentSessionIds());
-      nextSessionIds.add(sessionId);
-      const persistedSessions = await writeOwnedSessionSnapshot([...nextSessionIds]);
-      setActiveSessions(persistedSessions);
-      return activeSessions.size;
-    });
-    await appendEventLog(
-      options.eventLogPath,
-      toEventLog({
-        at: (/* @__PURE__ */ new Date()).toISOString(),
-        event: "sessions/connect",
-        kind: "hook",
-        status: "ok",
-        session_id: sessionId
-      })
-    );
-    return response.json({ active_sessions: activeSessionCount, ok: true });
+  app.get("/repos", (_request, response) => {
+    const repos = store.listRepos();
+    return response.json({ repos });
   });
-  app.post("/sessions/disconnect", async (request, response) => {
-    const parsed = sessionsPayloadSchema.safeParse(request.body);
+  app.post("/repos/label", (request, response) => {
+    const parsed = external_exports.object({
+      repo_id: external_exports.string().trim().min(1),
+      label: external_exports.string().trim().min(1)
+    }).safeParse(request.body);
     if (!parsed.success) {
-      return sendError(response, 400, "INVALID_SESSION_ID", parsed.error.message);
+      return sendError(response, 400, "INVALID_PAYLOAD", parsed.error.message);
     }
-    const sessionId = parsed.data.session_id;
-    const activeSessionCount = await queueSessionMutation(async () => {
-      await reconcileSessionsWithLock();
-      const persistedSessions = await writeOwnedSessionSnapshot(
-        currentSessionIds().filter((value) => value !== sessionId)
-      );
-      setActiveSessions(persistedSessions);
-      return activeSessions.size;
-    });
-    await appendEventLog(
-      options.eventLogPath,
-      toEventLog({
-        at: (/* @__PURE__ */ new Date()).toISOString(),
-        event: "sessions/disconnect",
-        kind: "hook",
-        status: "ok",
-        session_id: sessionId
-      })
-    );
-    await maybeTriggerDrain();
-    return response.json({ active_sessions: activeSessionCount, ok: true });
+    store.upsertRepoLabel(parsed.data.repo_id, parsed.data.label);
+    return response.json({ ok: true });
   });
   app.get("/background-hooks", async (_request, response) => {
     await sweepExpiredBackgroundHooks();
@@ -40846,7 +40580,6 @@ function createEngineApp(options) {
       return sendError(response, 400, "INVALID_BACKGROUND_HOOK", parsed.error.message);
     }
     await sweepExpiredBackgroundHooks();
-    cancelDrain();
     const now = Date.now();
     const nextHook = {
       id: parsed.data.id,
@@ -40913,12 +40646,15 @@ function createEngineApp(options) {
       parsedBody.data.status,
       parsedBody.data.detail
     );
-    await maybeTriggerDrain();
     return response.json({ active: false, ok: true });
   });
-  app.get("/memories/pinned", (_request, response) => {
+  app.get("/memories/pinned", (request, response) => {
+    const parsed = pinnedQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return sendError(response, 400, "INVALID_QUERY", parsed.error.message);
+    }
     const startedAt = Date.now();
-    const results = store.getPinnedMemories();
+    const results = store.getPinnedMemories(parsed.data.repo_id);
     return response.json({
       meta: {
         duration_ms: Date.now() - startedAt,
@@ -40935,7 +40671,7 @@ function createEngineApp(options) {
       return sendError(response, 400, "INVALID_PAYLOAD", parsed.error.message);
     }
     const startedAt = Date.now();
-    const results = await retrieval.search({
+    const results = await retrieval.search(parsed.data.repo_id, {
       query: parsed.data.query,
       limit: parsed.data.limit,
       includePinned: parsed.data.include_pinned,
@@ -40974,7 +40710,7 @@ function createEngineApp(options) {
     if (embeddingClient.isConfigured()) {
       vector = await embeddingClient.embed(parsed.data.content);
     }
-    const created = store.createMemory(parsed.data, vector);
+    const created = store.createMemory(parsed.data.repo_id, parsed.data, vector);
     await appendEventLog(
       options.eventLogPath,
       toEventLog({
@@ -40992,10 +40728,10 @@ function createEngineApp(options) {
     if (!parsed.success) {
       return sendError(response, 400, "INVALID_QUERY", parsed.error.message);
     }
-    const items = store.listMemories(parsed.data.limit, parsed.data.offset);
+    const items = store.listMemories(parsed.data.repo_id, parsed.data.limit, parsed.data.offset);
     return response.json({
       items,
-      total: store.memoryCount()
+      total: store.memoryCount(parsed.data.repo_id)
     });
   });
   app.patch("/memories/:id", async (request, response) => {
@@ -41016,7 +40752,7 @@ function createEngineApp(options) {
         });
       }
     }
-    const updated = store.updateMemory(parsedId.data.id, parsedBody.data, vector);
+    const updated = store.updateMemory(parsedBody.data.repo_id, parsedId.data.id, parsedBody.data, vector);
     if (!updated) {
       return sendError(response, 404, "NOT_FOUND", `Memory ${parsedId.data.id} was not found`);
     }
@@ -41037,7 +40773,11 @@ function createEngineApp(options) {
     if (!parsedId.success) {
       return sendError(response, 400, "INVALID_MEMORY_ID", parsedId.error.message);
     }
-    const deleted = store.deleteMemory(parsedId.data.id);
+    const parsedQuery = repoIdQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) {
+      return sendError(response, 400, "INVALID_QUERY", parsedQuery.error.message);
+    }
+    const deleted = store.deleteMemory(parsedQuery.data.repo_id, parsedId.data.id);
     if (!deleted) {
       return sendError(response, 404, "NOT_FOUND", `Memory ${parsedId.data.id} was not found`);
     }
@@ -41069,264 +40809,94 @@ function createEngineApp(options) {
   return {
     app,
     close: () => {
-      clearDrainTimer();
       clearInterval(backgroundHookSweepTimer);
+      clearInterval(idleCheckTimer);
       store.close();
-    },
-    getSessionCount: () => activeSessions.size
+    }
   };
+}
+
+// src/shared/lockfile.ts
+var lockMetadataSchema = external_exports.object({
+  host: external_exports.string().trim().min(1),
+  port: external_exports.number().int().min(1).max(65535),
+  pid: external_exports.number().int().positive(),
+  started_at: external_exports.string().min(1)
+});
+function isLoopback(host) {
+  return LOOPBACK_HOST_ALIASES.includes(host);
+}
+async function readLockMetadata(lockPath) {
+  const raw = await readJsonFile(lockPath);
+  if (!raw) {
+    return null;
+  }
+  const parsed = lockMetadataSchema.safeParse(raw);
+  if (!parsed.success) {
+    return null;
+  }
+  if (!isLoopback(parsed.data.host)) {
+    return null;
+  }
+  return parsed.data;
+}
+async function writeLockMetadata(lockPath, payload) {
+  const normalized = lockMetadataSchema.parse(payload);
+  if (!isLoopback(normalized.host)) {
+    throw new Error(`Lock host must be loopback, received: ${normalized.host}`);
+  }
+  await atomicWriteJson(lockPath, normalized);
+}
+async function removeLockIfOwned(lockPath, ownerPid) {
+  const current = await readLockMetadata(lockPath);
+  if (!current || current.pid !== ownerPid) {
+    return;
+  }
+  await removeFileIfExists(lockPath);
 }
 
 // src/shared/paths.ts
 import { mkdir } from "fs/promises";
-import path4 from "path";
+import os from "os";
+import path3 from "path";
 import { fileURLToPath } from "url";
-function resolveProjectRoot(explicitProjectRoot) {
-  if (explicitProjectRoot && path4.isAbsolute(explicitProjectRoot)) {
-    return explicitProjectRoot;
-  }
-  const envProjectRoot = process.env.CLAUDE_PROJECT_DIR;
-  if (envProjectRoot && path4.isAbsolute(envProjectRoot)) {
-    return envProjectRoot;
-  }
-  return process.cwd();
-}
 function resolvePluginRoot() {
   const envPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-  if (envPluginRoot && path4.isAbsolute(envPluginRoot)) {
+  if (envPluginRoot && path3.isAbsolute(envPluginRoot)) {
     return envPluginRoot;
   }
   const currentFilePath = fileURLToPath(import.meta.url);
-  const moduleDirectory = path4.dirname(currentFilePath);
-  return path4.resolve(moduleDirectory, "..", "..");
+  const moduleDirectory = path3.dirname(currentFilePath);
+  return path3.resolve(moduleDirectory, "..", "..");
 }
-function getProjectPaths(projectRoot) {
-  const memoriesDir = path4.join(projectRoot, ".memories");
+function getGlobalPaths() {
+  const memoriesDir = path3.join(os.homedir(), ".claude", "memories");
   return {
-    projectRoot,
     memoriesDir,
-    dbPath: path4.join(memoriesDir, MEMORY_DB_FILE),
-    lockPath: path4.join(memoriesDir, ENGINE_LOCK_FILE),
-    startupLockPath: path4.join(memoriesDir, ENGINE_STARTUP_LOCK_FILE),
-    engineStderrPath: path4.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
-    eventLogPath: path4.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
+    dbPath: path3.join(memoriesDir, MEMORY_DB_FILE),
+    lockPath: path3.join(memoriesDir, ENGINE_LOCK_FILE),
+    startupLockPath: path3.join(memoriesDir, ENGINE_STARTUP_LOCK_FILE),
+    engineStderrPath: path3.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
+    eventLogPath: path3.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
   };
 }
-async function ensureProjectDirectories(projectRoot) {
-  const projectPaths = getProjectPaths(projectRoot);
-  await mkdir(projectPaths.memoriesDir, { recursive: true });
-  return projectPaths;
-}
-
-// src/engine/node-runtime.ts
-import { execFile } from "child_process";
-import { existsSync as existsSync2, readdirSync } from "fs";
-import os from "os";
-import path5 from "path";
-import { promisify } from "util";
-var execFileAsync = promisify(execFile);
-var REQUIRED_ENGINE_NODE_MAJOR = 24;
-function resolveNpmInvocation(nodeExecutable) {
-  const nodeDirectory = path5.dirname(nodeExecutable);
-  for (const npmCliPath of candidateNpmCliPaths(nodeDirectory)) {
-    if (existsSync2(npmCliPath)) {
-      return {
-        argsPrefix: [npmCliPath],
-        command: nodeExecutable
-      };
-    }
-  }
-  throw new Error(
-    `npm was not found alongside ${nodeExecutable}. Install a full Node ${REQUIRED_ENGINE_NODE_MAJOR}+ distribution or set MEMORIES_NODE_BIN to a Node binary bundled with npm.`
-  );
-}
-function candidateNpmCliPaths(nodeDirectory) {
-  if (process.platform === "win32") {
-    return [
-      path5.resolve(nodeDirectory, "node_modules", "npm", "bin", "npm-cli.js"),
-      path5.resolve(nodeDirectory, "..", "node_modules", "npm", "bin", "npm-cli.js")
-    ];
-  }
-  return [
-    path5.resolve(nodeDirectory, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
-    path5.resolve(nodeDirectory, "..", "node_modules", "npm", "bin", "npm-cli.js")
-  ];
+async function ensureGlobalDirectories() {
+  const globalPaths = getGlobalPaths();
+  await mkdir(globalPaths.memoriesDir, { recursive: true });
+  return globalPaths;
 }
 
 // src/engine/main.ts
-var SQLITE_VEC_VERSION = "0.1.7-alpha.2";
-var NATIVE_INSTALL_TIMEOUT_MS = 12e4;
-var requireFromEngine = createRequire2(import.meta.url);
-var closeServer = promisify2((server, callback) => {
+var closeServer = promisify((server, callback) => {
   server.close(callback);
 });
-function sqliteVecPackageName() {
-  return `sqlite-vec-${os2.platform()}-${os2.arch()}`;
-}
-function sqliteVecBinaryExtension() {
-  if (os2.platform() === "darwin") {
-    return ".dylib";
+function resolveSqliteVecPath(pluginRoot) {
+  const vecPath = path4.join(pluginRoot, "vendor", "sqlite-vec", `darwin-${os2.arch()}`, "vec0.dylib");
+  if (existsSync2(vecPath)) {
+    return vecPath;
   }
-  if (os2.platform() === "win32") {
-    return ".dll";
-  }
-  return ".so";
-}
-function sqliteVecBinaryPath(nativeRoot) {
-  return path6.join(
-    nativeRoot,
-    "node_modules",
-    sqliteVecPackageName(),
-    `vec0${sqliteVecBinaryExtension()}`
-  );
-}
-function sqliteVecExtensionPath(nativeRoot) {
-  return sqliteVecBinaryPath(nativeRoot);
-}
-function resolvePackage(packageName, nativeRoot) {
-  try {
-    return requireFromEngine.resolve(packageName, { paths: [nativeRoot] });
-  } catch {
-    return null;
-  }
-}
-async function ensureNativeRoot(pluginRoot) {
-  const nativeRoot = resolveNativeRuntimeRoot(pluginRoot);
-  await mkdir2(nativeRoot, { recursive: true });
-  const packageJsonPath = path6.join(nativeRoot, "package.json");
-  if (!existsSync3(packageJsonPath)) {
-    await writeFile2(
-      packageJsonPath,
-      `${JSON.stringify({ name: "memories-native-runtime", private: true }, null, 2)}
-`,
-      "utf8"
-    );
-  }
-  return nativeRoot;
-}
-async function installNativePackage(nativeRoot, packageSpec) {
-  await new Promise((resolve, reject) => {
-    const npmInvocation = resolveNpmInvocation(process.execPath);
-    execFile2(
-      npmInvocation.command,
-      [...npmInvocation.argsPrefix, "install", "--prefix", nativeRoot, packageSpec],
-      { timeout: NATIVE_INSTALL_TIMEOUT_MS },
-      (error48, _stdout, stderr) => {
-        if (error48) {
-          reject(new Error(stderr || error48.message));
-          return;
-        }
-        resolve();
-      }
-    );
-  });
-}
-async function rebuildNativePackage(nativeRoot, packageName) {
-  await new Promise((resolve, reject) => {
-    const npmInvocation = resolveNpmInvocation(process.execPath);
-    execFile2(
-      npmInvocation.command,
-      [...npmInvocation.argsPrefix, "rebuild", "--prefix", nativeRoot, packageName],
-      { timeout: NATIVE_INSTALL_TIMEOUT_MS },
-      (error48, _stdout, stderr) => {
-        if (error48) {
-          reject(new Error(stderr || error48.message));
-          return;
-        }
-        resolve();
-      }
-    );
-  });
-}
-async function removeNativePackage(nativeRoot, packageName) {
-  await rm2(path6.join(nativeRoot, "node_modules", packageName), {
-    force: true,
-    recursive: true
-  });
-}
-function verifyBetterSqlite3Load(resolvedPath) {
-  try {
-    requireFromEngine(resolvedPath);
-  } catch (error48) {
-    throw new Error(
-      `better-sqlite3 failed to load from ${resolvedPath}. ${error48 instanceof Error ? error48.message : String(error48)}`
-    );
-  }
-}
-async function ensureBetterSqlite3(nativeRoot) {
-  if (!resolvePackage("better-sqlite3", nativeRoot)) {
-    try {
-      await installNativePackage(nativeRoot, "better-sqlite3");
-    } catch (error48) {
-      throw new Error(
-        `Failed to install better-sqlite3 at runtime. Run "npm install --prefix ${nativeRoot} better-sqlite3". ${error48 instanceof Error ? error48.message : String(error48)}`
-      );
-    }
-  }
-  let resolvedPath = resolvePackage("better-sqlite3", nativeRoot);
-  if (!resolvedPath) {
-    throw new Error(
-      `better-sqlite3 is not resolvable from ${nativeRoot} after installation. Verify native runtime dependencies.`
-    );
-  }
-  try {
-    verifyBetterSqlite3Load(resolvedPath);
-  } catch (error48) {
-    if (!isNativeAbiMismatchError(error48)) {
-      throw error48;
-    }
-    logWarn("better-sqlite3 ABI mismatch detected; rebuilding runtime dependency", {
-      nativeRoot,
-      nodeAbi: process.versions.modules,
-      nodeVersion: process.versions.node,
-      resolvedPath
-    });
-    try {
-      await rebuildNativePackage(nativeRoot, "better-sqlite3");
-    } catch (rebuildError) {
-      logWarn("better-sqlite3 rebuild failed; reinstalling runtime dependency", {
-        error: rebuildError instanceof Error ? rebuildError.message : String(rebuildError),
-        nativeRoot
-      });
-      await removeNativePackage(nativeRoot, "better-sqlite3");
-      try {
-        await installNativePackage(nativeRoot, "better-sqlite3");
-      } catch (installError) {
-        throw new Error(
-          `Failed to reinstall better-sqlite3 at runtime. Run "npm install --prefix ${nativeRoot} better-sqlite3". ${installError instanceof Error ? installError.message : String(installError)}`
-        );
-      }
-    }
-    resolvedPath = resolvePackage("better-sqlite3", nativeRoot);
-    if (!resolvedPath) {
-      throw new Error(
-        `better-sqlite3 is not resolvable from ${nativeRoot} after rebuild. Verify native runtime dependencies.`
-      );
-    }
-    verifyBetterSqlite3Load(resolvedPath);
-  }
-}
-async function ensureSqliteVec(nativeRoot) {
-  if (existsSync3(sqliteVecBinaryPath(nativeRoot))) {
-    return sqliteVecExtensionPath(nativeRoot);
-  }
-  const packageSpec = `${sqliteVecPackageName()}@${SQLITE_VEC_VERSION}`;
-  try {
-    await installNativePackage(nativeRoot, packageSpec);
-  } catch (error48) {
-    logWarn("sqlite-vec install failed; continuing with non-vec fallback", {
-      error: error48 instanceof Error ? error48.message : String(error48),
-      packageSpec
-    });
-    return null;
-  }
-  if (!existsSync3(sqliteVecBinaryPath(nativeRoot))) {
-    logWarn("sqlite-vec binary not found after install; continuing with non-vec fallback", {
-      packageSpec
-    });
-    return null;
-  }
-  return sqliteVecExtensionPath(nativeRoot);
+  logWarn("sqlite-vec binary not found; continuing without vec table", { expectedPath: vecPath });
+  return null;
 }
 async function pickPort() {
   const portFromEnvironment = process.env.MEMORIES_ENGINE_PORT;
@@ -41357,22 +40927,19 @@ async function pickPort() {
   });
 }
 async function bootstrap() {
-  const projectRoot = resolveProjectRoot(process.env.PROJECT_ROOT);
   const pluginRoot = resolvePluginRoot();
-  const projectPaths = await ensureProjectDirectories(projectRoot);
-  const nativeRoot = await ensureNativeRoot(pluginRoot);
-  await ensureBetterSqlite3(nativeRoot);
-  const vecExtensionPath = await ensureSqliteVec(nativeRoot);
+  const globalPaths = await ensureGlobalDirectories();
+  const vecExtensionPath = resolveSqliteVecPath(pluginRoot);
   const port = await pickPort();
   const runtime = createEngineApp({
     pluginRoot,
-    projectRoot,
-    lockPath: projectPaths.lockPath,
-    eventLogPath: projectPaths.eventLogPath,
+    dbPath: globalPaths.dbPath,
+    lockPath: globalPaths.lockPath,
+    eventLogPath: globalPaths.eventLogPath,
     port,
     sqliteVecExtensionPath: vecExtensionPath,
-    onSessionDrain: async () => {
-      await shutdown("session-drain");
+    onIdleTimeout: async () => {
+      await shutdown("idle-timeout");
     }
   });
   let server = null;
@@ -41387,22 +40954,20 @@ async function bootstrap() {
       await closeServer(server);
     }
     runtime.close();
-    await removeLockIfOwned(projectPaths.lockPath, process.pid);
+    await removeLockIfOwned(globalPaths.lockPath, process.pid);
     process.exit(0);
   }
   server = runtime.app.listen(port, LOOPBACK_HOST, () => {
-    void writeLockMetadata(projectPaths.lockPath, {
+    void writeLockMetadata(globalPaths.lockPath, {
       host: LOOPBACK_HOST,
       port,
       pid: process.pid,
-      started_at: (/* @__PURE__ */ new Date()).toISOString(),
-      connected_session_ids: []
+      started_at: (/* @__PURE__ */ new Date()).toISOString()
     }).then(() => {
       logInfo("Engine started", {
         host: LOOPBACK_HOST,
         pid: process.pid,
-        port,
-        projectRoot
+        port
       });
     }).catch((error48) => {
       logError("Failed to write lock metadata", {

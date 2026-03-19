@@ -1,34 +1,38 @@
-import { mkdir,mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { writeLockMetadata } from '../shared/lockfile.js';
+import { getGlobalPaths } from '../shared/paths.js';
 import { recallInvocationPolicyText, runRecall } from './search-server.js';
 
 const originalTimeout = process.env.MEMORIES_MCP_ENGINE_TIMEOUT_MS;
+const globalPaths = getGlobalPaths();
 
-afterEach(() => {
+beforeEach(async () => {
+  await mkdir(path.dirname(globalPaths.lockPath), { recursive: true });
+});
+
+afterEach(async () => {
   if (originalTimeout === undefined) {
     delete process.env.MEMORIES_MCP_ENGINE_TIMEOUT_MS;
   } else {
     process.env.MEMORIES_MCP_ENGINE_TIMEOUT_MS = originalTimeout;
   }
+  await rm(globalPaths.lockPath, { force: true });
 });
 
 async function createProjectRootWithLock(port: number): Promise<string> {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'memories-mcp-'));
-  const memoriesDir = path.join(projectRoot, '.memories');
-  await mkdir(memoriesDir, { recursive: true });
 
-  await writeLockMetadata(path.join(memoriesDir, 'engine.lock.json'), {
+  await writeLockMetadata(globalPaths.lockPath, {
     host: '127.0.0.1',
     port,
     pid: process.pid,
     started_at: new Date().toISOString(),
-    connected_session_ids: [],
   });
   return projectRoot;
 }

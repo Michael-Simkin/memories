@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { LOOPBACK_HOST_ALIASES } from '../shared/constants.js';
 import { readLockMetadata } from '../shared/lockfile.js';
-import { getProjectPaths, resolveProjectRoot } from '../shared/paths.js';
+import { getGlobalPaths, resolveProjectRoot } from '../shared/paths.js';
 
 export function resolveHookProjectRoot(payload: {
   project_root?: string | undefined;
@@ -17,12 +17,11 @@ export function resolveHookProjectRoot(payload: {
   return resolveProjectRoot();
 }
 
-export async function resolveEndpointFromLock(projectRoot: string): Promise<{
+export async function resolveEndpointFromLock(): Promise<{
   host: string;
-  lockPath: string;
   port: number;
 }> {
-  const paths = getProjectPaths(projectRoot);
+  const paths = getGlobalPaths();
   const lock = await readLockMetadata(paths.lockPath);
   if (!lock) {
     throw new Error('ENGINE_UNAVAILABLE: lock metadata not found');
@@ -34,7 +33,6 @@ export async function resolveEndpointFromLock(projectRoot: string): Promise<{
   return {
     host: lock.host,
     port: lock.port,
-    lockPath: paths.lockPath,
   };
 }
 

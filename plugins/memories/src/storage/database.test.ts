@@ -10,12 +10,9 @@ import { MemoryStore } from './database.js';
 async function createStore(): Promise<MemoryStore> {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'memories-db-'));
   const dbPath = path.join(tempDir, 'ai_memory.db');
-  const pluginRoot = process.cwd();
   return new MemoryStore({
     dbPath,
-    pluginRoot,
     embeddingDimensions: 3,
-    sqliteVecExtensionPath: '/non-existent/vec0',
   });
 }
 
@@ -31,8 +28,8 @@ describe('MemoryStore', () => {
       path_matchers: [],
     } as unknown as AddMemoryInput;
 
-    expect(() => store.createMemory(invalidInput)).toThrow();
-    expect(store.memoryCount()).toBe(0);
+    expect(() => store.createMemory('test-repo-id-0001', invalidInput)).toThrow();
+    expect(store.memoryCount('test-repo-id-0001')).toBe(0);
 
     store.close();
   });
@@ -40,8 +37,11 @@ describe('MemoryStore', () => {
   it('supports create-update-delete round trip with matchers and embeddings', async () => {
     const store = await createStore();
 
+    const repoId = 'test-repo-id-0001';
     const created = store.createMemory(
+      repoId,
       {
+        repo_id: repoId,
         memory_type: 'fact',
         content: 'Node runtime is 20+',
         tags: ['runtime', 'node'],
@@ -54,8 +54,10 @@ describe('MemoryStore', () => {
     expect(created.path_matchers).toEqual([{ path_matcher: 'package.json' }]);
 
     const updated = store.updateMemory(
+      repoId,
       created.id,
       {
+        repo_id: repoId,
         tags: ['runtime', 'node', 'platform'],
         path_matchers: [{ path_matcher: 'plugins/**' }],
       },
@@ -66,14 +68,14 @@ describe('MemoryStore', () => {
     expect(updated?.tags).toEqual(['runtime', 'node', 'platform']);
     expect(updated?.path_matchers).toEqual([{ path_matcher: 'plugins/**' }]);
 
-    const embeddings = store.listEmbeddings();
+    const embeddings = store.listEmbeddings(repoId);
     expect(embeddings).toHaveLength(1);
     expect(embeddings[0]?.vector).toEqual([0.3, 0.2, 0.1]);
 
-    const deleted = store.deleteMemory(created.id);
+    const deleted = store.deleteMemory(repoId, created.id);
     expect(deleted).toBe(true);
-    expect(store.getMemory(created.id)).toBeNull();
-    expect(store.listEmbeddings()).toHaveLength(0);
+    expect(store.getMemory(repoId, created.id)).toBeNull();
+    expect(store.listEmbeddings(repoId)).toHaveLength(0);
 
     store.close();
   });

@@ -8,11 +8,10 @@ import { normalizePathForMatch } from './fs-utils.js';
 import { readLockMetadata, removeLockIfOwned, writeLockMetadata } from './lockfile.js';
 import { appendEventLog, readEventLogs } from './logs.js';
 import { formatMemoryRecallMarkdown } from './markdown.js';
-import { isNativeAbiMismatchError, nativeRuntimeCacheKey, resolveNativeRuntimeRoot } from './native-runtime.js';
 import type { MemoryEventLog, SearchResult } from './types.js';
 
 describe('shared foundations', () => {
-  it('writes and reads lock metadata with loopback guard and deduped sessions', async () => {
+  it('writes and reads lock metadata with loopback guard', async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'memories-lock-'));
     const lockPath = path.join(tempDir, 'engine.lock.json');
 
@@ -21,12 +20,13 @@ describe('shared foundations', () => {
       port: 4182,
       pid: process.pid,
       started_at: new Date().toISOString(),
-      connected_session_ids: ['session-a', 'session-a', 'session-b'],
     });
 
     const lock = await readLockMetadata(lockPath);
     expect(lock).not.toBeNull();
-    expect(lock?.connected_session_ids).toEqual(['session-a', 'session-b']);
+    expect(lock?.host).toBe('127.0.0.1');
+    expect(lock?.port).toBe(4182);
+    expect(lock?.pid).toBe(process.pid);
   });
 
   it('returns null for non-loopback lock metadata', async () => {
@@ -40,7 +40,6 @@ describe('shared foundations', () => {
         port: 4123,
         pid: process.pid,
         started_at: new Date().toISOString(),
-        connected_session_ids: [],
       }),
       'utf8',
     );
@@ -58,7 +57,6 @@ describe('shared foundations', () => {
       port: 4242,
       pid: process.pid + 99_999,
       started_at: new Date().toISOString(),
-      connected_session_ids: [],
     });
 
     await removeLockIfOwned(lockPath, process.pid);
@@ -68,34 +66,6 @@ describe('shared foundations', () => {
     await removeLockIfOwned(lockPath, process.pid + 99_999);
     const lockAfterRightOwner = await readLockMetadata(lockPath);
     expect(lockAfterRightOwner).toBeNull();
-  });
-
-  it('derives runtime-native cache roots from platform, arch, and ABI', () => {
-    expect(
-      nativeRuntimeCacheKey({
-        abi: '137',
-        arch: 'arm64',
-        platform: 'darwin',
-      }),
-    ).toBe('darwin-arm64-abi137');
-    expect(
-      resolveNativeRuntimeRoot('/tmp/plugin', {
-        abi: '127',
-        arch: 'x64',
-        platform: 'linux',
-      }),
-    ).toBe('/tmp/plugin/native/linux-x64-abi127');
-  });
-
-  it('detects native ABI mismatch loader errors', () => {
-    expect(
-      isNativeAbiMismatchError(
-        new Error(
-          'The module was compiled against a different Node.js version using NODE_MODULE_VERSION 127.',
-        ),
-      ),
-    ).toBe(true);
-    expect(isNativeAbiMismatchError(new Error('generic loader failure'))).toBe(false);
   });
 
   it('normalizes relative and windows-like paths', () => {

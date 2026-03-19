@@ -16,11 +16,11 @@ import {
   writeFailOpenOutput,
   writeHookOutput,
 } from '../shared/hook-io.js';
-import { readLockMetadata } from '../shared/lockfile.js';
 import { logError } from '../shared/logger.js';
-import { appendEventLog, readEventLogs } from '../shared/logs.js';
+import { appendEventLog } from '../shared/logs.js';
 import { formatMemoryRecallMarkdown } from '../shared/markdown.js';
-import { ensureProjectDirectories } from '../shared/paths.js';
+import { ensureGlobalDirectories } from '../shared/paths.js';
+import { resolveRepoId, resolveRepoLabel } from '../shared/repo-identity.js';
 import type { SearchResponse } from '../shared/types.js';
 import {
   getEngineJson,
@@ -33,7 +33,6 @@ import { type SessionStartPayload, sessionStartPayloadSchema } from './schemas.j
 const execFileAsync = promisify(execFile);
 const GENERIC_STARTUP_FAILURE_MESSAGE = 'Memories could not be launched, see details in the logs';
 const MAX_SESSION_START_OLLAMA_TIMEOUT_MS = 2500;
-const RECENT_RESUME_BOOTSTRAP_WINDOW_MS = 5_000;
 
 type OllamaStartupIssueCode =
   | 'ollama_not_installed'
@@ -50,28 +49,26 @@ interface OllamaStartupIssue extends StartupIssue {
   code: OllamaStartupIssueCode;
 }
 
-type SessionStartSource = 'startup' | 'resume' | 'clear' | 'compact';
-
 interface SessionStartDependencies {
   appendEventLogFn: typeof appendEventLog;
   diagnoseOllamaFn: () => Promise<OllamaStartupIssue | null>;
   ensureEngineFn: typeof ensureEngine;
-  ensureProjectDirectoriesFn: typeof ensureProjectDirectories;
+  ensureGlobalDirectoriesFn: typeof ensureGlobalDirectories;
   getEngineJsonFn: typeof getEngineJson;
   postEngineJsonFn: typeof postEngineJson;
-  readEventLogsFn: typeof readEventLogs;
-  readLockMetadataFn: typeof readLockMetadata;
+  resolveRepoIdFn: typeof resolveRepoId;
+  resolveRepoLabelFn: typeof resolveRepoLabel;
 }
 
 const defaultDependencies: SessionStartDependencies = {
   appendEventLogFn: appendEventLog,
   diagnoseOllamaFn: diagnoseOllamaStartupIssue,
   ensureEngineFn: ensureEngine,
-  ensureProjectDirectoriesFn: ensureProjectDirectories,
+  ensureGlobalDirectoriesFn: ensureGlobalDirectories,
   getEngineJsonFn: getEngineJson,
   postEngineJsonFn: postEngineJson,
-  readEventLogsFn: readEventLogs,
-  readLockMetadataFn: readLockMetadata,
+  resolveRepoIdFn: resolveRepoId,
+  resolveRepoLabelFn: resolveRepoLabel,
 };
 
 class OllamaServiceNotRunningError extends Error {}
@@ -311,125 +308,18 @@ async function diagnoseOllamaStartupIssue(): Promise<OllamaStartupIssue | null> 
   return null;
 }
 
-function normalizeSessionStartSource(rawSource: string | undefined): SessionStartSource | undefined {
-  const source = rawSource?.trim();
-  switch (source) {
-    case 'startup':
-    case 'resume':
-    case 'clear':
-    case 'compact':
-      return source;
-    default:
-      return undefined;
-  }
-}
-
-function shouldRegisterLiveSession(source: SessionStartSource | undefined): boolean {
-  return source !== 'compact';
-}
-
-function parseEventTimestamp(at: string): number | null {
-  const timestamp = Date.parse(at);
-  return Number.isFinite(timestamp) ? timestamp : null;
-}
-
-async function shouldSkipResumeBootstrapConnect(
-  currentSessionId: string,
-  dependencies: SessionStartDependencies,
-  paths: { lockPath: string },
-): Promise<boolean> {
-  const lock = await dependencies.readLockMetadataFn(paths.lockPath);
-  if (!lock) {
-    return false;
-  }
-
-  return lock.connected_session_ids.some((sessionId) => sessionId !== currentSessionId);
-}
-
-async function disconnectRecentResumeBootstrapSessions(
-  currentSessionId: string,
-  endpoint: { host: string; port: number },
-  dependencies: SessionStartDependencies,
-  paths: { eventLogPath: string; lockPath: string },
-): Promise<string[]> {
-  const lock = await dependencies.readLockMetadataFn(paths.lockPath);
-  if (!lock) {
-    return [];
-  }
-
-  const connectedOtherSessions = lock.connected_session_ids.filter((sessionId) => sessionId !== currentSessionId);
-  if (connectedOtherSessions.length === 0) {
-    return [];
-  }
-
-  const recentEvents = await dependencies.readEventLogsFn(paths.eventLogPath, 100);
-  const latestResumeStartAt = new Map<string, number>();
-  const latestSessionEndAt = new Map<string, number>();
-  const nowMs = Date.now();
-  const cutoffMs = nowMs - RECENT_RESUME_BOOTSTRAP_WINDOW_MS;
-
-  for (const event of recentEvents) {
-    if (!event.session_id) {
-      continue;
-    }
-
-    const eventAtMs = parseEventTimestamp(event.at);
-    if (eventAtMs === null) {
-      continue;
-    }
-
-    if (
-      event.event === 'SessionStart' &&
-      event.status === 'ok' &&
-      event.data?.source === 'resume' &&
-      eventAtMs >= cutoffMs
-    ) {
-      latestResumeStartAt.set(event.session_id, eventAtMs);
-      continue;
-    }
-
-    if (event.event === 'SessionEnd') {
-      latestSessionEndAt.set(event.session_id, eventAtMs);
-    }
-  }
-
-  const bootstrapResumeSessionIds = connectedOtherSessions.filter((sessionId) => {
-    const resumeStartAt = latestResumeStartAt.get(sessionId);
-    if (resumeStartAt === undefined) {
-      return false;
-    }
-    const sessionEndAt = latestSessionEndAt.get(sessionId) ?? Number.NEGATIVE_INFINITY;
-    return sessionEndAt < resumeStartAt;
-  });
-
-  const lockStartedAtMs = parseEventTimestamp(lock.started_at);
-  const shouldFallbackToRecentSiblings =
-    bootstrapResumeSessionIds.length === 0 &&
-    lockStartedAtMs !== null &&
-    nowMs - lockStartedAtMs <= RECENT_RESUME_BOOTSTRAP_WINDOW_MS;
-  const fallbackBootstrapSessionIds = shouldFallbackToRecentSiblings ? connectedOtherSessions : [];
-  const targetsToDisconnect =
-    bootstrapResumeSessionIds.length > 0 ? bootstrapResumeSessionIds : fallbackBootstrapSessionIds;
-
-  for (const sessionId of targetsToDisconnect) {
-    await dependencies.postEngineJsonFn(endpoint, '/sessions/disconnect', { session_id: sessionId });
-  }
-
-  return targetsToDisconnect;
-}
-
 export async function handleSessionStart(
   payload: SessionStartPayload,
   dependencies: SessionStartDependencies = defaultDependencies,
 ): Promise<HookResult> {
   const projectRoot = resolveHookProjectRoot(payload);
   const sessionId = payload.session_id?.trim();
-  const source = normalizeSessionStartSource(payload.source);
   let eventLogPath: string | null = null;
 
   try {
-    const paths = await dependencies.ensureProjectDirectoriesFn(projectRoot);
+    const paths = await dependencies.ensureGlobalDirectoriesFn();
     eventLogPath = paths.eventLogPath;
+    const repoId = await dependencies.resolveRepoIdFn(projectRoot);
 
     const ollamaIssue = await dependencies.diagnoseOllamaFn();
     if (ollamaIssue) {
@@ -439,7 +329,6 @@ export async function handleSessionStart(
         kind: 'hook',
         status: 'skipped',
         ...(sessionId ? { session_id: sessionId } : {}),
-        ...(source ? { data: { source } } : {}),
         detail: ollamaIssue.detail,
       });
       return {
@@ -452,22 +341,17 @@ export async function handleSessionStart(
       };
     }
 
-    const endpoint = await dependencies.ensureEngineFn(projectRoot);
-    const skippedResumeBootstrapConnect =
-      source === 'resume' && sessionId
-        ? await shouldSkipResumeBootstrapConnect(sessionId, dependencies, paths)
-        : false;
-    if (sessionId && shouldRegisterLiveSession(source)) {
-      if (!skippedResumeBootstrapConnect) {
-        await dependencies.postEngineJsonFn(endpoint, '/sessions/connect', { session_id: sessionId });
-      }
-    }
-    const evictedResumeSessionIds =
-      source === 'startup' && sessionId
-        ? await disconnectRecentResumeBootstrapSessions(sessionId, endpoint, dependencies, paths)
-        : [];
+    const repoLabel = await dependencies.resolveRepoLabelFn(projectRoot);
+    const endpoint = await dependencies.ensureEngineFn();
 
-    const pinned = await dependencies.getEngineJsonFn<SearchResponse>(endpoint, '/memories/pinned');
+    try {
+      await dependencies.postEngineJsonFn(endpoint, '/repos/label', { repo_id: repoId, label: repoLabel });
+    } catch { /* non-fatal */ }
+
+    const pinned = await dependencies.getEngineJsonFn<SearchResponse>(
+      endpoint,
+      `/memories/pinned?repo_id=${encodeURIComponent(repoId)}`,
+    );
     const markdown = formatMemoryRecallMarkdown({
       query: 'session-start:pinned',
       results: pinned.results,
@@ -482,24 +366,8 @@ export async function handleSessionStart(
       kind: 'hook',
       status: 'ok',
       ...(sessionId ? { session_id: sessionId } : {}),
-      ...((source || evictedResumeSessionIds.length > 0 || skippedResumeBootstrapConnect)
-        ? {
-            data: {
-              ...(source ? { source } : {}),
-              ...(evictedResumeSessionIds.length > 0
-                ? { evicted_resume_session_ids: evictedResumeSessionIds }
-                : {}),
-              ...(skippedResumeBootstrapConnect ? { skipped_resume_bootstrap_connect: true } : {}),
-            },
-          }
-        : {}),
-      detail: `${source ? `source=${source}; ` : ''}ui=${memoryUiUrl}${
-        evictedResumeSessionIds.length > 0
-          ? `; evicted_resume_sessions=${evictedResumeSessionIds.join(',')}`
-          : ''
-      }${
-        skippedResumeBootstrapConnect ? '; skipped_resume_bootstrap_connect=true' : ''
-      }`,
+      detail: `repo_id=${repoId}; ui=${memoryUiUrl}`,
+      data: { repo_id: repoId },
     });
 
     return {
@@ -519,7 +387,6 @@ export async function handleSessionStart(
         kind: 'hook',
         status: 'skipped',
         ...(sessionId ? { session_id: sessionId } : {}),
-        ...(source ? { data: { source } } : {}),
         detail: nodeRuntimeIssue.detail,
       });
       return {
@@ -539,7 +406,6 @@ export async function handleSessionStart(
         kind: 'hook',
         status: 'skipped',
         ...(sessionId ? { session_id: sessionId } : {}),
-        ...(source ? { data: { source } } : {}),
         detail: error instanceof Error ? error.message : String(error),
       });
       return {
@@ -555,7 +421,6 @@ export async function handleSessionStart(
         kind: 'hook',
         status: 'error',
         ...(sessionId ? { session_id: sessionId } : {}),
-        ...(source ? { data: { source } } : {}),
         detail: error instanceof Error ? error.message : String(error),
       });
     }

@@ -30,6 +30,7 @@ export const memoryRecordSchema = z.object({
 export type MemoryRecord = z.infer<typeof memoryRecordSchema>;
 
 export const addMemoryInputSchema = z.object({
+  repo_id: z.string().trim().min(1),
   memory_type: memoryTypeSchema,
   content: z.string().trim().min(1),
   tags: z.array(z.string().trim().min(1)).default([]),
@@ -40,15 +41,20 @@ export type AddMemoryInput = z.infer<typeof addMemoryInputSchema>;
 
 export const updateMemoryInputSchema = z
   .object({
+    repo_id: z.string().trim().min(1),
     content: z.string().trim().min(1).optional(),
     tags: z.array(z.string().trim().min(1)).optional(),
     is_pinned: z.boolean().optional(),
     path_matchers: z.array(pathMatcherSchema).optional(),
   })
-  .refine((value) => Object.keys(value).length > 0, 'At least one field must be updated');
+  .refine(
+    (value) => value.content !== undefined || value.tags !== undefined || value.is_pinned !== undefined || value.path_matchers !== undefined,
+    'At least one update field must be provided',
+  );
 export type UpdateMemoryInput = z.infer<typeof updateMemoryInputSchema>;
 
 export const searchRequestSchema = z.object({
+  repo_id: z.string().trim().min(1),
   query: z.string().default(''),
   limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT),
   target_paths: z.array(z.string()).default([]),
@@ -132,53 +138,3 @@ export const backgroundHooksResponseSchema = z.object({
 });
 export type BackgroundHooksResponse = z.infer<typeof backgroundHooksResponseSchema>;
 
-const createActionSchema = z.object({
-  action: z.literal('create'),
-  confidence: z.number().min(0).max(1),
-  memory_type: memoryTypeSchema,
-  content: z.string().trim().min(1),
-  tags: z.array(z.string().trim().min(1)).default([]),
-  is_pinned: z.boolean().default(false),
-  path_matchers: z.array(pathMatcherSchema).default([]),
-});
-
-const updateFieldsSchema = z
-  .object({
-    content: z.string().trim().min(1).optional(),
-    tags: z.array(z.string().trim().min(1)).optional(),
-    is_pinned: z.boolean().optional(),
-    path_matchers: z.array(pathMatcherSchema).optional(),
-  })
-  .refine((value) => Object.keys(value).length > 0, 'Update action requires at least one field');
-
-const updateActionSchema = z.object({
-  action: z.literal('update'),
-  confidence: z.number().min(0).max(1),
-  memory_id: z.string().trim().min(1),
-  updates: updateFieldsSchema,
-});
-
-const deleteActionSchema = z.object({
-  action: z.literal('delete'),
-  confidence: z.number().min(0).max(1),
-  memory_id: z.string().trim().min(1),
-});
-
-const skipActionSchema = z.object({
-  action: z.literal('skip'),
-  confidence: z.number().min(0).max(1).default(1),
-  reason: z.string().optional(),
-});
-
-export const extractionActionSchema = z.discriminatedUnion('action', [
-  createActionSchema,
-  updateActionSchema,
-  deleteActionSchema,
-  skipActionSchema,
-]);
-export type ExtractionAction = z.infer<typeof extractionActionSchema>;
-
-export const extractionActionsPayloadSchema = z.object({
-  actions: z.array(extractionActionSchema).default([]),
-});
-export type ExtractionActionsPayload = z.infer<typeof extractionActionsPayloadSchema>;

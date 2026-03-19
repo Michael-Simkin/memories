@@ -10,7 +10,8 @@ import {
 import { isLoopback, readLockMetadata } from '../shared/lockfile.js';
 import { logError } from '../shared/logger.js';
 import { formatMemoryRecallMarkdown } from '../shared/markdown.js';
-import { getProjectPaths, resolveProjectRoot } from '../shared/paths.js';
+import { getGlobalPaths, resolveProjectRoot } from '../shared/paths.js';
+import { resolveRepoId } from '../shared/repo-identity.js';
 import { searchResponseSchema } from '../shared/types.js';
 
 export const recallInvocationPolicyText =
@@ -47,7 +48,8 @@ function parseTimeoutMs(rawValue: string | undefined): number {
 export async function runRecall(rawInput: unknown): Promise<string> {
   const parsed = recallInputSchema.parse(rawInput);
   const projectRoot = resolveProjectRoot(parsed.project_root);
-  const lockPath = getProjectPaths(projectRoot).lockPath;
+  const repoId = await resolveRepoId(projectRoot);
+  const lockPath = getGlobalPaths().lockPath;
   const lock = await readLockMetadata(lockPath);
 
   if (!lock) {
@@ -67,6 +69,7 @@ export async function runRecall(rawInput: unknown): Promise<string> {
       headers: { 'content-type': 'application/json' },
       signal: controller.signal,
       body: JSON.stringify({
+        repo_id: repoId,
         query: parsed.query,
         limit: parsed.limit ?? DEFAULT_SEARCH_LIMIT,
         include_pinned: parsed.include_pinned ?? true,

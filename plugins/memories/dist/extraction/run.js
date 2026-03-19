@@ -13900,6 +13900,7 @@ var memoryRecordSchema = external_exports.object({
   updated_at: external_exports.string().min(1)
 });
 var addMemoryInputSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   memory_type: memoryTypeSchema,
   content: external_exports.string().trim().min(1),
   tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
@@ -13907,12 +13908,17 @@ var addMemoryInputSchema = external_exports.object({
   path_matchers: external_exports.array(pathMatcherSchema).default([])
 });
 var updateMemoryInputSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   content: external_exports.string().trim().min(1).optional(),
   tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
   is_pinned: external_exports.boolean().optional(),
   path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "At least one field must be updated");
+}).refine(
+  (value) => value.content !== void 0 || value.tags !== void 0 || value.is_pinned !== void 0 || value.path_matchers !== void 0,
+  "At least one update field must be provided"
+);
 var searchRequestSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   query: external_exports.string().default(""),
   limit: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT),
   target_paths: external_exports.array(external_exports.string()).default([]),
@@ -13977,46 +13983,6 @@ var backgroundHooksResponseSchema = external_exports.object({
     now: external_exports.string().min(1)
   })
 });
-var createActionSchema = external_exports.object({
-  action: external_exports.literal("create"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_type: memoryTypeSchema,
-  content: external_exports.string().trim().min(1),
-  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
-  is_pinned: external_exports.boolean().default(false),
-  path_matchers: external_exports.array(pathMatcherSchema).default([])
-});
-var updateFieldsSchema = external_exports.object({
-  content: external_exports.string().trim().min(1).optional(),
-  tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
-  is_pinned: external_exports.boolean().optional(),
-  path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "Update action requires at least one field");
-var updateActionSchema = external_exports.object({
-  action: external_exports.literal("update"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_id: external_exports.string().trim().min(1),
-  updates: updateFieldsSchema
-});
-var deleteActionSchema = external_exports.object({
-  action: external_exports.literal("delete"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_id: external_exports.string().trim().min(1)
-});
-var skipActionSchema = external_exports.object({
-  action: external_exports.literal("skip"),
-  confidence: external_exports.number().min(0).max(1).default(1),
-  reason: external_exports.string().optional()
-});
-var extractionActionSchema = external_exports.discriminatedUnion("action", [
-  createActionSchema,
-  updateActionSchema,
-  deleteActionSchema,
-  skipActionSchema
-]);
-var extractionActionsPayloadSchema = external_exports.object({
-  actions: external_exports.array(extractionActionSchema).default([])
-});
 
 // src/shared/logs.ts
 var SECRET_PATTERNS = [
@@ -14053,12 +14019,12 @@ async function appendEventLog(logPath, event) {
 
 // src/shared/paths.ts
 import { mkdir } from "fs/promises";
+import os from "os";
 import path2 from "path";
 import { fileURLToPath } from "url";
-function getProjectPaths(projectRoot) {
-  const memoriesDir = path2.join(projectRoot, ".memories");
+function getGlobalPaths() {
+  const memoriesDir = path2.join(os.homedir(), ".claude", "memories");
   return {
-    projectRoot,
     memoriesDir,
     dbPath: path2.join(memoriesDir, MEMORY_DB_FILE),
     lockPath: path2.join(memoriesDir, ENGINE_LOCK_FILE),
@@ -14076,17 +14042,18 @@ var workerPayloadSchema = external_exports.object({
     port: external_exports.number().int().min(1).max(65535)
   }),
   project_root: external_exports.string().min(1),
+  repo_id: external_exports.string().min(1),
   transcript_path: external_exports.string().min(1),
   last_assistant_message: external_exports.string().optional(),
   session_id: external_exports.string().optional()
 });
-var updateFieldsSchema2 = external_exports.object({
+var updateFieldsSchema = external_exports.object({
   content: external_exports.string().trim().min(1).optional(),
   tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
   is_pinned: external_exports.boolean().optional(),
   path_matchers: external_exports.array(pathMatcherSchema).optional()
 }).refine((value) => Object.keys(value).length > 0, "Update action must include at least one field");
-var createActionSchema2 = external_exports.object({
+var createActionSchema = external_exports.object({
   action: external_exports.literal("create"),
   confidence: external_exports.number().min(0).max(1),
   reason: external_exports.string().optional(),
@@ -14096,29 +14063,29 @@ var createActionSchema2 = external_exports.object({
   is_pinned: external_exports.boolean().default(false),
   path_matchers: external_exports.array(pathMatcherSchema).default([])
 });
-var updateActionSchema2 = external_exports.object({
+var updateActionSchema = external_exports.object({
   action: external_exports.literal("update"),
   confidence: external_exports.number().min(0).max(1),
   reason: external_exports.string().optional(),
   memory_id: external_exports.string().trim().min(1),
-  updates: updateFieldsSchema2
+  updates: updateFieldsSchema
 });
-var deleteActionSchema2 = external_exports.object({
+var deleteActionSchema = external_exports.object({
   action: external_exports.literal("delete"),
   confidence: external_exports.number().min(0).max(1),
   reason: external_exports.string().optional(),
   memory_id: external_exports.string().trim().min(1)
 });
-var skipActionSchema2 = external_exports.object({
+var skipActionSchema = external_exports.object({
   action: external_exports.literal("skip"),
   confidence: external_exports.number().min(0).max(1).default(1),
   reason: external_exports.string().optional()
 });
 var workerActionSchema = external_exports.discriminatedUnion("action", [
-  createActionSchema2,
-  updateActionSchema2,
-  deleteActionSchema2,
-  skipActionSchema2
+  createActionSchema,
+  updateActionSchema,
+  deleteActionSchema,
+  skipActionSchema
 ]);
 var workerOutputSchema = external_exports.object({
   actions: external_exports.array(workerActionSchema)
@@ -14292,7 +14259,7 @@ function decodeWorkerPayload(encodedHandoff) {
   return workerPayloadSchema.parse(parsed);
 }
 async function executeWorker(payload, dependencies = defaultDependencies) {
-  const projectPaths = getProjectPaths(payload.project_root);
+  const projectPaths = getGlobalPaths();
   const backgroundHookLease = createBackgroundHookLeaseController(payload);
   let backgroundHookStatus = "ok";
   let backgroundHookDetail = "completed";
@@ -14311,6 +14278,7 @@ async function executeWorker(payload, dependencies = defaultDependencies) {
     const candidateQuery = payload.last_assistant_message?.trim() || context.transcriptSnippet.slice(0, 500);
     const candidates = await dependencies.searchCandidatesFn(
       payload.endpoint,
+      payload.repo_id,
       candidateQuery,
       context.relatedPaths
     );
@@ -14394,7 +14362,7 @@ async function executeWorker(payload, dependencies = defaultDependencies) {
         });
         continue;
       }
-      const outcome = await dependencies.applyActionFn(payload.endpoint, action);
+      const outcome = await dependencies.applyActionFn(payload.endpoint, payload.repo_id, action);
       if (!outcome.ok) {
         failed = true;
         await dependencies.appendEventLogFn(projectPaths.eventLogPath, {
@@ -14566,11 +14534,11 @@ function buildExtractionPrompt(input) {
     "- confidence must be in range [0,1]",
     "",
     "Pinning rules:",
-    "- set is_pinned=true only when the memory should be injected at SessionStart because it is durable, broadly applicable, and likely relevant across many future tasks in this project.",
-    "- prefer pinning stable rules, architectural decisions, and recurring workflow constraints or preferences that should influence most future sessions.",
-    "- keep is_pinned=false for transient facts, narrow file-specific context, one-off episodes, or anything better discovered via recall/search than always-on startup injection.",
-    "- if uncertain, default to is_pinned=false; episodes should almost never be pinned unless they encode recurring project-wide guidance.",
-    "- only change an existing memory's is_pinned state when the transcript clearly indicates it should become more or less globally injected.",
+    "- ALMOST ALL memories should be is_pinned=false. Pinned memories are injected into EVERY session start, consuming context budget. Only pin if the memory is critical to virtually every future task.",
+    '- is_pinned=true is reserved for rare, project-wide invariants: e.g. "this is a Python 3.12 monorepo" or "never commit to main directly". Most projects have 0-3 pinned memories total.',
+    '- is_pinned=false for: file-specific rules, per-directory constraints, tech preferences, workflow steps, "do not edit X", "use Y for Z", and anything discoverable via recall search.',
+    "- if uncertain, ALWAYS default to is_pinned=false.",
+    "- only change an existing memory's is_pinned state when the transcript explicitly asks for it to be pinned/unpinned.",
     "",
     "Candidate memories:",
     candidateMemoriesText,
@@ -14758,11 +14726,12 @@ function sanitizePathMatchers(matchers, relatedPaths) {
   }
   return sanitized;
 }
-async function searchCandidates(endpoint, query, relatedPaths) {
+async function searchCandidates(endpoint, repoId, query, relatedPaths) {
   const response = await fetch(`http://${endpoint.host}:${endpoint.port}/memories/search`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
+      repo_id: repoId,
       query,
       limit: 20,
       include_pinned: true,
@@ -14774,7 +14743,7 @@ async function searchCandidates(endpoint, query, relatedPaths) {
   }
   return await response.json();
 }
-async function applyAction(endpoint, action) {
+async function applyAction(endpoint, repoId, action) {
   if (action.action === "skip") {
     return { ok: true };
   }
@@ -14783,6 +14752,7 @@ async function applyAction(endpoint, action) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        repo_id: repoId,
         memory_type: action.memory_type,
         content: action.content,
         tags: action.tags,
@@ -14798,13 +14768,13 @@ async function applyAction(endpoint, action) {
       {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(action.updates)
+        body: JSON.stringify({ repo_id: repoId, ...action.updates })
       }
     );
     return toActionApplyOutcome(response2);
   }
   const response = await fetch(
-    `http://${endpoint.host}:${endpoint.port}/memories/${action.memory_id}`,
+    `http://${endpoint.host}:${endpoint.port}/memories/${action.memory_id}?repo_id=${encodeURIComponent(repoId)}`,
     {
       method: "DELETE"
     }

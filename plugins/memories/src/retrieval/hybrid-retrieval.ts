@@ -98,20 +98,21 @@ export class RetrievalService {
     this.embeddingClient = embeddingClient;
   }
 
-  public async search(options: QueryOptions): Promise<SearchResult[]> {
+  public async search(repoId: string, options: QueryOptions): Promise<SearchResult[]> {
     const pathMatches = this.findPathMatches(
+      repoId,
       options.targetPaths ?? [],
       options.memoryTypes,
       options.includePinned,
     );
 
-    const lexical = this.store.lexicalSearch({
+    const lexical = this.store.lexicalSearch(repoId, {
       query: options.query,
       limit: options.lexicalK ?? DEFAULT_LEXICAL_K,
       includePinned: options.includePinned,
       ...(options.memoryTypes ? { memoryTypes: options.memoryTypes } : {}),
     });
-    const semantic = await this.semanticSearch({
+    const semantic = await this.semanticSearch(repoId, {
       query: options.query,
       semanticK: options.semanticK ?? DEFAULT_SEMANTIC_K,
       includePinned: options.includePinned,
@@ -155,7 +156,7 @@ export class RetrievalService {
     return budgeted.slice(0, options.limit);
   }
 
-  private async semanticSearch(input: {
+  private async semanticSearch(repoId: string, input: {
     query: string;
     semanticK: number;
     memoryTypes?: MemoryType[] | undefined;
@@ -170,13 +171,14 @@ export class RetrievalService {
       return [];
     }
 
-    const rows = this.store.listEmbeddings(input.memoryTypes, input.includePinned) as EmbeddingRow[];
+    const rows = this.store.listEmbeddings(repoId, input.memoryTypes, input.includePinned) as EmbeddingRow[];
     return rows
       .filter((row) => row.vector.length === queryVector.length)
       .map((row) => {
         const cosine = cosineSimilarity(queryVector, row.vector);
         const normalizedScore = (cosine + 1) / 2;
-        const pathMatchers = this.store.getMemory(row.id)?.path_matchers.map((value) => value.path_matcher) ?? [];
+        const memory = this.store.getMemory(repoId, row.id);
+        const pathMatchers = memory?.path_matchers.map((value) => value.path_matcher) ?? [];
 
         return {
           id: row.id,
@@ -197,6 +199,7 @@ export class RetrievalService {
   }
 
   private findPathMatches(
+    repoId: string,
     targetPaths: string[],
     memoryTypes: MemoryType[] | undefined,
     includePinned: boolean,
@@ -209,7 +212,7 @@ export class RetrievalService {
     }
 
     const bestMatchByMemoryId = new Map<string, MatcherSpecificity>();
-    for (const matcher of this.store.listPathMatchers()) {
+    for (const matcher of this.store.listPathMatchers(repoId)) {
       if (!this.matchesAnyTarget(matcher.path_matcher, normalizedTargets)) {
         continue;
       }
@@ -226,7 +229,7 @@ export class RetrievalService {
     }
 
     const ranked = this.store
-      .getMemoriesByIds(memoryIds)
+      .getMemoriesByIds(repoId, memoryIds)
       .filter((memory) => (memoryTypes ? memoryTypes.includes(memory.memory_type) : true))
       .filter((memory) => (includePinned ? true : !memory.is_pinned))
       .flatMap((memory) => {

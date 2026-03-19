@@ -9,6 +9,7 @@ export const workerPayloadSchema = z.object({
     port: z.number().int().min(1).max(65535),
   }),
   project_root: z.string().min(1),
+  repo_id: z.string().min(1),
   transcript_path: z.string().min(1),
   last_assistant_message: z.string().optional(),
   session_id: z.string().optional(),

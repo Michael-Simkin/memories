@@ -33,13 +33,18 @@ export interface MemorySearchResult {
   updated_at: string;
 }
 
+export interface RepoInfo {
+  repo_id: string;
+  label: string;
+}
+
 export interface StatsResponse {
-  active_sessions: number;
   active_background_hooks: number;
-  memory_count: number;
   online: boolean;
-  shutdown_blocked: boolean;
   uptime_ms: number;
+  last_interaction_at: string;
+  idle_timeout_ms: number;
+  idle_remaining_ms: number;
 }
 
 export interface BackgroundHook {

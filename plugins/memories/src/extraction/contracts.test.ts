@@ -7,6 +7,7 @@ describe('extraction contracts', () => {
     const payload = workerPayloadSchema.parse({
       endpoint: { host: '127.0.0.1', port: 4311 },
       project_root: '/tmp/project',
+      repo_id: 'test-repo-id-0001',
       transcript_path: '/tmp/project/transcript.jsonl',
       session_id: 'session-1',
     });

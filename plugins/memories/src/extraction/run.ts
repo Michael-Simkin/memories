@@ -9,7 +9,7 @@ import { DEFAULT_BACKGROUND_HOOK_HEARTBEAT_INTERVAL_MS } from '../shared/constan
 import { normalizePathForMatch } from '../shared/fs-utils.js';
 import { logError } from '../shared/logger.js';
 import { appendEventLog } from '../shared/logs.js';
-import { getProjectPaths } from '../shared/paths.js';
+import { getGlobalPaths } from '../shared/paths.js';
 import {
   type WorkerAction,
   workerOutputSchema,
@@ -88,10 +88,10 @@ const CLAUDE_OUTPUT_PREVIEW_MAX_CHARS = 1600;
 
 interface WorkerDependencies {
   appendEventLogFn: typeof appendEventLog;
-  applyActionFn: typeof applyAction;
+  applyActionFn: (endpoint: { host: string; port: number }, repoId: string, action: WorkerAction) => Promise<ActionApplyOutcome>;
   readTranscriptContextFn: typeof readTranscriptContext;
   runClaudeFn: typeof runClaudePrompt;
-  searchCandidatesFn: typeof searchCandidates;
+  searchCandidatesFn: (endpoint: { host: string; port: number }, repoId: string, query: string, relatedPaths: string[]) => Promise<EngineSearchResponse>;
 }
 
 const defaultDependencies: WorkerDependencies = {
@@ -276,7 +276,7 @@ export async function executeWorker(
   payload: WorkerPayload,
   dependencies: WorkerDependencies = defaultDependencies,
 ): Promise<void> {
-  const projectPaths = getProjectPaths(payload.project_root);
+  const projectPaths = getGlobalPaths();
   const backgroundHookLease = createBackgroundHookLeaseController(payload);
   let backgroundHookStatus: 'ok' | 'error' | 'skipped' = 'ok';
   let backgroundHookDetail = 'completed';
@@ -297,6 +297,7 @@ export async function executeWorker(
       payload.last_assistant_message?.trim() || context.transcriptSnippet.slice(0, 500);
     const candidates = await dependencies.searchCandidatesFn(
       payload.endpoint,
+      payload.repo_id,
       candidateQuery,
       context.relatedPaths,
     );
@@ -388,7 +389,7 @@ export async function executeWorker(
         continue;
       }
 
-      const outcome = await dependencies.applyActionFn(payload.endpoint, action);
+      const outcome = await dependencies.applyActionFn(payload.endpoint, payload.repo_id, action);
       if (!outcome.ok) {
         failed = true;
         await dependencies.appendEventLogFn(projectPaths.eventLogPath, {
@@ -589,11 +590,11 @@ function buildExtractionPrompt(input: {
     '- confidence must be in range [0,1]',
     '',
     'Pinning rules:',
-    '- set is_pinned=true only when the memory should be injected at SessionStart because it is durable, broadly applicable, and likely relevant across many future tasks in this project.',
-    '- prefer pinning stable rules, architectural decisions, and recurring workflow constraints or preferences that should influence most future sessions.',
-    '- keep is_pinned=false for transient facts, narrow file-specific context, one-off episodes, or anything better discovered via recall/search than always-on startup injection.',
-    '- if uncertain, default to is_pinned=false; episodes should almost never be pinned unless they encode recurring project-wide guidance.',
-    "- only change an existing memory's is_pinned state when the transcript clearly indicates it should become more or less globally injected.",
+    '- ALMOST ALL memories should be is_pinned=false. Pinned memories are injected into EVERY session start, consuming context budget. Only pin if the memory is critical to virtually every future task.',
+    '- is_pinned=true is reserved for rare, project-wide invariants: e.g. "this is a Python 3.12 monorepo" or "never commit to main directly". Most projects have 0-3 pinned memories total.',
+    '- is_pinned=false for: file-specific rules, per-directory constraints, tech preferences, workflow steps, "do not edit X", "use Y for Z", and anything discoverable via recall search.',
+    '- if uncertain, ALWAYS default to is_pinned=false.',
+    "- only change an existing memory's is_pinned state when the transcript explicitly asks for it to be pinned/unpinned.",
     '',
     'Candidate memories:',
     candidateMemoriesText,
@@ -817,6 +818,7 @@ function sanitizePathMatchers(
 
 async function searchCandidates(
   endpoint: { host: string; port: number },
+  repoId: string,
   query: string,
   relatedPaths: string[],
 ): Promise<EngineSearchResponse> {
@@ -824,6 +826,7 @@ async function searchCandidates(
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
+      repo_id: repoId,
       query,
       limit: 20,
       include_pinned: true,
@@ -840,6 +843,7 @@ async function searchCandidates(
 
 async function applyAction(
   endpoint: { host: string; port: number },
+  repoId: string,
   action: WorkerAction,
 ): Promise<ActionApplyOutcome> {
   if (action.action === 'skip') {
@@ -851,6 +855,7 @@ async function applyAction(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
+        repo_id: repoId,
         memory_type: action.memory_type,
         content: action.content,
         tags: action.tags,
@@ -867,14 +872,14 @@ async function applyAction(
       {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(action.updates),
+        body: JSON.stringify({ repo_id: repoId, ...action.updates }),
       },
     );
     return toActionApplyOutcome(response);
   }
 
   const response = await fetch(
-    `http://${endpoint.host}:${endpoint.port}/memories/${action.memory_id}`,
+    `http://${endpoint.host}:${endpoint.port}/memories/${action.memory_id}?repo_id=${encodeURIComponent(repoId)}`,
     {
       method: 'DELETE',
     },

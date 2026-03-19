@@ -13936,6 +13936,7 @@ var memoryRecordSchema = external_exports.object({
   updated_at: external_exports.string().min(1)
 });
 var addMemoryInputSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   memory_type: memoryTypeSchema,
   content: external_exports.string().trim().min(1),
   tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
@@ -13943,12 +13944,17 @@ var addMemoryInputSchema = external_exports.object({
   path_matchers: external_exports.array(pathMatcherSchema).default([])
 });
 var updateMemoryInputSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   content: external_exports.string().trim().min(1).optional(),
   tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
   is_pinned: external_exports.boolean().optional(),
   path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "At least one field must be updated");
+}).refine(
+  (value) => value.content !== void 0 || value.tags !== void 0 || value.is_pinned !== void 0 || value.path_matchers !== void 0,
+  "At least one update field must be provided"
+);
 var searchRequestSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
   query: external_exports.string().default(""),
   limit: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT),
   target_paths: external_exports.array(external_exports.string()).default([]),
@@ -14013,46 +14019,6 @@ var backgroundHooksResponseSchema = external_exports.object({
     now: external_exports.string().min(1)
   })
 });
-var createActionSchema = external_exports.object({
-  action: external_exports.literal("create"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_type: memoryTypeSchema,
-  content: external_exports.string().trim().min(1),
-  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
-  is_pinned: external_exports.boolean().default(false),
-  path_matchers: external_exports.array(pathMatcherSchema).default([])
-});
-var updateFieldsSchema = external_exports.object({
-  content: external_exports.string().trim().min(1).optional(),
-  tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
-  is_pinned: external_exports.boolean().optional(),
-  path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "Update action requires at least one field");
-var updateActionSchema = external_exports.object({
-  action: external_exports.literal("update"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_id: external_exports.string().trim().min(1),
-  updates: updateFieldsSchema
-});
-var deleteActionSchema = external_exports.object({
-  action: external_exports.literal("delete"),
-  confidence: external_exports.number().min(0).max(1),
-  memory_id: external_exports.string().trim().min(1)
-});
-var skipActionSchema = external_exports.object({
-  action: external_exports.literal("skip"),
-  confidence: external_exports.number().min(0).max(1).default(1),
-  reason: external_exports.string().optional()
-});
-var extractionActionSchema = external_exports.discriminatedUnion("action", [
-  createActionSchema,
-  updateActionSchema,
-  deleteActionSchema,
-  skipActionSchema
-]);
-var extractionActionsPayloadSchema = external_exports.object({
-  actions: external_exports.array(extractionActionSchema).default([])
-});
 
 // src/shared/logs.ts
 var SECRET_PATTERNS = [
@@ -14089,6 +14055,7 @@ async function appendEventLog(logPath, event) {
 
 // src/shared/paths.ts
 import { mkdir } from "fs/promises";
+import os from "os";
 import path2 from "path";
 import { fileURLToPath } from "url";
 function resolveProjectRoot(explicitProjectRoot) {
@@ -14110,10 +14077,9 @@ function resolvePluginRoot() {
   const moduleDirectory = path2.dirname(currentFilePath);
   return path2.resolve(moduleDirectory, "..", "..");
 }
-function getProjectPaths(projectRoot) {
-  const memoriesDir = path2.join(projectRoot, ".memories");
+function getGlobalPaths() {
+  const memoriesDir = path2.join(os.homedir(), ".claude", "memories");
   return {
-    projectRoot,
     memoriesDir,
     dbPath: path2.join(memoriesDir, MEMORY_DB_FILE),
     lockPath: path2.join(memoriesDir, ENGINE_LOCK_FILE),
@@ -14122,10 +14088,92 @@ function getProjectPaths(projectRoot) {
     eventLogPath: path2.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
   };
 }
-async function ensureProjectDirectories(projectRoot) {
-  const projectPaths = getProjectPaths(projectRoot);
-  await mkdir(projectPaths.memoriesDir, { recursive: true });
-  return projectPaths;
+async function ensureGlobalDirectories() {
+  const globalPaths = getGlobalPaths();
+  await mkdir(globalPaths.memoriesDir, { recursive: true });
+  return globalPaths;
+}
+
+// src/shared/repo-identity.ts
+import { execFile } from "child_process";
+import { createHash } from "crypto";
+import { realpath } from "fs/promises";
+import { promisify } from "util";
+var execFileAsync = promisify(execFile);
+var GIT_TIMEOUT_MS = 3e3;
+var repoIdCache = /* @__PURE__ */ new Map();
+var repoLabelCache = /* @__PURE__ */ new Map();
+function hashIdentity(identity) {
+  return createHash("sha256").update(identity).digest("hex").slice(0, 16);
+}
+function normalizeRemoteUrl(url2) {
+  let normalized = url2.trim();
+  normalized = normalized.replace(/\.git\/?$/, "");
+  normalized = normalized.replace(/\/+$/, "");
+  const sshMatch = normalized.match(/^[\w.-]+@([\w.-]+):(.*)/);
+  if (sshMatch) {
+    const host = sshMatch[1].toLowerCase();
+    const path4 = sshMatch[2];
+    return `${host}/${path4}`;
+  }
+  const httpsMatch = normalized.match(/^https?:\/\/([\w.-]+(?::\d+)?)\/(.*)/);
+  if (httpsMatch) {
+    const host = httpsMatch[1].toLowerCase();
+    const path4 = httpsMatch[2];
+    return `${host}/${path4}`;
+  }
+  const sshProtoMatch = normalized.match(/^ssh:\/\/[\w.-]+@([\w.-]+(?::\d+)?)\/(.*)/);
+  if (sshProtoMatch) {
+    const host = sshProtoMatch[1].toLowerCase();
+    const path4 = sshProtoMatch[2];
+    return `${host}/${path4}`;
+  }
+  return normalized;
+}
+async function gitExec(projectRoot, args) {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", projectRoot, ...args], {
+      timeout: GIT_TIMEOUT_MS
+    });
+    const trimmed = stdout.trim();
+    return trimmed || null;
+  } catch {
+    return null;
+  }
+}
+async function resolveIdentity(projectRoot) {
+  const originUrl = await gitExec(projectRoot, ["remote", "get-url", "origin"]);
+  if (originUrl) {
+    const normalized = normalizeRemoteUrl(originUrl);
+    return { id: hashIdentity(normalized), label: normalized };
+  }
+  const toplevel = await gitExec(projectRoot, ["rev-parse", "--show-toplevel"]);
+  if (toplevel) {
+    let resolved2;
+    try {
+      resolved2 = await realpath(toplevel);
+    } catch {
+      resolved2 = toplevel;
+    }
+    return { id: hashIdentity(resolved2), label: resolved2 };
+  }
+  let resolved;
+  try {
+    resolved = await realpath(projectRoot);
+  } catch {
+    resolved = projectRoot;
+  }
+  return { id: hashIdentity(resolved), label: resolved };
+}
+async function resolveRepoId(projectRoot) {
+  const cached2 = repoIdCache.get(projectRoot);
+  if (cached2) {
+    return cached2;
+  }
+  const { id, label } = await resolveIdentity(projectRoot);
+  repoIdCache.set(projectRoot, id);
+  repoLabelCache.set(projectRoot, label);
+  return id;
 }
 
 // src/hooks/common.ts
@@ -14136,8 +14184,7 @@ var lockMetadataSchema = external_exports.object({
   host: external_exports.string().trim().min(1),
   port: external_exports.number().int().min(1).max(65535),
   pid: external_exports.number().int().positive(),
-  started_at: external_exports.string().min(1),
-  connected_session_ids: external_exports.array(external_exports.string().trim().min(1)).default([])
+  started_at: external_exports.string().min(1)
 });
 function isLoopback(host) {
   return LOOPBACK_HOST_ALIASES.includes(host);
@@ -14154,13 +14201,7 @@ async function readLockMetadata(lockPath) {
   if (!isLoopback(parsed.data.host)) {
     return null;
   }
-  return {
-    ...parsed.data,
-    connected_session_ids: uniqueNonEmpty(parsed.data.connected_session_ids)
-  };
-}
-function uniqueNonEmpty(values) {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  return parsed.data;
 }
 
 // src/hooks/common.ts
@@ -14173,8 +14214,8 @@ function resolveHookProjectRoot(payload) {
   }
   return resolveProjectRoot();
 }
-async function resolveEndpointFromLock(projectRoot) {
-  const paths = getProjectPaths(projectRoot);
+async function resolveEndpointFromLock() {
+  const paths = getGlobalPaths();
   const lock = await readLockMetadata(paths.lockPath);
   if (!lock) {
     throw new Error("ENGINE_UNAVAILABLE: lock metadata not found");
@@ -14184,8 +14225,7 @@ async function resolveEndpointFromLock(projectRoot) {
   }
   return {
     host: lock.host,
-    port: lock.port,
-    lockPath: paths.lockPath
+    port: lock.port
   };
 }
 function isEngineUnavailableError(error48) {
@@ -14262,8 +14302,7 @@ function spawnStopWorker(handoff) {
       detached: true,
       env: {
         ...process.env,
-        CLAUDE_PLUGIN_ROOT: pluginRoot,
-        PROJECT_ROOT: handoff.project_root
+        CLAUDE_PLUGIN_ROOT: pluginRoot
       },
       stdio: "ignore"
     });
@@ -14277,15 +14316,16 @@ function spawnStopWorker(handoff) {
 var defaultDependencies = {
   accessFn: access,
   appendEventLogFn: appendEventLog,
-  ensureProjectDirectoriesFn: ensureProjectDirectories,
+  ensureGlobalDirectoriesFn: ensureGlobalDirectories,
   finishBackgroundHookFn: finishBackgroundHook,
   registerBackgroundHookFn: registerBackgroundHook,
   resolveEndpointFromLockFn: resolveEndpointFromLock,
+  resolveRepoIdFn: resolveRepoId,
   spawnStopWorkerFn: spawnStopWorker
 };
 async function handleStopHook(payload, dependencies = defaultDependencies) {
   const projectRoot = resolveHookProjectRoot(payload);
-  const paths = await dependencies.ensureProjectDirectoriesFn(projectRoot);
+  const paths = await dependencies.ensureGlobalDirectoriesFn();
   if (payload.stop_hook_active === true) {
     await dependencies.appendEventLogFn(paths.eventLogPath, {
       at: (/* @__PURE__ */ new Date()).toISOString(),
@@ -14299,7 +14339,8 @@ async function handleStopHook(payload, dependencies = defaultDependencies) {
   }
   try {
     await dependencies.accessFn(payload.transcript_path);
-    const endpoint = await dependencies.resolveEndpointFromLockFn(projectRoot);
+    const repoId = await dependencies.resolveRepoIdFn(projectRoot);
+    const endpoint = await dependencies.resolveEndpointFromLockFn();
     const backgroundHookId = randomUUID();
     await dependencies.registerBackgroundHookFn(endpoint, {
       id: backgroundHookId,
@@ -14316,6 +14357,7 @@ async function handleStopHook(payload, dependencies = defaultDependencies) {
           port: endpoint.port
         },
         project_root: projectRoot,
+        repo_id: repoId,
         transcript_path: payload.transcript_path,
         ...payload.last_assistant_message ? { last_assistant_message: payload.last_assistant_message } : {},
         ...payload.session_id ? { session_id: payload.session_id } : {}
@@ -14333,7 +14375,7 @@ async function handleStopHook(payload, dependencies = defaultDependencies) {
       kind: "hook",
       status: "ok",
       ...payload.session_id ? { session_id: payload.session_id } : {},
-      detail: `handoff=${payload.transcript_path}; hook_id=${backgroundHookId}${typeof spawnedWorker.pid === "number" ? `; pid=${spawnedWorker.pid}` : ""}`
+      detail: `handoff=${payload.transcript_path}; hook_id=${backgroundHookId}; repo_id=${repoId}${typeof spawnedWorker.pid === "number" ? `; pid=${spawnedWorker.pid}` : ""}`
     });
     return { continue: true };
   } catch (error48) {
