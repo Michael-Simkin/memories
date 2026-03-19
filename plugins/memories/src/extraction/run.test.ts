@@ -211,11 +211,14 @@ describe('extraction worker', () => {
 
     const prompt = runClaudeFn.mock.calls[0]?.[0];
     expect(typeof prompt).toBe('string');
+    expect(prompt).toContain('Extraction strategy:');
+    expect(prompt).toContain('actively look for general principles that apply across the project');
+    expect(prompt).toContain('Split composite content into multiple memories');
     expect(prompt).toContain('Pinning rules:');
-    expect(prompt).toContain('set is_pinned=true only when the memory should be injected at SessionStart');
-    expect(prompt).toContain('prefer pinning stable rules, architectural decisions');
-    expect(prompt).toContain('keep is_pinned=false for transient facts, narrow file-specific context');
-    expect(prompt).toContain('if uncertain, default to is_pinned=false');
+    expect(prompt).toContain('ALMOST ALL memories should be is_pinned=false');
+    expect(prompt).toContain('is_pinned=true is reserved for rare, project-wide invariants');
+    expect(prompt).toContain('is_pinned=false for: file-specific rules, per-directory constraints');
+    expect(prompt).toContain('if uncertain, ALWAYS default to is_pinned=false');
     expect(prompt).toContain("only change an existing memory's is_pinned state");
   });
 });

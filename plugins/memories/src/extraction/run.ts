@@ -88,10 +88,19 @@ const CLAUDE_OUTPUT_PREVIEW_MAX_CHARS = 1600;
 
 interface WorkerDependencies {
   appendEventLogFn: typeof appendEventLog;
-  applyActionFn: (endpoint: { host: string; port: number }, repoId: string, action: WorkerAction) => Promise<ActionApplyOutcome>;
+  applyActionFn: (
+    endpoint: { host: string; port: number },
+    repoId: string,
+    action: WorkerAction,
+  ) => Promise<ActionApplyOutcome>;
   readTranscriptContextFn: typeof readTranscriptContext;
   runClaudeFn: typeof runClaudePrompt;
-  searchCandidatesFn: (endpoint: { host: string; port: number }, repoId: string, query: string, relatedPaths: string[]) => Promise<EngineSearchResponse>;
+  searchCandidatesFn: (
+    endpoint: { host: string; port: number },
+    repoId: string,
+    query: string,
+    relatedPaths: string[],
+  ) => Promise<EngineSearchResponse>;
 }
 
 const defaultDependencies: WorkerDependencies = {
@@ -197,7 +206,9 @@ async function postBackgroundHookSignal(
   }
 }
 
-function createBackgroundHookLeaseController(payload: WorkerPayload): BackgroundHookLeaseController {
+function createBackgroundHookLeaseController(
+  payload: WorkerPayload,
+): BackgroundHookLeaseController {
   if (!payload.background_hook_id) {
     return {
       finish: async () => {},
@@ -569,6 +580,11 @@ function buildExtractionPrompt(input: {
     'Extract durable memory actions from this transcript context.',
     'Return strict JSON only (no prose, no markdown fences) with this exact top-level shape:',
     '{"actions":[...]}',
+    '',
+    'Extraction strategy:',
+    '- Even when the transcript focuses on a specific flow (e.g. tests, a controller, a workflow), actively look for general principles that apply across the project. Phrases like "the core principle is...", "we use real X and only mock Y", "always do X", or similar project-wide guidance should be extracted as separate memories (typically memory_type=rule).',
+    '- Split composite content into multiple memories when it mixes distinct concepts. One memory per concept: e.g. a general principle (rule), a file/structure fact (fact), a workflow step (episode), an architectural choice (decision). Do not create a single "kitchen sink" memory that bundles unrelated ideas.',
+    '- memory_type guidance: rule = general principles, preferences, constraints, "how we do X"; fact = structural facts, file locations, exports, types; decision = architectural choices, trade-offs; episode = specific event, workflow step, or contextual detail.',
     '',
     'Allowed action contracts:',
     '- create: {"action":"create","confidence":0..1,"reason":"...","memory_type":"fact|rule|decision|episode","content":"...","tags":[...],"is_pinned":boolean,"path_matchers":[{"path_matcher":"..."}]}',
