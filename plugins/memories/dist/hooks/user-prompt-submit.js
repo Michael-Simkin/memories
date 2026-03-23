@@ -38,6 +38,122 @@ function writeFailOpenOutput() {
   writeHookOutput({ continue: true });
 }
 
+// src/shared/logger.ts
+var LOG_LEVEL_ORDER = {
+  debug: 10,
+  info: 20,
+  warn: 30,
+  error: 40
+};
+var REDACTION_PATTERNS = [
+  /sk-[A-Za-z0-9_-]{12,}/g,
+  /AIza[0-9A-Za-z\-_]{20,}/g,
+  /\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b/g,
+  /(?<=token[=:]\s?)[A-Za-z0-9._-]+/gi
+];
+function resolveLogLevel(raw) {
+  const normalized = raw?.trim().toLowerCase();
+  if (normalized === "debug" || normalized === "info" || normalized === "warn" || normalized === "error" || normalized === "silent") {
+    return normalized;
+  }
+  return "info";
+}
+var configuredLogLevel = resolveLogLevel(process.env.LOG_LEVEL);
+function shouldWrite(level) {
+  if (configuredLogLevel === "silent") {
+    return false;
+  }
+  return LOG_LEVEL_ORDER[level] >= LOG_LEVEL_ORDER[configuredLogLevel];
+}
+function redactString(value) {
+  let redacted = value;
+  for (const pattern of REDACTION_PATTERNS) {
+    redacted = redacted.replaceAll(pattern, "[REDACTED]");
+  }
+  return redacted;
+}
+function redactUnknown(value) {
+  if (typeof value === "string") {
+    return redactString(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactUnknown(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        redactUnknown(entry)
+      ])
+    );
+  }
+  return value;
+}
+function writeLog(level, message, data) {
+  if (!shouldWrite(level)) {
+    return;
+  }
+  const payload = {
+    at: (/* @__PURE__ */ new Date()).toISOString(),
+    level,
+    message: redactString(message),
+    ...data ? { data: redactUnknown(data) } : {}
+  };
+  process.stderr.write(`${JSON.stringify(payload)}
+`);
+}
+function logInfo(message, data) {
+  writeLog("info", message, data);
+}
+function logWarn(message, data) {
+  writeLog("warn", message, data);
+}
+function logError(message, data) {
+  writeLog("error", message, data);
+}
+
+// src/engine/ensure-engine.ts
+import { execFile as execFile2, spawn } from "child_process";
+import { closeSync, existsSync as existsSync2, openSync } from "fs";
+import { appendFile as appendFile2, readFile as readFile2, writeFile as writeFile2 } from "fs/promises";
+import { setTimeout as wait } from "timers/promises";
+import { promisify as promisify2 } from "util";
+
+// src/shared/fs-utils.ts
+import { appendFile, readFile, rename, rm, writeFile } from "fs/promises";
+import path from "path";
+async function readJsonFile(filePath) {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (error48) {
+    if (isErrnoException(error48) && error48.code === "ENOENT") {
+      return null;
+    }
+    throw error48;
+  }
+}
+async function removeFileIfExists(filePath) {
+  try {
+    await rm(filePath);
+  } catch (error48) {
+    if (!isErrnoException(error48) || error48.code !== "ENOENT") {
+      throw error48;
+    }
+  }
+}
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function isErrnoException(error48) {
+  return typeof error48 === "object" && error48 !== null && "code" in error48;
+}
+
 // ../../node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
@@ -805,10 +921,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path) {
-  if (!path)
+function getElementAtPath(obj, path4) {
+  if (!path4)
     return obj;
-  return path.reduce((acc, key) => acc?.[key], obj);
+  return path4.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -1191,11 +1307,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path, issues) {
+function prefixIssues(path4, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path);
+    iss.path.unshift(path4);
     return iss;
   });
 }
@@ -1378,7 +1494,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path = []) => {
+  const processError = (error49, path4 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1388,7 +1504,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path, ...issue2.path];
+        const fullpath = [...path4, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1420,8 +1536,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path) {
+  const path4 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path4) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13398,13 +13514,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path = ref.slice(1).split("/").filter(Boolean);
-  if (path.length === 0) {
+  const path4 = ref.slice(1).split("/").filter(Boolean);
+  if (path4.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path[0] === defsKey) {
-    const key = path[1];
+  if (path4[0] === defsKey) {
+    const key = path4[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -13806,6 +13922,534 @@ function date4(params) {
 // ../../node_modules/zod/v4/classic/external.js
 config(en_default());
 
+// src/shared/constants.ts
+var LOOPBACK_HOST = "127.0.0.1";
+var LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, "localhost", "::1"];
+var MEMORY_DB_FILE = "ai_memory.db";
+var ENGINE_LOCK_FILE = "engine.lock.json";
+var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
+var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
+var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
+var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
+
+// src/shared/lockfile.ts
+var lockMetadataSchema = external_exports.object({
+  host: external_exports.string().trim().min(1),
+  port: external_exports.number().int().min(1).max(65535),
+  pid: external_exports.number().int().positive(),
+  started_at: external_exports.string().min(1)
+});
+function isLoopback(host) {
+  return LOOPBACK_HOST_ALIASES.includes(host);
+}
+async function readLockMetadata(lockPath) {
+  const raw = await readJsonFile(lockPath);
+  if (!raw) {
+    return null;
+  }
+  const parsed = lockMetadataSchema.safeParse(raw);
+  if (!parsed.success) {
+    return null;
+  }
+  if (!isLoopback(parsed.data.host)) {
+    return null;
+  }
+  return parsed.data;
+}
+
+// src/shared/paths.ts
+import { mkdir } from "fs/promises";
+import os from "os";
+import path2 from "path";
+import { fileURLToPath } from "url";
+function resolvePluginRoot() {
+  const envPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (envPluginRoot && path2.isAbsolute(envPluginRoot)) {
+    return envPluginRoot;
+  }
+  const currentFilePath = fileURLToPath(import.meta.url);
+  const moduleDirectory = path2.dirname(currentFilePath);
+  return path2.resolve(moduleDirectory, "..", "..");
+}
+function getGlobalPaths() {
+  const memoriesDir = path2.join(os.homedir(), ".claude", "memories");
+  return {
+    memoriesDir,
+    dbPath: path2.join(memoriesDir, MEMORY_DB_FILE),
+    lockPath: path2.join(memoriesDir, ENGINE_LOCK_FILE),
+    startupLockPath: path2.join(memoriesDir, ENGINE_STARTUP_LOCK_FILE),
+    engineStderrPath: path2.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
+    eventLogPath: path2.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
+  };
+}
+async function ensureGlobalDirectories() {
+  const globalPaths = getGlobalPaths();
+  await mkdir(globalPaths.memoriesDir, { recursive: true });
+  return globalPaths;
+}
+
+// src/engine/node-runtime.ts
+import { execFile } from "child_process";
+import { existsSync, readdirSync } from "fs";
+import os2 from "os";
+import path3 from "path";
+import { promisify } from "util";
+var execFileAsync = promisify(execFile);
+var REQUIRED_ENGINE_NODE_MAJOR = 24;
+var NODE_PROBE_TIMEOUT_MS = 1500;
+function parseNodeMajor(version2) {
+  const majorText = version2.trim().replace(/^v/i, "").split(".")[0] ?? "";
+  const major = Number.parseInt(majorText, 10);
+  return Number.isFinite(major) ? major : Number.NaN;
+}
+function selectPreferredNodeRuntime(candidates) {
+  let preferred = null;
+  let fallback = null;
+  for (const candidate of candidates) {
+    const major = parseNodeMajor(candidate.version);
+    if (!Number.isFinite(major)) {
+      continue;
+    }
+    const descriptor = {
+      ...candidate,
+      major
+    };
+    if (major === REQUIRED_ENGINE_NODE_MAJOR) {
+      if (!preferred || compareNodeVersions(descriptor.version, preferred.version) > 0) {
+        preferred = descriptor;
+      }
+      continue;
+    }
+    if (major > REQUIRED_ENGINE_NODE_MAJOR) {
+      if (!fallback || compareNodeVersions(descriptor.version, fallback.version) > 0) {
+        fallback = descriptor;
+      }
+    }
+  }
+  return preferred ?? fallback;
+}
+async function resolveEngineNodeRuntime() {
+  const discovered = [];
+  for (const executable of candidateNodeExecutables()) {
+    const version2 = await probeNodeVersion(executable);
+    if (!version2) {
+      continue;
+    }
+    const major = parseNodeMajor(version2);
+    if (!Number.isFinite(major)) {
+      continue;
+    }
+    discovered.push({
+      executable,
+      version: version2,
+      major
+    });
+  }
+  const preferred = selectPreferredNodeRuntime(discovered);
+  if (preferred) {
+    return preferred;
+  }
+  const highestFound = [...discovered].sort(
+    (left, right) => compareNodeVersions(right.version, left.version)
+  )[0];
+  const highestDetail = highestFound ? `highest discovered runtime is v${highestFound.version} at ${highestFound.executable}` : "no candidate node runtime was discovered";
+  throw new Error(
+    `Node ${REQUIRED_ENGINE_NODE_MAJOR}.x is required for engine startup (${highestDetail}). Install it with \`nvm install ${REQUIRED_ENGINE_NODE_MAJOR}\` or set MEMORIES_NODE_BIN to an absolute Node ${REQUIRED_ENGINE_NODE_MAJOR} binary path.`
+  );
+}
+function compareNodeVersions(left, right) {
+  const leftParts = normalizeVersionParts(left);
+  const rightParts = normalizeVersionParts(right);
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
+}
+function normalizeVersionParts(version2) {
+  return version2.trim().replace(/^v/i, "").split(".").map((part) => Number.parseInt(part, 10)).filter((part) => Number.isFinite(part));
+}
+function dedupeCandidates(values) {
+  const seen = /* @__PURE__ */ new Set();
+  const ordered = [];
+  for (const rawValue of values) {
+    const value = rawValue.trim();
+    if (!value) {
+      continue;
+    }
+    const resolvedValue = path3.resolve(value);
+    if (seen.has(resolvedValue)) {
+      continue;
+    }
+    seen.add(resolvedValue);
+    ordered.push(resolvedValue);
+  }
+  return ordered;
+}
+function listVersionedNodeBins(rootDirectory) {
+  if (!existsSync(rootDirectory)) {
+    return [];
+  }
+  const versions = readdirSync(rootDirectory, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort((left, right) => compareNodeVersions(right, left));
+  return versions.map((version2) => path3.join(rootDirectory, version2, "bin", "node"));
+}
+function candidateNodeExecutables() {
+  const homeDirectory = os2.homedir();
+  const nvmDirectory = process.env.NVM_DIR || path3.join(homeDirectory, ".nvm");
+  return dedupeCandidates([
+    process.env.MEMORIES_NODE_BIN ?? "",
+    "/opt/homebrew/opt/node@24/bin/node",
+    "/usr/local/opt/node@24/bin/node",
+    process.env.NVM_BIN ? path3.join(process.env.NVM_BIN, "node") : "",
+    ...listVersionedNodeBins(path3.join(nvmDirectory, "versions", "node")),
+    ...listVersionedNodeBins(path3.join(homeDirectory, ".asdf", "installs", "nodejs")),
+    ...listVersionedNodeBins(path3.join(homeDirectory, ".volta", "tools", "image", "node")),
+    process.execPath,
+    "/opt/homebrew/bin/node",
+    "/usr/local/bin/node"
+  ]);
+}
+async function probeNodeVersion(executable) {
+  if (!existsSync(executable)) {
+    return null;
+  }
+  try {
+    const { stdout } = await execFileAsync(executable, ["-p", "process.versions.node"], {
+      timeout: NODE_PROBE_TIMEOUT_MS
+    });
+    const version2 = String(stdout).trim();
+    return version2 || null;
+  } catch {
+    return null;
+  }
+}
+
+// src/engine/ensure-engine.ts
+var ENGINE_UNAVAILABLE_PREFIX = "ENGINE_UNAVAILABLE";
+var DEFAULT_HEALTH_TIMEOUT_MS = 1e3;
+var DEFAULT_BOOT_TIMEOUT_MS = 45e3;
+var DEFAULT_BOOT_POLL_MS = 120;
+var DEFAULT_UNHEALTHY_ENGINE_GRACE_MS = 2e3;
+var DEFAULT_ENGINE_TERMINATION_TIMEOUT_MS = 5e3;
+var STARTUP_LOCK_STALE_MULTIPLIER = 2;
+var execFileAsync2 = promisify2(execFile2);
+function parseTimeoutMs(environmentName, fallback) {
+  const rawValue = process.env[environmentName];
+  if (!rawValue) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(rawValue.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+function engineUnavailable(message) {
+  return new Error(`${ENGINE_UNAVAILABLE_PREFIX}: ${message}`);
+}
+async function isEngineHealthy(endpoint) {
+  const timeoutMs = parseTimeoutMs("MEMORIES_ENGINE_HEALTH_TIMEOUT_MS", DEFAULT_HEALTH_TIMEOUT_MS);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`http://${endpoint.host}:${endpoint.port}/health`, {
+      method: "GET",
+      signal: controller.signal
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+async function readStartupLockMetadata(startupLockPath) {
+  try {
+    const raw = await readFile2(startupLockPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    const maybeMetadata = parsed;
+    if (typeof maybeMetadata.pid !== "number" || !Number.isInteger(maybeMetadata.pid) || maybeMetadata.pid <= 0 || typeof maybeMetadata.started_at !== "string" || maybeMetadata.started_at.trim().length === 0) {
+      return null;
+    }
+    return {
+      pid: maybeMetadata.pid,
+      started_at: maybeMetadata.started_at
+    };
+  } catch (error48) {
+    if (isErrnoException2(error48) && error48.code === "ENOENT") {
+      return null;
+    }
+    throw error48;
+  }
+}
+async function tryAcquireStartupLock(startupLockPath) {
+  const payload = {
+    pid: process.pid,
+    started_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  try {
+    await writeFile2(startupLockPath, `${JSON.stringify(payload, null, 2)}
+`, {
+      encoding: "utf8",
+      flag: "wx"
+    });
+    return true;
+  } catch (error48) {
+    if (isErrnoException2(error48) && error48.code === "EEXIST") {
+      return false;
+    }
+    throw error48;
+  }
+}
+async function clearStaleStartupLock(startupLockPath, staleAfterMs) {
+  const startupLock = await readStartupLockMetadata(startupLockPath);
+  if (!startupLock) {
+    await removeFileIfExists(startupLockPath);
+    return;
+  }
+  const startedAtMs = Date.parse(startupLock.started_at);
+  const staleByAge = !Number.isFinite(startedAtMs) || Date.now() - startedAtMs > staleAfterMs;
+  if (!isPidAlive(startupLock.pid) || staleByAge) {
+    await removeFileIfExists(startupLockPath);
+  }
+}
+async function readHealthyEndpointFromLock(lockPath) {
+  const lock = await readLockMetadata(lockPath);
+  if (!lock) {
+    return null;
+  }
+  if (!isPidAlive(lock.pid)) {
+    await removeFileIfExists(lockPath);
+    return null;
+  }
+  const endpoint = { host: lock.host, port: lock.port };
+  return await isEngineHealthy(endpoint) ? endpoint : null;
+}
+async function waitForExistingEngineRecovery(lockPath, pid, recoveryWindowMs, pollMs) {
+  const deadlineMs = Date.now() + recoveryWindowMs;
+  while (Date.now() < deadlineMs) {
+    const lock = await readLockMetadata(lockPath);
+    if (!lock || lock.pid !== pid) {
+      return readHealthyEndpointFromLock(lockPath);
+    }
+    const endpoint = await readHealthyEndpointFromLock(lockPath);
+    if (endpoint) {
+      return endpoint;
+    }
+    await wait(pollMs);
+  }
+  return null;
+}
+async function appendEngineStderrMarker(engineStderrPath, message) {
+  await appendFile2(engineStderrPath, `
+[${(/* @__PURE__ */ new Date()).toISOString()}] ${message}
+`, "utf8");
+}
+async function readLatestEngineStderrSummary(engineStderrPath) {
+  try {
+    const raw = await readFile2(engineStderrPath, "utf8");
+    const lines = raw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index];
+      if (!line) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(line);
+        const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
+        const detail = typeof parsed.data?.error === "string" ? parsed.data.error.trim() : "";
+        const combined = [message, detail].filter(Boolean).join(": ");
+        if (combined) {
+          return combined.replaceAll(/\s+/g, " ").trim();
+        }
+      } catch {
+        return line.replaceAll(/\s+/g, " ").trim();
+      }
+    }
+    return null;
+  } catch (error48) {
+    if (isErrnoException2(error48) && error48.code === "ENOENT") {
+      return null;
+    }
+    throw error48;
+  }
+}
+function normalizeCommand(command) {
+  return command.replaceAll("\\", "/").trim();
+}
+async function isEngineProcess(pid, engineEntrypoint) {
+  try {
+    const { stdout } = await execFileAsync2("ps", ["-p", String(pid), "-o", "command="]);
+    const command = normalizeCommand(String(stdout));
+    const normalizedEntrypoint = normalizeCommand(engineEntrypoint);
+    return command.includes(normalizedEntrypoint) || command.includes("/dist/engine/main.js");
+  } catch {
+    return false;
+  }
+}
+async function waitForPidExit(pid, timeoutMs, pollMs) {
+  const deadlineMs = Date.now() + timeoutMs;
+  while (Date.now() < deadlineMs) {
+    if (!isPidAlive(pid)) {
+      return true;
+    }
+    await wait(Math.max(50, Math.min(250, pollMs)));
+  }
+  return !isPidAlive(pid);
+}
+async function stopUnhealthyEngine(pid, engineEntrypoint, pollMs) {
+  if (!await isEngineProcess(pid, engineEntrypoint)) {
+    return false;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return !isPidAlive(pid);
+  }
+  const terminationTimeoutMs = parseTimeoutMs(
+    "MEMORIES_ENGINE_TERMINATION_TIMEOUT_MS",
+    DEFAULT_ENGINE_TERMINATION_TIMEOUT_MS
+  );
+  return waitForPidExit(pid, terminationTimeoutMs, pollMs);
+}
+function isErrnoException2(error48) {
+  return typeof error48 === "object" && error48 !== null && "code" in error48;
+}
+async function ensureEngine() {
+  const paths = await ensureGlobalDirectories();
+  const pluginRoot = resolvePluginRoot();
+  const engineEntrypoint = `${pluginRoot}/dist/engine/main.js`;
+  const maxWaitMs = parseTimeoutMs("MEMORIES_ENGINE_BOOT_TIMEOUT_MS", DEFAULT_BOOT_TIMEOUT_MS);
+  const pollMs = parseTimeoutMs("MEMORIES_ENGINE_BOOT_POLL_MS", DEFAULT_BOOT_POLL_MS);
+  const deadlineMs = Date.now() + maxWaitMs;
+  const healthyExisting = await readHealthyEndpointFromLock(paths.lockPath);
+  if (healthyExisting) {
+    return healthyExisting;
+  }
+  let startupLockAcquired = false;
+  while (!startupLockAcquired) {
+    const nextHealthyEndpoint = await readHealthyEndpointFromLock(paths.lockPath);
+    if (nextHealthyEndpoint) {
+      return nextHealthyEndpoint;
+    }
+    await clearStaleStartupLock(paths.startupLockPath, maxWaitMs * STARTUP_LOCK_STALE_MULTIPLIER);
+    startupLockAcquired = await tryAcquireStartupLock(paths.startupLockPath);
+    if (startupLockAcquired) {
+      break;
+    }
+    if (Date.now() >= deadlineMs) {
+      throw engineUnavailable(
+        `Another engine startup is already in progress and did not become healthy before timeout. See ${paths.engineStderrPath}.`
+      );
+    }
+    await wait(pollMs);
+  }
+  try {
+    const healthyEndpointAfterLock = await readHealthyEndpointFromLock(paths.lockPath);
+    if (healthyEndpointAfterLock) {
+      return healthyEndpointAfterLock;
+    }
+    if (!existsSync2(engineEntrypoint)) {
+      throw engineUnavailable(`Engine entrypoint missing at ${engineEntrypoint}. Run npm run build.`);
+    }
+    const existingLock = await readLockMetadata(paths.lockPath);
+    if (existingLock && isPidAlive(existingLock.pid)) {
+      const recoveredEndpoint = await waitForExistingEngineRecovery(
+        paths.lockPath,
+        existingLock.pid,
+        Math.min(
+          DEFAULT_UNHEALTHY_ENGINE_GRACE_MS,
+          Math.max(pollMs, deadlineMs - Date.now())
+        ),
+        pollMs
+      );
+      if (recoveredEndpoint) {
+        return recoveredEndpoint;
+      }
+      logWarn("Existing engine stayed unhealthy; attempting a verified restart", {
+        engineEntrypoint,
+        pid: existingLock.pid
+      });
+      const stopped = await stopUnhealthyEngine(existingLock.pid, engineEntrypoint, pollMs);
+      if (!stopped) {
+        throw engineUnavailable(
+          `Existing engine pid ${existingLock.pid} is alive but unhealthy; refusing to start a duplicate engine. See ${paths.engineStderrPath}.`
+        );
+      }
+      await removeFileIfExists(paths.lockPath);
+    } else if (existingLock) {
+      await removeFileIfExists(paths.lockPath);
+    }
+    let nodeRuntime;
+    try {
+      nodeRuntime = await resolveEngineNodeRuntime();
+    } catch (error48) {
+      throw engineUnavailable(error48 instanceof Error ? error48.message : String(error48));
+    }
+    await appendEngineStderrMarker(
+      paths.engineStderrPath,
+      `Launching global engine via ${nodeRuntime.executable} (v${nodeRuntime.version})`
+    );
+    const spawnState = {
+      exit: null,
+      failure: null
+    };
+    const stderrFd = openSync(paths.engineStderrPath, "a");
+    let child;
+    try {
+      child = spawn(nodeRuntime.executable, [engineEntrypoint], {
+        detached: true,
+        env: {
+          ...process.env,
+          CLAUDE_PLUGIN_ROOT: pluginRoot
+        },
+        stdio: ["ignore", "ignore", stderrFd]
+      });
+    } finally {
+      closeSync(stderrFd);
+    }
+    child.once("error", (spawnError) => {
+      spawnState.failure = spawnError;
+    });
+    child.once("exit", (code, signal) => {
+      spawnState.exit = { code, signal };
+    });
+    child.unref();
+    while (Date.now() < deadlineMs) {
+      if (spawnState.failure) {
+        throw engineUnavailable(
+          `Failed to spawn engine via ${nodeRuntime.executable}: ${spawnState.failure.message}. See ${paths.engineStderrPath}.`
+        );
+      }
+      const endpoint = await readHealthyEndpointFromLock(paths.lockPath);
+      if (endpoint) {
+        logInfo("Engine process is healthy", { ...endpoint });
+        return endpoint;
+      }
+      if (spawnState.exit) {
+        const exitDetail = spawnState.exit.signal ? `signal ${spawnState.exit.signal}` : `exit code ${spawnState.exit.code ?? "unknown"}`;
+        const stderrSummary = await readLatestEngineStderrSummary(paths.engineStderrPath);
+        throw engineUnavailable(
+          `Engine process exited before becoming healthy with ${exitDetail}.${stderrSummary ? ` Last engine log: ${stderrSummary}.` : ""} See ${paths.engineStderrPath}.`
+        );
+      }
+      await wait(pollMs);
+    }
+    throw engineUnavailable(
+      `Engine did not become healthy before timeout. See ${paths.engineStderrPath}.`
+    );
+  } finally {
+    if (startupLockAcquired) {
+      await removeFileIfExists(paths.startupLockPath);
+    }
+  }
+}
+
 // src/hooks/schemas.ts
 var sessionStartPayloadSchema = external_exports.object({
   cwd: external_exports.string().optional(),
@@ -13829,12 +14473,6 @@ var stopPayloadSchema = external_exports.object({
   last_assistant_message: external_exports.string().optional(),
   stop_hook_active: external_exports.boolean().optional()
 }).catchall(external_exports.unknown());
-var sessionEndPayloadSchema = external_exports.object({
-  cwd: external_exports.string().optional(),
-  project_root: external_exports.string().optional(),
-  reason: external_exports.string().trim().min(1).optional(),
-  session_id: external_exports.string().trim().min(1)
-}).catchall(external_exports.unknown());
 
 // src/hooks/user-prompt-submit.ts
 var userPromptSubmitAdditionalContext = [
@@ -13846,6 +14484,17 @@ var userPromptSubmitAdditionalContext = [
   "</memory-rules>"
 ].join("\n");
 async function handleUserPromptSubmit(_payload) {
+  try {
+    const endpoint = await ensureEngine();
+    await fetch(`http://${endpoint.host}:${endpoint.port}/stats`, {
+      signal: AbortSignal.timeout(2e3)
+    }).catch(() => {
+    });
+  } catch (error48) {
+    logError("UserPromptSubmit engine keepalive failed", {
+      error: error48 instanceof Error ? error48.message : String(error48)
+    });
+  }
   return {
     continue: true,
     hookSpecificOutput: {

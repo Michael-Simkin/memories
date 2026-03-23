@@ -2,17 +2,23 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 
 import {
+  cancelBackfill,
   createMemory,
   deleteMemory,
+  fetchBackfillStatus,
   fetchBackgroundHooks,
+  fetchExtractionStatus,
   fetchLogs,
   fetchMemories,
   fetchRepos,
   fetchStats,
   searchMemories,
+  shutdownEngine,
+  startBackfill,
   updateMemory,
 } from './api.js';
 import type {
+  BackfillState,
   BackgroundHook,
   EventLog,
   Memory,
@@ -21,7 +27,7 @@ import type {
   SearchMatchSource,
 } from './types.js';
 
-type Tab = 'memories' | 'hooks' | 'logs';
+type Tab = 'memories' | 'hooks' | 'logs' | 'backfill';
 const MIN_SEARCH_QUERY_LENGTH = 2;
 
 interface MemoryDraft {
@@ -282,6 +288,137 @@ function toDisplayMemoryFromSearch(result: MemorySearchResult): DisplayMemory {
   };
 }
 
+function BackfillPanel({ state, selectedRepoId, onStart, onCancel }: {
+  state: BackfillState | null;
+  selectedRepoId: string;
+  onStart: () => void;
+  onCancel: () => void;
+}) {
+  const [showConfirm, setShowConfirm] = useState(false);
+  const isForThisRepo = !state?.repoId || state.repoId === selectedRepoId;
+  const effectiveState = isForThisRepo ? state : null;
+  const status = effectiveState?.status ?? 'idle';
+  const isRunning = !['idle', 'done', 'error'].includes(status);
+  const phaseLabel: Record<string, string> = {
+    idle: 'Ready',
+    discovering: 'Discovering transcripts...',
+    phase1: 'Phase 1: Extracting candidates...',
+    phase2: 'Phase 2: Consolidating memories...',
+    done: 'Complete',
+    error: 'Error',
+  };
+
+  const p1 = effectiveState?.phase1;
+  const p2 = effectiveState?.phase2;
+  const totalCandidates = p1?.results.reduce((sum, r) => sum + (r.candidateCount ?? 0), 0) ?? 0;
+  const totalActions = p2?.results.reduce((sum, r) => sum + (r.actionsApplied ?? 0), 0) ?? 0;
+
+  const otherRepoRunning = state?.repoId && state.repoId !== selectedRepoId
+    && !['idle', 'done', 'error'].includes(state.status);
+
+  return (
+    <section className="backfill-panel">
+      <div className="section-header">
+        <h2>Backfill Historical Transcripts</h2>
+        {isRunning ? (
+          <button type="button" className="shutdown-btn" onClick={onCancel}>Cancel</button>
+        ) : (
+          <button type="button" disabled={!!otherRepoRunning} onClick={() => setShowConfirm(true)}>
+            {otherRepoRunning ? 'Backfill running on another repo' : 'Start Backfill'}
+          </button>
+        )}
+      </div>
+
+      {showConfirm ? (
+        <div className="modal-overlay" onClick={() => setShowConfirm(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Start Backfill?</h3>
+            <p>This will process all historical transcripts for the selected repository. It spawns multiple Claude instances and may consume a significant amount of tokens.</p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setShowConfirm(false)}>Cancel</button>
+              <button type="button" onClick={() => { setShowConfirm(false); onStart(); }}>Proceed</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="backfill-status">
+        <p className="backfill-phase">{phaseLabel[status] ?? status}</p>
+
+        {effectiveState?.discovery ? (
+          <p className="backfill-discovery">
+            Found {effectiveState.discovery.totalTranscripts} transcripts across {effectiveState.discovery.totalProjects} projects
+          </p>
+        ) : null}
+
+        {p1 && p1.total > 0 ? (
+          <div className="backfill-progress">
+            <div className="progress-label">
+              Phase 1: {p1.completed}/{p1.total} transcripts
+              {p1.running > 0 ? ` (${p1.running} running)` : ''}
+              {p1.failed > 0 ? ` (${p1.failed} failed)` : ''}
+              {totalCandidates > 0 ? ` — ${totalCandidates} candidates extracted` : ''}
+            </div>
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${(p1.completed / p1.total) * 100}%` }} />
+            </div>
+          </div>
+        ) : null}
+
+        {p2 && p2.total > 0 ? (
+          <div className="backfill-progress">
+            <div className="progress-label">
+              Phase 2: {p2.completed}/{p2.total} projects
+              {p2.running > 0 ? ` (${p2.running} running)` : ''}
+            </div>
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${(p2.completed / p2.total) * 100}%` }} />
+            </div>
+          </div>
+        ) : null}
+
+        {status === 'done' ? (
+          <p className="backfill-summary">{totalActions} memories created/updated across {p2?.completed ?? 0} projects</p>
+        ) : null}
+      </div>
+
+      {p2 && p2.results.length > 0 ? (
+        <div className="backfill-results">
+          <h3>Project Results</h3>
+          <ul className="backfill-list">
+            {p2.results.map((r) => (
+              <li key={r.repoId} className={`backfill-item backfill-${r.status}`}>
+                <span className="backfill-repo">{r.repoId.slice(0, 12)}</span>
+                <span className="backfill-item-status">{r.status}</span>
+                {r.candidateInputCount != null ? <span>{r.candidateInputCount} candidates</span> : null}
+                {r.actionsApplied != null ? <span>{r.actionsApplied} applied</span> : null}
+                {r.error ? <span className="backfill-error">{r.error}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {p1 && p1.results.length > 0 ? (
+        <div className="backfill-results">
+          <h3>Transcript Results ({p1.completed}/{p1.total})</h3>
+          <ul className="backfill-list">
+            {p1.results.slice(0, 50).map((r) => (
+              <li key={r.sessionId} className={`backfill-item backfill-${r.status}`}>
+                <span className="backfill-session">{r.sessionId.slice(0, 8)}</span>
+                <span className="backfill-item-status">{r.status}</span>
+                {r.candidateCount != null ? <span>{r.candidateCount} candidates</span> : null}
+                {r.error ? <span className="backfill-error">{r.error}</span> : null}
+              </li>
+            ))}
+            {p1.results.length > 50 ? <li className="backfill-item">...and {p1.results.length - 50} more</li> : null}
+          </ul>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function formatRepoLabel(label: string): string {
   if (label.includes('/')) {
     const parts = label.split('/');
@@ -302,6 +439,7 @@ export function App() {
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(() => new Set());
   const [selectedRepoId, setSelectedRepoId] = useState<string | null>(null);
   const [repoFilter, setRepoFilter] = useState('');
+  const [shuttingDown, setShuttingDown] = useState(false);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -340,6 +478,20 @@ export function App() {
     refetchInterval: 2000,
   });
 
+  const extractionStatusQuery = useQuery({
+    queryKey: ['extraction-status'],
+    queryFn: fetchExtractionStatus,
+    refetchInterval: 2000,
+  });
+
+  const extractionState = useMemo(() => {
+    if (!selectedRepoId || !extractionStatusQuery.data) return null;
+    const { active, queue } = extractionStatusQuery.data;
+    if (active?.repo_id === selectedRepoId) return 'extracting' as const;
+    if (queue.some((job) => job.repo_id === selectedRepoId)) return 'queued' as const;
+    return null;
+  }, [selectedRepoId, extractionStatusQuery.data]);
+
   const backgroundHooksQuery = useQuery({
     queryKey: ['background-hooks'],
     queryFn: fetchBackgroundHooks,
@@ -366,6 +518,13 @@ export function App() {
     queryFn: () => fetchLogs(300),
     enabled: activeTab === 'logs',
     refetchInterval: activeTab === 'logs' ? 1000 : false,
+  });
+
+  const backfillQuery = useQuery({
+    queryKey: ['backfill-status'],
+    queryFn: fetchBackfillStatus,
+    enabled: activeTab === 'backfill',
+    refetchInterval: activeTab === 'backfill' ? 1000 : false,
   });
 
   const createMutation = useMutation({
@@ -406,6 +565,46 @@ export function App() {
   }, [memoryRows]);
 
   const logs = logsQuery.data ?? [];
+
+  interface GroupedLog {
+    log: EventLog;
+    children: EventLog[];
+  }
+
+  const groupedLogs = useMemo((): GroupedLog[] => {
+    const hookMap = new Map<string, GroupedLog>();
+    const groupedChildIds = new Set<number>();
+
+    for (const log of logs) {
+      if (log.kind === 'hook' && log.data?.hook_id && typeof log.data.hook_id === 'string') {
+        hookMap.set(log.data.hook_id, { log, children: [] });
+      }
+    }
+
+    for (let i = 0; i < logs.length; i++) {
+      const log = logs[i]!;
+      if (log.kind === 'operation' && log.data?.hook_id && typeof log.data.hook_id === 'string') {
+        const parent = hookMap.get(log.data.hook_id);
+        if (parent) {
+          parent.children.push(log);
+          groupedChildIds.add(i);
+        }
+      }
+    }
+
+    const result: GroupedLog[] = [];
+    for (let i = 0; i < logs.length; i++) {
+      if (groupedChildIds.has(i)) continue;
+      const log = logs[i]!;
+      const hookId = log.data?.hook_id;
+      if (log.kind === 'hook' && typeof hookId === 'string' && hookMap.has(hookId)) {
+        result.push(hookMap.get(hookId)!);
+      } else {
+        result.push({ log, children: [] });
+      }
+    }
+    return result;
+  }, [logs]);
   const backgroundHooks = backgroundHooksQuery.data?.items ?? [];
   const backgroundHooksNowMs = backgroundHooksQuery.data
     ? Date.parse(backgroundHooksQuery.data.meta.now)
@@ -472,7 +671,29 @@ export function App() {
         <span>Uptime: {statsQuery.data ? Math.floor(statsQuery.data.uptime_ms / 1000) : '—'}s</span>
         <span>Idle: {statsQuery.data ? Math.floor(statsQuery.data.idle_remaining_ms / 1000) : '—'}s</span>
         <span>{statsQuery.data?.online ? 'Online' : 'Offline'}</span>
+        <button
+          type="button"
+          className="shutdown-btn"
+          disabled={shuttingDown}
+          onClick={() => {
+            setShuttingDown(true);
+            void shutdownEngine().catch(() => {
+              setShuttingDown(false);
+            });
+          }}
+        >
+          {shuttingDown ? 'Shutting down…' : 'Shutdown'}
+        </button>
       </header>
+
+      {extractionState ? (
+        <div className={`extraction-banner ${extractionState}`}>
+          <span className="extraction-indicator" />
+          {extractionState === 'extracting'
+            ? 'Extracting memories from conversation...'
+            : 'Extraction queued, waiting for current job...'}
+        </div>
+      ) : null}
 
       <nav className="tabs">
         <button
@@ -495,6 +716,13 @@ export function App() {
           onClick={() => setActiveTab('logs')}
         >
           Logs
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'backfill' ? 'active' : ''}
+          onClick={() => setActiveTab('backfill')}
+        >
+          Backfill
         </button>
       </nav>
 
@@ -646,7 +874,7 @@ export function App() {
             )}
           </div>
         </section>
-      ) : (
+      ) : activeTab === 'logs' ? (
         <section>
           <div className="section-header">
             <h2>Logs</h2>
@@ -659,25 +887,28 @@ export function App() {
               <p>No logs yet.</p>
             ) : (
               <ul className="log-list">
-                {logs.map((log, index) => {
+                {groupedLogs.map((group, index) => {
+                  const log = group.log;
                   const logId = `${log.at}-${log.event}-${index}`;
                   const expanded = expandedLogs.has(logId);
 
                   return (
                     <li
                       key={logId}
-                      className={`log-item ${expanded ? 'is-expanded' : ''}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => toggleExpandedLog(logId)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          toggleExpandedLog(logId);
-                        }
-                      }}
+                      className={`log-item ${expanded ? 'is-expanded' : ''} ${group.children.length > 0 ? 'has-children' : ''}`}
                     >
-                      <div className="log-item-line">
+                      <div
+                        className="log-item-line"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => toggleExpandedLog(logId)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            toggleExpandedLog(logId);
+                          }
+                        }}
+                      >
                         <span className="log-caret" aria-hidden="true">
                           {expanded ? '▾' : '▸'}
                         </span>
@@ -685,6 +916,9 @@ export function App() {
                         <span className={`log-badge status-${log.status}`}>{log.status}</span>
                         <strong className="log-event">{log.event}</strong>
                         <span className="log-summary">{oneLineLogMessage(log)}</span>
+                        {group.children.length > 0 ? (
+                          <span className="log-badge log-child-count">{group.children.length}</span>
+                        ) : null}
                         <span className="log-time">{new Date(log.at).toLocaleString()}</span>
                       </div>
                       {expanded ? (
@@ -707,6 +941,66 @@ export function App() {
                           )}
                         </div>
                       ) : null}
+                      {group.children.length > 0 && expanded ? (
+                        <ul className="log-children">
+                          {group.children.map((child, childIndex) => {
+                            const childId = `${child.at}-${child.event}-${index}-${childIndex}`;
+                            const childExpanded = expandedLogs.has(childId);
+                            return (
+                              <li
+                                key={childId}
+                                className={`log-item log-child ${childExpanded ? 'is-expanded' : ''}`}
+                              >
+                                <div
+                                  className="log-item-line"
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    toggleExpandedLog(childId);
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      toggleExpandedLog(childId);
+                                    }
+                                  }}
+                                >
+                                  <span className="log-caret" aria-hidden="true">
+                                    {childExpanded ? '▾' : '▸'}
+                                  </span>
+                                  <span className={`log-badge source-${child.kind}`}>{child.kind}</span>
+                                  <span className={`log-badge status-${child.status}`}>{child.status}</span>
+                                  <strong className="log-event">{child.event}</strong>
+                                  <span className="log-summary">{oneLineLogMessage(child)}</span>
+                                  <span className="log-time">{new Date(child.at).toLocaleString()}</span>
+                                </div>
+                                {childExpanded ? (
+                                  <div className="log-expanded">
+                                    {child.detail ? <p className="log-detail">{child.detail}</p> : null}
+                                    {child.memory_id ? (
+                                      <p className="log-meta">
+                                        <span>memory: {child.memory_id}</span>
+                                      </p>
+                                    ) : null}
+                                    {child.session_id ? (
+                                      <p className="log-meta">
+                                        <span>session: {child.session_id}</span>
+                                      </p>
+                                    ) : null}
+                                    {child.data ? (
+                                      <pre className="log-data">{JSON.stringify(child.data, null, 2)}</pre>
+                                    ) : (
+                                      <p className="log-empty-payload">No payload</p>
+                                    )}
+                                  </div>
+                                ) : null}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : null}
                     </li>
                   );
                 })}
@@ -714,7 +1008,18 @@ export function App() {
             )}
           </div>
         </section>
-      )}
+      ) : activeTab === 'backfill' ? (
+        selectedRepoId ? (
+          <BackfillPanel
+            state={backfillQuery.data ?? null}
+            selectedRepoId={selectedRepoId}
+            onStart={() => { void startBackfill(selectedRepoId).then(() => backfillQuery.refetch()); }}
+            onCancel={() => { void cancelBackfill().then(() => backfillQuery.refetch()); }}
+          />
+        ) : (
+          <section><p>Select a repository from the sidebar to run backfill.</p></section>
+        )
+      ) : null}
 
       {creating ? (
         <MemoryModal

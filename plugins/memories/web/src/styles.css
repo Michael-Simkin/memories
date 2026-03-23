@@ -122,6 +122,69 @@ body {
   padding: 8px 10px;
 }
 
+.shutdown-btn {
+  background: #4a1c2a;
+  border: 1px solid #6a3240;
+  border-radius: 8px;
+  color: #ffd8e0;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 8px 14px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.shutdown-btn:hover:not(:disabled) {
+  background: #5e2435;
+  border-color: #8a4455;
+}
+
+.shutdown-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.extraction-banner {
+  align-items: center;
+  border-radius: 8px;
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+}
+
+.extraction-banner.extracting {
+  background: #1a2a1e;
+  border: 1px solid #2d5a3a;
+  color: #7fd49a;
+}
+
+.extraction-banner.queued {
+  background: #2a2518;
+  border: 1px solid #5a4a2d;
+  color: #d4b87f;
+}
+
+.extraction-indicator {
+  animation: pulse 1.5s ease-in-out infinite;
+  background: currentColor;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  height: 8px;
+  width: 8px;
+}
+
+.extraction-banner.queued .extraction-indicator {
+  animation: none;
+  opacity: 0.5;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
 .tabs {
   display: flex;
   gap: 8px;
@@ -610,6 +673,28 @@ body {
   margin: 0;
 }
 
+.log-children {
+  border-left: 2px solid #2d3a5e;
+  display: grid;
+  gap: 3px;
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0 0 0 14px;
+}
+
+.log-child {
+  font-size: 11px;
+}
+
+.log-child-count {
+  background: #2b3560;
+  color: #9fb0da;
+}
+
+.log-item.has-children {
+  border-color: #3a4875;
+}
+
 .modal-overlay {
   align-items: center;
   background: rgba(2, 4, 10, 0.7);
@@ -715,4 +800,103 @@ body {
 
 .error-text {
   color: #ff9090;
+}
+
+.backfill-panel {
+  padding: 0 4px;
+}
+
+.backfill-status {
+  margin-bottom: 16px;
+}
+
+.backfill-phase {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.backfill-discovery {
+  color: #8a94b8;
+  margin-bottom: 8px;
+}
+
+.backfill-summary {
+  color: #90eeb0;
+  font-weight: 600;
+}
+
+.backfill-progress {
+  margin-bottom: 10px;
+}
+
+.progress-label {
+  font-size: 0.85em;
+  color: #8a94b8;
+  margin-bottom: 4px;
+}
+
+.progress-bar {
+  height: 8px;
+  background: #1a1f35;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #5b7fff;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.backfill-results {
+  margin-top: 16px;
+}
+
+.backfill-results h3 {
+  font-size: 0.95em;
+  margin-bottom: 8px;
+  color: #8a94b8;
+}
+
+.backfill-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.backfill-item {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 0.85em;
+  padding: 6px 10px;
+  background: #161b2e;
+  border-radius: 4px;
+}
+
+.backfill-item-status {
+  font-weight: 600;
+  min-width: 60px;
+}
+
+.backfill-done .backfill-item-status { color: #90eeb0; }
+.backfill-running .backfill-item-status { color: #ffd666; }
+.backfill-error .backfill-item-status { color: #ff9090; }
+.backfill-pending .backfill-item-status { color: #8a94b8; }
+
+.backfill-repo,
+.backfill-session {
+  font-family: monospace;
+  color: #7b8abf;
+}
+
+.backfill-error {
+  color: #ff9090;
+  font-size: 0.85em;
 }

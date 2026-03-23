@@ -4,6 +4,8 @@ import {
   writeFailOpenOutput,
   writeHookOutput,
 } from '../shared/hook-io.js';
+import { logError } from '../shared/logger.js';
+import { ensureEngine } from '../engine/ensure-engine.js';
 import { type UserPromptSubmitPayload, userPromptSubmitPayloadSchema } from './schemas.js';
 
 export const userPromptSubmitAdditionalContext = [
@@ -18,6 +20,17 @@ export const userPromptSubmitAdditionalContext = [
 export async function handleUserPromptSubmit(
   _payload: UserPromptSubmitPayload,
 ): Promise<HookResult> {
+  try {
+    const endpoint = await ensureEngine();
+    await fetch(`http://${endpoint.host}:${endpoint.port}/stats`, {
+      signal: AbortSignal.timeout(2000),
+    }).catch(() => {});
+  } catch (error) {
+    logError('UserPromptSubmit engine keepalive failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   return {
     continue: true,
     hookSpecificOutput: {

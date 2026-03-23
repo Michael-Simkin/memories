@@ -19,8 +19,7 @@ export default defineConfig({
   entry: {
     'engine/main': 'src/engine/main.ts',
     'extraction/run': 'src/extraction/run.ts',
-    'hooks/session-end': 'src/hooks/session-end.ts',
-    'hooks/session-start': 'src/hooks/session-start.ts',
+'hooks/session-start': 'src/hooks/session-start.ts',
     'hooks/stop': 'src/hooks/stop.ts',
     'hooks/user-prompt-submit': 'src/hooks/user-prompt-submit.ts',
     'mcp/search-server': 'src/mcp/search-server.ts',

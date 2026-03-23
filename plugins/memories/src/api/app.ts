@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -12,6 +14,7 @@ import {
   DEFAULT_BACKGROUND_HOOK_SWEEP_INTERVAL_MS,
   DEFAULT_IDLE_CHECK_INTERVAL_MS,
   DEFAULT_IDLE_TIMEOUT_MS,
+  LOOPBACK_HOST,
   OLLAMA_PROFILE_CONFIG,
   resolveOllamaProfile,
 } from '../shared/constants.js';
@@ -26,6 +29,7 @@ import {
   updateMemoryInputSchema,
 } from '../shared/types.js';
 import { MemoryStore } from '../storage/database.js';
+import { BackfillOrchestrator } from '../backfill/orchestrator.js';
 import { sendError } from './errors.js';
 
 export interface EngineAppOptions {
@@ -36,6 +40,7 @@ export interface EngineAppOptions {
   port: number;
   sqliteVecExtensionPath: string | null;
   onIdleTimeout: () => Promise<void>;
+  onShutdownRequest?: () => Promise<void>;
   idleTimeoutMs?: number;
   idleCheckIntervalMs?: number;
   backgroundHookPolicy?: Partial<{
@@ -94,6 +99,14 @@ const backgroundHookFinishSchema = z.object({
   pid: z.number().int().positive().optional(),
 });
 
+const extractionEnqueueSchema = z.object({
+  transcript_path: z.string().trim().min(1),
+  project_root: z.string().trim().min(1),
+  repo_id: z.string().trim().min(1),
+  session_id: z.string().trim().min(1).optional(),
+  last_assistant_message: z.string().optional(),
+});
+
 interface ActiveBackgroundHook {
   id: string;
   hook_name: string;
@@ -135,6 +148,9 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
   const activeBackgroundHooks = new Map<string, ActiveBackgroundHook>();
   let lastInteractionAtMs = Date.now();
   let idleShutdownTriggered = false;
+  const extractionQueue: z.infer<typeof extractionEnqueueSchema>[] = [];
+  let activeExtractionChild: ReturnType<typeof spawn> | null = null;
+  let activeExtractionJob: z.infer<typeof extractionEnqueueSchema> | null = null;
 
   function resetIdleTimer(): void {
     lastInteractionAtMs = Date.now();
@@ -248,6 +264,77 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
     }
   }
 
+  function processNextExtraction(): void {
+    if (activeExtractionChild || extractionQueue.length === 0) {
+      return;
+    }
+
+    const job = extractionQueue.shift()!;
+    activeExtractionJob = job;
+    const backgroundHookId = randomUUID();
+    const now = Date.now();
+
+    const hook: ActiveBackgroundHook = {
+      id: backgroundHookId,
+      hook_name: 'extraction',
+      startedAtMs: now,
+      lastHeartbeatAtMs: now,
+      staleAtMs: now + backgroundHookPolicy.heartbeatTimeoutMs,
+      hardTimeoutAtMs: now + backgroundHookPolicy.maxRuntimeMs,
+      ...(job.session_id ? { session_id: job.session_id } : {}),
+    };
+    activeBackgroundHooks.set(backgroundHookId, hook);
+    void appendBackgroundHookLifecycleEvent('background-hook/start', hook, 'ok');
+
+    const handoff = {
+      background_hook_id: backgroundHookId,
+      endpoint: { host: LOOPBACK_HOST, port: options.port },
+      ...job,
+    };
+    const encoded = Buffer.from(JSON.stringify(handoff), 'utf8').toString('base64');
+    const workerPath = path.join(options.pluginRoot, 'dist', 'extraction', 'run.js');
+
+    const child = spawn(process.execPath, [workerPath, '--handoff', encoded], {
+      stdio: 'ignore',
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: options.pluginRoot },
+    });
+
+    if (typeof child.pid === 'number') {
+      hook.pid = child.pid;
+    }
+
+    activeExtractionChild = child;
+    let exited = false;
+
+    const onChildExit = () => {
+      if (exited) {
+        return;
+      }
+      exited = true;
+      const finished = activeBackgroundHooks.get(backgroundHookId);
+      if (finished) {
+        activeBackgroundHooks.delete(backgroundHookId);
+        void appendBackgroundHookLifecycleEvent(
+          'background-hook/finish',
+          finished,
+          'ok',
+          'extraction worker exited',
+        );
+      }
+      activeExtractionChild = null;
+      activeExtractionJob = null;
+      processNextExtraction();
+    };
+
+    child.on('close', onChildExit);
+    child.on('error', (error) => {
+      logError('Extraction worker spawn error', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      onChildExit();
+    });
+  }
+
   const backgroundHookSweepTimer = setInterval(() => {
     void sweepExpiredBackgroundHooks().catch((error) => {
       logError('Background hook sweep failed', {
@@ -279,6 +366,49 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
       ok: true,
       port: options.port,
     });
+  });
+
+  app.post('/shutdown', async (_request: Request, response: Response) => {
+    if (!options.onShutdownRequest) {
+      return sendError(response, 501, 'NOT_CONFIGURED', 'Shutdown callback not configured');
+    }
+    response.json({ status: 'shutting_down' });
+    response.once('finish', () => {
+      void options.onShutdownRequest!().catch((error) => {
+        logError('Shutdown request callback failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    });
+  });
+
+  const backfillOrchestrator = new BackfillOrchestrator(
+    { host: LOOPBACK_HOST, port: options.port },
+    options.pluginRoot,
+  );
+
+  app.post('/backfill/start', (request: Request, response: Response) => {
+    const repoId = (request.body as Record<string, unknown>)?.repo_id;
+    if (typeof repoId !== 'string' || !repoId.trim()) {
+      return sendError(response, 400, 'MISSING_REPO_ID', 'repo_id is required');
+    }
+    if (backfillOrchestrator.isRunning()) {
+      return sendError(response, 409, 'ALREADY_RUNNING', 'Backfill is already in progress');
+    }
+    void backfillOrchestrator.run(repoId);
+    response.json({ status: 'started' });
+  });
+
+  app.get('/backfill/status', (_request: Request, response: Response) => {
+    response.json(backfillOrchestrator.getState());
+  });
+
+  app.post('/backfill/cancel', (_request: Request, response: Response) => {
+    if (!backfillOrchestrator.isRunning()) {
+      return sendError(response, 400, 'NOT_RUNNING', 'No backfill in progress');
+    }
+    backfillOrchestrator.cancel();
+    response.json({ status: 'cancelled' });
   });
 
   app.get('/stats', async (_request: Request, response: Response) => {
@@ -409,6 +539,34 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
       parsedBody.data.detail,
     );
     return response.json({ active: false, ok: true });
+  });
+
+  app.get('/extraction/status', (_request: Request, response: Response) => {
+    const summary = (job: z.infer<typeof extractionEnqueueSchema>) => ({
+      repo_id: job.repo_id,
+      transcript_path: job.transcript_path,
+      ...(job.session_id ? { session_id: job.session_id } : {}),
+    });
+    return response.json({
+      active: activeExtractionJob ? summary(activeExtractionJob) : null,
+      queue: extractionQueue.map(summary),
+    });
+  });
+
+  app.post('/extraction/enqueue', (request: Request, response: Response) => {
+    const parsed = extractionEnqueueSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendError(response, 400, 'INVALID_PAYLOAD', parsed.error.message);
+    }
+
+    const existingIndex = extractionQueue.findIndex((job) => job.repo_id === parsed.data.repo_id);
+    if (existingIndex !== -1) {
+      extractionQueue[existingIndex] = parsed.data;
+    } else {
+      extractionQueue.push(parsed.data);
+    }
+    processNextExtraction();
+    return response.status(202).json({ ok: true });
   });
 
   app.get('/memories/pinned', (request: Request, response: Response) => {
@@ -599,6 +757,12 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
     close: () => {
       clearInterval(backgroundHookSweepTimer);
       clearInterval(idleCheckTimer);
+      extractionQueue.length = 0;
+      activeExtractionJob = null;
+      if (activeExtractionChild) {
+        activeExtractionChild.kill();
+        activeExtractionChild = null;
+      }
       store.close();
     },
   };

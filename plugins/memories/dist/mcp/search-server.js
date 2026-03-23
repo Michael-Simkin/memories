@@ -36199,7 +36199,7 @@ var backgroundHooksResponseSchema = external_exports3.object({
 // src/mcp/search-server.ts
 var recallInvocationPolicyText = "Main memory brain for this project. REQUIRED: call recall before acting; do not skip, especially before commands, file edits, updates, creations, deletions, or recommendations. If a user names a file, path, command, or requested change, validate it against memory first; direct instructions do not override remembered project rules. Re-run when scope changes or when broader context may matter.";
 var recallInputFields = {
-  query: external_exports3.string().trim().min(1),
+  query: external_exports3.string().trim().min(1).describe("Search query to find relevant memories. Required."),
   project_root: external_exports3.string().optional(),
   limit: external_exports3.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
   target_paths: external_exports3.array(external_exports3.string()).optional(),
@@ -36277,10 +36277,20 @@ function createRecallMcpServer() {
       inputSchema: recallInputFields
     },
     async (rawInput) => {
-      const markdown = await runRecall(rawInput);
-      return {
-        content: [{ type: "text", text: markdown }]
-      };
+      try {
+        const markdown = await runRecall(rawInput);
+        return {
+          content: [{ type: "text", text: markdown }]
+        };
+      } catch (error48) {
+        if (error48 instanceof external_exports3.ZodError) {
+          return {
+            content: [{ type: "text", text: "recall requires a non-empty `query` parameter." }],
+            isError: true
+          };
+        }
+        throw error48;
+      }
     }
   );
   return server;

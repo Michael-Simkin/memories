@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { ZodError } from 'zod';
 
 import { DEFAULT_BACKGROUND_HOOK_HEARTBEAT_INTERVAL_MS } from '../shared/constants.js';
 import { normalizePathForMatch } from '../shared/fs-utils.js';
+import { filterTranscriptLines } from '../shared/transcript-filter.js';
 import { logError } from '../shared/logger.js';
 import { appendEventLog } from '../shared/logs.js';
 import { getGlobalPaths } from '../shared/paths.js';
@@ -18,26 +19,6 @@ import {
 } from './contracts.js';
 
 export const CONFIDENCE_THRESHOLD = 0.75;
-
-interface EngineSearchResponse {
-  meta: {
-    duration_ms: number;
-    query: string;
-    returned: number;
-    source: string;
-  };
-  results: Array<{
-    id: string;
-    memory_type: string;
-    content: string;
-    tags: string[];
-    is_pinned: boolean;
-    path_matchers: string[];
-    score: number;
-    source: string;
-    updated_at: string;
-  }>;
-}
 
 interface ClaudeRunResult {
   code: number;
@@ -58,8 +39,9 @@ interface ActionApplyError {
 type ActionApplyOutcome = ActionApplyResult | ActionApplyError;
 
 interface WorkerContext {
+  filteredTranscriptPath: string;
+  last3Interactions: string;
   relatedPaths: string[];
-  transcriptSnippet: string;
 }
 
 interface ExtractionParseDebugInfo {
@@ -93,22 +75,15 @@ interface WorkerDependencies {
     repoId: string,
     action: WorkerAction,
   ) => Promise<ActionApplyOutcome>;
-  readTranscriptContextFn: typeof readTranscriptContext;
+  prepareTranscriptContextFn: typeof prepareTranscriptContext;
   runClaudeFn: typeof runClaudePrompt;
-  searchCandidatesFn: (
-    endpoint: { host: string; port: number },
-    repoId: string,
-    query: string,
-    relatedPaths: string[],
-  ) => Promise<EngineSearchResponse>;
 }
 
 const defaultDependencies: WorkerDependencies = {
   appendEventLogFn: appendEventLog,
   applyActionFn: applyAction,
-  readTranscriptContextFn: readTranscriptContext,
+  prepareTranscriptContextFn: prepareTranscriptContext,
   runClaudeFn: runClaudePrompt,
-  searchCandidatesFn: searchCandidates,
 };
 
 function summarizeClaudeRunResult(result: ClaudeRunResult): Record<string, unknown> {
@@ -124,6 +99,20 @@ function summarizeClaudeRunResult(result: ClaudeRunResult): Record<string, unkno
     stdout_preview: summarizeTextPreview(result.stdout, CLAUDE_OUTPUT_PREVIEW_MAX_CHARS),
     stdout_tail_preview: summarizeTextTailPreview(result.stdout, CLAUDE_OUTPUT_PREVIEW_MAX_CHARS),
     stdout_sha256: sha256(result.stdout),
+  };
+}
+
+function buildLogData(
+  payload: WorkerPayload,
+  extra?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const hookId = payload.background_hook_id;
+  if (!hookId && !extra) {
+    return undefined;
+  }
+  return {
+    ...(hookId ? { hook_id: hookId } : {}),
+    ...extra,
   };
 }
 
@@ -179,12 +168,6 @@ function countLines(text: string): number {
   return text.split('\n').length;
 }
 
-export function buildClaudeProcessEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return {
-    ...baseEnv,
-    CLAUDE_CODE_SIMPLE: '1',
-  };
-}
 
 interface BackgroundHookLeaseController {
   finish: (status: 'ok' | 'error' | 'skipped', detail?: string) => Promise<void>;
@@ -297,45 +280,43 @@ export async function executeWorker(
     kind: 'operation',
     status: 'ok',
     ...(payload.session_id ? { session_id: payload.session_id } : {}),
+    ...(buildLogData(payload) ? { data: buildLogData(payload) } : {}),
   });
 
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? path.dirname(path.dirname(__filename));
+  let filteredTranscriptPath: string | undefined;
+
   try {
-    const context = await dependencies.readTranscriptContextFn(
+    const context = await dependencies.prepareTranscriptContextFn(
       payload.transcript_path,
       payload.project_root,
+      payload.session_id,
     );
-    const candidateQuery =
-      payload.last_assistant_message?.trim() || context.transcriptSnippet.slice(0, 500);
-    const candidates = await dependencies.searchCandidatesFn(
-      payload.endpoint,
-      payload.repo_id,
-      candidateQuery,
-      context.relatedPaths,
-    );
+    filteredTranscriptPath = context.filteredTranscriptPath;
     await dependencies.appendEventLogFn(projectPaths.eventLogPath, {
       at: new Date().toISOString(),
       event: 'extraction/context',
       kind: 'operation',
       status: 'ok',
       ...(payload.session_id ? { session_id: payload.session_id } : {}),
-      data: {
-        candidate_query_chars: candidateQuery.length,
-        candidate_results: candidates.results.length,
+      data: buildLogData(payload, {
         related_path_count: context.relatedPaths.length,
         transcript_path: payload.transcript_path,
-        transcript_snippet_chars: context.transcriptSnippet.length,
-      },
+        filtered_transcript_path: context.filteredTranscriptPath,
+        last3_interactions_chars: context.last3Interactions.length,
+      }),
     });
     const prompt = buildExtractionPrompt({
-      transcriptSnippet: context.transcriptSnippet,
+      last3Interactions: context.last3Interactions,
+      filteredTranscriptPath: context.filteredTranscriptPath,
       relatedPaths: context.relatedPaths,
-      candidateMemories: candidates.results,
+      projectRoot: payload.project_root,
       ...(payload.last_assistant_message
         ? { lastAssistantMessage: payload.last_assistant_message }
         : {}),
     });
 
-    const claudeResult = await dependencies.runClaudeFn(prompt, payload.project_root);
+    const claudeResult = await dependencies.runClaudeFn(prompt, payload.project_root, pluginRoot);
     const claudeRunSummary = summarizeClaudeRunResult(claudeResult);
     await dependencies.appendEventLogFn(projectPaths.eventLogPath, {
       at: new Date().toISOString(),
@@ -346,7 +327,7 @@ export async function executeWorker(
       ...(claudeResult.code === 0
         ? {}
         : { detail: `claude exited with status ${claudeResult.code}` }),
-      data: claudeRunSummary,
+      data: buildLogData(payload, claudeRunSummary),
     });
     if (claudeResult.code !== 0) {
       throw new Error(`Claude exited with status ${claudeResult.code}: ${claudeResult.stderr}`);
@@ -363,7 +344,7 @@ export async function executeWorker(
         status: 'error',
         ...(payload.session_id ? { session_id: payload.session_id } : {}),
         detail: error instanceof Error ? error.message : String(error),
-        ...(buildErrorDebugData(error) ? { data: buildErrorDebugData(error) } : {}),
+        ...(buildLogData(payload, buildErrorDebugData(error)) ? { data: buildLogData(payload, buildErrorDebugData(error)) } : {}),
       });
       throw error;
     }
@@ -374,9 +355,9 @@ export async function executeWorker(
       status: 'ok',
       ...(payload.session_id ? { session_id: payload.session_id } : {}),
       detail: `parsed ${output.actions.length} actions`,
-      data: {
+      data: buildLogData(payload, {
         action_types: output.actions.map((action) => action.action),
-      },
+      }),
     });
     const sanitizedActions = output.actions.map((action) =>
       sanitizeWorkerAction(action, context.relatedPaths),
@@ -392,10 +373,10 @@ export async function executeWorker(
           status: 'skipped',
           ...(payload.session_id ? { session_id: payload.session_id } : {}),
           detail: action.reason ?? 'low confidence or skip action',
-          data: {
+          data: buildLogData(payload, {
             action: action.action,
             confidence: action.confidence,
-          },
+          }),
         });
         continue;
       }
@@ -413,10 +394,10 @@ export async function executeWorker(
             ? { memory_id: action.memory_id }
             : {}),
           detail: `${outcome.code}: ${outcome.message}`,
-          data: {
+          data: buildLogData(payload, {
             action: action.action,
             confidence: action.confidence,
-          },
+          }),
         });
         break;
       }
@@ -431,10 +412,10 @@ export async function executeWorker(
           ? { memory_id: action.memory_id }
           : {}),
         detail: action.reason ?? action.action,
-        data: {
+        data: buildLogData(payload, {
           action: action.action,
           confidence: action.confidence,
-        },
+        }),
       });
     }
 
@@ -445,6 +426,7 @@ export async function executeWorker(
       status: failed ? 'error' : 'ok',
       ...(payload.session_id ? { session_id: payload.session_id } : {}),
       detail: failed ? 'stopped after first write failure' : 'completed',
+      ...(buildLogData(payload) ? { data: buildLogData(payload) } : {}),
     });
     backgroundHookStatus = failed ? 'error' : 'ok';
     backgroundHookDetail = failed ? 'stopped after first write failure' : 'completed';
@@ -458,29 +440,32 @@ export async function executeWorker(
       status: 'error',
       ...(payload.session_id ? { session_id: payload.session_id } : {}),
       detail: error instanceof Error ? error.message : String(error),
-      ...(buildErrorDebugData(error) ? { data: buildErrorDebugData(error) } : {}),
+      ...(buildLogData(payload, buildErrorDebugData(error)) ? { data: buildLogData(payload, buildErrorDebugData(error)) } : {}),
     });
     logError('Stop worker failed', {
       error: error instanceof Error ? error.message : String(error),
       ...(buildErrorDebugData(error) ? { debug: buildErrorDebugData(error) } : {}),
     });
   } finally {
+    if (filteredTranscriptPath) {
+      await unlink(filteredTranscriptPath).catch(() => {});
+    }
     await backgroundHookLease.finish(backgroundHookStatus, backgroundHookDetail);
   }
 }
 
-export async function readTranscriptContext(
+export async function prepareTranscriptContext(
   transcriptPath: string,
   projectRoot: string,
+  sessionId?: string,
 ): Promise<WorkerContext> {
   const raw = await readFile(transcriptPath, 'utf8');
   const lines = raw
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
-  const recentLines = lines.slice(Math.max(0, lines.length - 300));
-  const transcriptSnippet = recentLines.slice(Math.max(0, recentLines.length - 120)).join('\n');
 
+  const recentLines = lines.slice(Math.max(0, lines.length - 300));
   const relatedPaths = new Set<string>();
   for (const line of recentLines) {
     const parsed = safeJsonParse(line);
@@ -495,10 +480,51 @@ export async function readTranscriptContext(
     }
   }
 
+  const filteredLines = filterTranscriptLines(lines);
+
+  const last3 = extractLast3Interactions(filteredLines);
+
+  const memoryDir = path.join(projectRoot, '.claude-memory');
+  await mkdir(memoryDir, { recursive: true });
+  const filteredTranscriptPath = path.join(
+    memoryDir,
+    `transcript-filtered-${sessionId ?? 'unknown'}.jsonl`,
+  );
+  await writeFile(filteredTranscriptPath, filteredLines.join('\n'), 'utf8');
+
   return {
-    transcriptSnippet,
+    filteredTranscriptPath,
+    last3Interactions: last3,
     relatedPaths: [...relatedPaths].slice(0, 80),
   };
+}
+
+
+function extractLast3Interactions(filteredLines: string[]): string {
+  let userMessageCount = 0;
+  let sliceStart = 0;
+
+  for (let i = filteredLines.length - 1; i >= 0; i--) {
+    const parsed = safeJsonParse(filteredLines[i]!);
+    if (!parsed || typeof parsed !== 'object') {
+      continue;
+    }
+    const obj = parsed as Record<string, unknown>;
+    const message = obj.message as Record<string, unknown> | undefined;
+    if (!message) {
+      continue;
+    }
+    const content = message.content;
+    if (typeof content === 'string' && obj.type === 'user') {
+      userMessageCount++;
+      if (userMessageCount >= 3) {
+        sliceStart = i;
+        break;
+      }
+    }
+  }
+
+  return filteredLines.slice(sliceStart).join('\n');
 }
 
 function collectPathValues(value: unknown): string[] {
@@ -558,92 +584,124 @@ function normalizeCandidatePath(rawPath: string, projectRoot: string): string | 
 }
 
 function buildExtractionPrompt(input: {
-  transcriptSnippet: string;
+  last3Interactions: string;
+  filteredTranscriptPath: string;
   relatedPaths: string[];
-  candidateMemories: EngineSearchResponse['results'];
+  projectRoot: string;
   lastAssistantMessage?: string;
 }): string {
-  const candidateMemoriesText = JSON.stringify(
-    input.candidateMemories.map((memory) => ({
-      id: memory.id,
-      memory_type: memory.memory_type,
-      content: memory.content,
-      tags: memory.tags,
-      is_pinned: memory.is_pinned,
-      path_matchers: memory.path_matchers,
-    })),
-    null,
-    2,
-  );
-
   return [
-    'Extract durable memory actions from this transcript context.',
+    'You are a memory extraction agent. Analyze this conversation transcript and extract durable memories.',
     'Return strict JSON only (no prose, no markdown fences) with this exact top-level shape:',
     '{"actions":[...]}',
     '',
-    'Extraction strategy:',
+    '## Available tools',
+    '',
+    'You have two tools available:',
+    '',
+    '1. **Read tool** — Use it to read the filtered transcript file for earlier conversation context.',
+    `   File path: ${input.filteredTranscriptPath}`,
+    '   The transcript has been cleaned: no progress events, no thinking blocks, no subagent content, no system messages.',
+    '   Tool results and tool calls are truncated to reduce noise. Each line is a JSON object.',
+    '   Only read the file if the last 3 interactions below are insufficient to extract memories.',
+    '',
+    '2. **recall tool** — Use it to search existing project memories before creating, updating, or deleting.',
+    `   Always pass project_root: "${input.projectRoot}"`,
+    '   Always pass include_debug_metadata: true (to get memory IDs needed for update/delete actions).',
+    '   Search for concepts you intend to memorize to check for duplicates or memories that need updating.',
+    '   You may call recall multiple times with different queries.',
+    '',
+    '## Workflow',
+    '',
+    '1. Read the last 3 interactions below to understand what happened.',
+    '2. Identify candidate insights worth memorizing.',
+    '3. For each candidate, call the recall tool to check if a similar memory already exists.',
+    '4. Decide on actions: create new memories, update existing ones, delete outdated ones, or skip.',
+    '5. If the last 3 interactions lack sufficient context, use the Read tool to read earlier transcript.',
+    '6. Output your final JSON with all actions.',
+    '',
+    '## Extraction strategy',
+    '',
     '- Even when the transcript focuses on a specific flow (e.g. tests, a controller, a workflow), actively look for general principles that apply across the project. Phrases like "the core principle is...", "we use real X and only mock Y", "always do X", or similar project-wide guidance should be extracted as separate memories (typically memory_type=rule).',
     '- Split composite content into multiple memories when it mixes distinct concepts. One memory per concept: e.g. a general principle (rule), a file/structure fact (fact), a workflow step (episode), an architectural choice (decision). Do not create a single "kitchen sink" memory that bundles unrelated ideas.',
     '- memory_type guidance: rule = general principles, preferences, constraints, "how we do X"; fact = structural facts, file locations, exports, types; decision = architectural choices, trade-offs; episode = specific event, workflow step, or contextual detail.',
     '',
-    'Allowed action contracts:',
+    '## Allowed action contracts',
+    '',
     '- create: {"action":"create","confidence":0..1,"reason":"...","memory_type":"fact|rule|decision|episode","content":"...","tags":[...],"is_pinned":boolean,"path_matchers":[{"path_matcher":"..."}]}',
     '- update: {"action":"update","confidence":0..1,"reason":"...","memory_id":"...","updates":{"content?":"...","tags?":[...],"is_pinned?":boolean,"path_matchers?":[{"path_matcher":"..."}]}}',
     '- delete: {"action":"delete","confidence":0..1,"reason":"...","memory_id":"..."}',
     '- skip: {"action":"skip","confidence":0..1,"reason":"..."}',
     '',
-    'Hard requirements:',
+    '## Hard requirements',
+    '',
     '- Every create action MUST include memory_type.',
     '- memory_type must be exactly one of: fact, rule, decision, episode.',
-    '- update/delete must target existing memory ids from candidate memories.',
+    '- update/delete must target existing memory ids obtained from the recall tool.',
     '- If required fields are missing or uncertain, emit skip instead of partial create/update/delete.',
-    '- Do not invent IDs.',
+    '- Do not invent memory IDs — only use IDs returned by the recall tool.',
     '',
-    'Safety rules:',
+    '## Safety rules',
+    '',
     '- prefer no-op when uncertain',
     '- never include secrets',
     '- create/update may include path_matchers only when file scope is clear',
     '- confidence must be in range [0,1]',
     '',
-    'Pinning rules:',
+    '## Pinning rules',
+    '',
     '- ALMOST ALL memories should be is_pinned=false. Pinned memories are injected into EVERY session start, consuming context budget. Only pin if the memory is critical to virtually every future task.',
     '- is_pinned=true is reserved for rare, project-wide invariants: e.g. "this is a Python 3.12 monorepo" or "never commit to main directly". Most projects have 0-3 pinned memories total.',
     '- is_pinned=false for: file-specific rules, per-directory constraints, tech preferences, workflow steps, "do not edit X", "use Y for Z", and anything discoverable via recall search.',
     '- if uncertain, ALWAYS default to is_pinned=false.',
     "- only change an existing memory's is_pinned state when the transcript explicitly asks for it to be pinned/unpinned.",
     '',
-    'Candidate memories:',
-    candidateMemoriesText,
+    '## Related paths',
     '',
-    'Related paths:',
     input.relatedPaths.length > 0
       ? input.relatedPaths.map((value) => `- ${value}`).join('\n')
       : '- none',
     '',
-    'Last assistant message:',
+    '## Last assistant message',
+    '',
     input.lastAssistantMessage ?? '(none)',
     '',
-    'Transcript snippet:',
-    input.transcriptSnippet,
+    '## Last 3 interactions',
+    '',
+    input.last3Interactions,
   ].join('\n');
 }
 
-async function runClaudePrompt(prompt: string, projectRoot: string): Promise<ClaudeRunResult> {
+async function runClaudePrompt(
+  prompt: string,
+  projectRoot: string,
+  pluginRoot: string,
+): Promise<ClaudeRunResult> {
+  const mcpServerPath = path.join(pluginRoot, 'dist', 'mcp', 'search-server.js');
+  const mcpConfig = JSON.stringify({
+    mcpServers: {
+      memories: {
+        type: 'stdio',
+        command: process.execPath,
+        args: [mcpServerPath],
+      },
+    },
+  });
+
   return new Promise((resolve, reject) => {
     const child = spawn(
       'claude',
       [
         '-p',
-        '--output-format',
-        'json',
+        '--output-format', 'json',
         '--no-session-persistence',
-        '--dangerously-skip-permissions',
-        '--model',
-        'claude-sonnet-4-6',
+        '--model', 'claude-sonnet-4-6',
+        '--mcp-config', mcpConfig,
+        '--allowedTools', 'Read,mcp__memories__recall',
       ],
       {
         cwd: projectRoot,
-        env: buildClaudeProcessEnv(process.env),
+        env: process.env,
         stdio: ['pipe', 'pipe', 'pipe'],
       },
     );
@@ -832,30 +890,6 @@ function sanitizePathMatchers(
   return sanitized;
 }
 
-async function searchCandidates(
-  endpoint: { host: string; port: number },
-  repoId: string,
-  query: string,
-  relatedPaths: string[],
-): Promise<EngineSearchResponse> {
-  const response = await fetch(`http://${endpoint.host}:${endpoint.port}/memories/search`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      repo_id: repoId,
-      query,
-      limit: 20,
-      include_pinned: true,
-      target_paths: relatedPaths.slice(0, 20),
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Candidate lookup failed: ${response.status} ${response.statusText}`);
-  }
-
-  return (await response.json()) as EngineSearchResponse;
-}
 
 async function applyAction(
   endpoint: { host: string; port: number },

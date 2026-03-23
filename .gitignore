@@ -6,4 +6,5 @@ plugins/memories/.memories/
 coverage/
 
 .memories/
+.claude/
 implementation-stages/

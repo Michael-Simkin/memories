@@ -1,5 +1,3 @@
-import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { access } from 'node:fs/promises';
 
 import {
@@ -10,7 +8,7 @@ import {
 } from '../shared/hook-io.js';
 import { logError } from '../shared/logger.js';
 import { appendEventLog } from '../shared/logs.js';
-import { ensureGlobalDirectories, resolvePluginRoot } from '../shared/paths.js';
+import { ensureGlobalDirectories } from '../shared/paths.js';
 import { resolveRepoId } from '../shared/repo-identity.js';
 import {
   isEngineUnavailableError,
@@ -20,94 +18,22 @@ import {
 } from './common.js';
 import { type StopPayload, stopPayloadSchema } from './schemas.js';
 
-const STOP_EXTRACTION_BACKGROUND_HOOK_NAME = 'stop/extraction';
-
-interface StopWorkerHandoff {
-  background_hook_id?: string;
-  endpoint: {
-    host: string;
-    port: number;
-  };
-  project_root: string;
-  repo_id: string;
-  transcript_path: string;
-  last_assistant_message?: string;
-  session_id?: string;
-}
-
-async function registerBackgroundHook(
-  endpoint: { host: string; port: number },
-  payload: {
-    detail?: string;
-    hook_name: string;
-    id: string;
-    session_id?: string;
-  },
-): Promise<void> {
-  await postEngineJson<typeof payload, { active: boolean; ok: true }>(
-    endpoint,
-    '/background-hooks/start',
-    payload,
-  );
-}
-
-async function finishBackgroundHook(
-  endpoint: { host: string; port: number },
-  backgroundHookId: string,
-  payload: {
-    detail?: string;
-    status: 'ok' | 'error' | 'skipped';
-  },
-): Promise<void> {
-  await postEngineJson<typeof payload, { active: boolean; ok: true }>(
-    endpoint,
-    `/background-hooks/${backgroundHookId}/finish`,
-    payload,
-  );
-}
-
-function spawnStopWorker(handoff: StopWorkerHandoff): Promise<{ pid?: number }> {
-  const pluginRoot = resolvePluginRoot();
-  const workerEntrypoint = `${pluginRoot}/dist/extraction/run.js`;
-  const handoffPayload = Buffer.from(JSON.stringify(handoff), 'utf8').toString('base64');
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [workerEntrypoint, '--handoff', handoffPayload], {
-      detached: true,
-      env: {
-        ...process.env,
-        CLAUDE_PLUGIN_ROOT: pluginRoot,
-      },
-      stdio: 'ignore',
-    });
-    child.once('error', reject);
-    child.once('spawn', () => {
-      child.unref();
-      resolve(typeof child.pid === 'number' ? { pid: child.pid } : {});
-    });
-  });
-}
-
 interface StopHookDependencies {
   accessFn: typeof access;
   appendEventLogFn: typeof appendEventLog;
   ensureGlobalDirectoriesFn: typeof ensureGlobalDirectories;
-  finishBackgroundHookFn: typeof finishBackgroundHook;
-  registerBackgroundHookFn: typeof registerBackgroundHook;
+  postEngineJsonFn: typeof postEngineJson;
   resolveEndpointFromLockFn: typeof resolveEndpointFromLock;
   resolveRepoIdFn: typeof resolveRepoId;
-  spawnStopWorkerFn: typeof spawnStopWorker;
 }
 
 const defaultDependencies: StopHookDependencies = {
   accessFn: access,
   appendEventLogFn: appendEventLog,
   ensureGlobalDirectoriesFn: ensureGlobalDirectories,
-  finishBackgroundHookFn: finishBackgroundHook,
-  registerBackgroundHookFn: registerBackgroundHook,
+  postEngineJsonFn: postEngineJson,
   resolveEndpointFromLockFn: resolveEndpointFromLock,
   resolveRepoIdFn: resolveRepoId,
-  spawnStopWorkerFn: spawnStopWorker,
 };
 
 export async function handleStopHook(
@@ -133,37 +59,16 @@ export async function handleStopHook(
     await dependencies.accessFn(payload.transcript_path);
     const repoId = await dependencies.resolveRepoIdFn(projectRoot);
     const endpoint = await dependencies.resolveEndpointFromLockFn();
-    const backgroundHookId = randomUUID();
-    await dependencies.registerBackgroundHookFn(endpoint, {
-      id: backgroundHookId,
-      hook_name: STOP_EXTRACTION_BACKGROUND_HOOK_NAME,
-      ...(payload.session_id ? { session_id: payload.session_id } : {}),
-      detail: `transcript=${payload.transcript_path}`,
-    });
 
-    let spawnedWorker: { pid?: number };
-    try {
-      spawnedWorker = await dependencies.spawnStopWorkerFn({
-        background_hook_id: backgroundHookId,
-        endpoint: {
-          host: endpoint.host,
-          port: endpoint.port,
-        },
-        project_root: projectRoot,
-        repo_id: repoId,
-        transcript_path: payload.transcript_path,
-        ...(payload.last_assistant_message
-          ? { last_assistant_message: payload.last_assistant_message }
-          : {}),
-        ...(payload.session_id ? { session_id: payload.session_id } : {}),
-      });
-    } catch (error) {
-      await dependencies.finishBackgroundHookFn(endpoint, backgroundHookId, {
-        status: 'error',
-        detail: `spawn failed: ${error instanceof Error ? error.message : String(error)}`,
-      });
-      throw error;
-    }
+    await dependencies.postEngineJsonFn(endpoint, '/extraction/enqueue', {
+      transcript_path: payload.transcript_path,
+      project_root: projectRoot,
+      repo_id: repoId,
+      ...(payload.last_assistant_message
+        ? { last_assistant_message: payload.last_assistant_message }
+        : {}),
+      ...(payload.session_id ? { session_id: payload.session_id } : {}),
+    });
 
     await dependencies.appendEventLogFn(paths.eventLogPath, {
       at: new Date().toISOString(),
@@ -171,7 +76,7 @@ export async function handleStopHook(
       kind: 'hook',
       status: 'ok',
       ...(payload.session_id ? { session_id: payload.session_id } : {}),
-      detail: `handoff=${payload.transcript_path}; hook_id=${backgroundHookId}; repo_id=${repoId}${typeof spawnedWorker.pid === 'number' ? `; pid=${spawnedWorker.pid}` : ''}`,
+      detail: `enqueued=${payload.transcript_path}; repo_id=${repoId}`,
     });
     return { continue: true };
   } catch (error) {

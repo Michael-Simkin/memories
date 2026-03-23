@@ -71,6 +71,9 @@ async function bootstrap(): Promise<void> {
     onIdleTimeout: async () => {
       await shutdown('idle-timeout');
     },
+    onShutdownRequest: async () => {
+      await shutdown('api-request');
+    },
   });
 
   let server: Server | null = null;

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkerPayload } from './contracts.js';
-import { buildClaudeProcessEnv, CONFIDENCE_THRESHOLD, executeWorker } from './run.js';
+import { CONFIDENCE_THRESHOLD, executeWorker } from './run.js';
 
 function createPayload(): WorkerPayload {
   return {
@@ -44,20 +44,12 @@ function createDependencies(options: {
   const dependencies = {
     appendEventLogFn,
     applyActionFn,
-    readTranscriptContextFn: vi.fn().mockResolvedValue({
-      transcriptSnippet: 'snippet',
+    prepareTranscriptContextFn: vi.fn().mockResolvedValue({
+      filteredTranscriptPath: '/tmp/project/.claude-memory/transcript-filtered-session-1.jsonl',
+      last3Interactions: '{"type":"user","message":{"content":"test message"}}',
       relatedPaths: ['src/app.ts'],
     }),
     runClaudeFn,
-    searchCandidatesFn: vi.fn().mockResolvedValue({
-      meta: {
-        duration_ms: 2,
-        query: 'remember',
-        returned: 0,
-        source: 'hybrid',
-      },
-      results: [],
-    }),
   } as Parameters<typeof executeWorker>[1];
 
   return {
@@ -194,12 +186,7 @@ describe('extraction worker', () => {
     expect(issues?.some((issue) => issue.path.includes('memory_type'))).toBe(true);
   });
 
-  it('injects CLAUDE_CODE_SIMPLE into Claude subprocess env', () => {
-    const env = buildClaudeProcessEnv({ PATH: '/usr/bin' });
-    expect(env.CLAUDE_CODE_SIMPLE).toBe('1');
-  });
-
-  it('instructs Claude to pin only durable project-wide memories', async () => {
+  it('instructs Claude to use tools and follow extraction rules', async () => {
     const payload = createPayload();
     const { dependencies, runClaudeFn } = createDependencies({
       runClaudeStdout: JSON.stringify({
@@ -211,14 +198,18 @@ describe('extraction worker', () => {
 
     const prompt = runClaudeFn.mock.calls[0]?.[0];
     expect(typeof prompt).toBe('string');
-    expect(prompt).toContain('Extraction strategy:');
+    expect(prompt).toContain('Extraction strategy');
     expect(prompt).toContain('actively look for general principles that apply across the project');
     expect(prompt).toContain('Split composite content into multiple memories');
-    expect(prompt).toContain('Pinning rules:');
+    expect(prompt).toContain('Pinning rules');
     expect(prompt).toContain('ALMOST ALL memories should be is_pinned=false');
     expect(prompt).toContain('is_pinned=true is reserved for rare, project-wide invariants');
     expect(prompt).toContain('is_pinned=false for: file-specific rules, per-directory constraints');
     expect(prompt).toContain('if uncertain, ALWAYS default to is_pinned=false');
     expect(prompt).toContain("only change an existing memory's is_pinned state");
+    expect(prompt).toContain('Read tool');
+    expect(prompt).toContain('recall tool');
+    expect(prompt).toContain('Last 3 interactions');
+    expect(prompt).toContain('transcript-filtered-session-1.jsonl');
   });
 });

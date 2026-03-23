@@ -36,14 +36,3 @@ export const stopPayloadSchema = z
   .catchall(z.unknown());
 
 export type StopPayload = z.infer<typeof stopPayloadSchema>;
-
-export const sessionEndPayloadSchema = z
-  .object({
-    cwd: z.string().optional(),
-    project_root: z.string().optional(),
-    reason: z.string().trim().min(1).optional(),
-    session_id: z.string().trim().min(1),
-  })
-  .catchall(z.unknown());
-
-export type SessionEndPayload = z.infer<typeof sessionEndPayloadSchema>;

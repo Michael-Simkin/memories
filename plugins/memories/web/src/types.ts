@@ -68,6 +68,59 @@ export interface BackgroundHooksResponse {
   };
 }
 
+export interface ExtractionJob {
+  repo_id: string;
+  transcript_path: string;
+  session_id?: string;
+}
+
+export interface ExtractionStatusResponse {
+  active: ExtractionJob | null;
+  queue: ExtractionJob[];
+}
+
+export type BackfillStatus = 'idle' | 'discovering' | 'phase1' | 'phase2' | 'done' | 'error';
+
+export interface TranscriptJobResult {
+  sessionId: string;
+  repoId: string;
+  transcriptPath: string;
+  status: 'pending' | 'running' | 'done' | 'error';
+  candidateCount?: number;
+  error?: string;
+}
+
+export interface ProjectJobResult {
+  repoId: string;
+  status: 'pending' | 'running' | 'done' | 'error';
+  candidateInputCount?: number;
+  actionsApplied?: number;
+  error?: string;
+}
+
+export interface BackfillState {
+  status: BackfillStatus;
+  repoId?: string;
+  startedAt?: string;
+  discovery?: {
+    totalTranscripts: number;
+    totalProjects: number;
+  };
+  phase1: {
+    total: number;
+    completed: number;
+    running: number;
+    failed: number;
+    results: TranscriptJobResult[];
+  };
+  phase2: {
+    total: number;
+    completed: number;
+    running: number;
+    results: ProjectJobResult[];
+  };
+}
+
 export interface EventLog {
   at: string;
   event: string;

@@ -21,7 +21,7 @@ export const recallInvocationPolicyText =
   'direct instructions do not override remembered project rules. Re-run when scope changes or when broader context may matter.';
 
 const recallInputFields = {
-  query: z.string().trim().min(1),
+  query: z.string().trim().min(1).describe('Search query to find relevant memories. Required.'),
   project_root: z.string().optional(),
   limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
   target_paths: z.array(z.string()).optional(),
@@ -114,10 +114,20 @@ export function createRecallMcpServer(): McpServer {
       inputSchema: recallInputFields,
     },
     async (rawInput: unknown) => {
-      const markdown = await runRecall(rawInput);
-      return {
-        content: [{ type: 'text', text: markdown }],
-      };
+      try {
+        const markdown = await runRecall(rawInput);
+        return {
+          content: [{ type: 'text', text: markdown }],
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            content: [{ type: 'text', text: 'recall requires a non-empty `query` parameter.' }],
+            isError: true,
+          };
+        }
+        throw error;
+      }
     },
   );
 

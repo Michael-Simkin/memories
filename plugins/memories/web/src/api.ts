@@ -1,6 +1,8 @@
 import type {
+  BackfillState,
   BackgroundHooksResponse,
   EventLog,
+  ExtractionStatusResponse,
   Memory,
   MemorySearchResult,
   MemoryType,
@@ -20,6 +22,10 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 export async function fetchStats(): Promise<StatsResponse> {
   return parseJson<StatsResponse>(await fetch('/stats'));
+}
+
+export async function fetchExtractionStatus(): Promise<ExtractionStatusResponse> {
+  return parseJson<ExtractionStatusResponse>(await fetch('/extraction/status'));
 }
 
 export async function fetchBackgroundHooks(): Promise<BackgroundHooksResponse> {
@@ -103,6 +109,32 @@ export async function updateMemory(repoId: string, payload: {
 export async function deleteMemory(repoId: string, memoryId: string): Promise<void> {
   await parseJson<{ deleted: boolean; id: string }>(
     await fetch(`/memories/${memoryId}?repo_id=${encodeURIComponent(repoId)}`, { method: 'DELETE' }),
+  );
+}
+
+export async function shutdownEngine(): Promise<void> {
+  await parseJson<{ status: string }>(
+    await fetch('/shutdown', { method: 'POST' }),
+  );
+}
+
+export async function startBackfill(repoId: string): Promise<void> {
+  await parseJson<{ status: string }>(
+    await fetch('/backfill/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ repo_id: repoId }),
+    }),
+  );
+}
+
+export async function fetchBackfillStatus(): Promise<BackfillState> {
+  return parseJson<BackfillState>(await fetch('/backfill/status'));
+}
+
+export async function cancelBackfill(): Promise<void> {
+  await parseJson<{ status: string }>(
+    await fetch('/backfill/cancel', { method: 'POST' }),
   );
 }
 

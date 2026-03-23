@@ -295,14 +295,12 @@ describe('hook handlers', () => {
     );
   });
 
-  it('Stop returns immediately and spawns detached worker handoff', async () => {
+  it('Stop enqueues extraction with the engine', async () => {
     const payload: StopPayload = {
       transcript_path: '/tmp/transcript.jsonl',
       session_id: 'session-stop',
     };
-    const spawnStopWorkerFn = vi.fn().mockResolvedValue({ pid: 7788 });
-    const registerBackgroundHookFn = vi.fn().mockResolvedValue({ active: true, ok: true });
-    const finishBackgroundHookFn = vi.fn().mockResolvedValue({ active: false, ok: true });
+    const postEngineJsonFn = vi.fn().mockResolvedValue({ ok: true });
 
     const output = await handleStopHook(payload, {
       accessFn: vi.fn().mockResolvedValue(undefined),
@@ -315,32 +313,22 @@ describe('hook handlers', () => {
         engineStderrPath: '/tmp/.memories/engine.stderr.log',
         eventLogPath: '/tmp/events.log',
       }),
-      finishBackgroundHookFn,
-      registerBackgroundHookFn,
+      postEngineJsonFn,
       resolveEndpointFromLockFn: vi.fn().mockResolvedValue({ host: '127.0.0.1', port: 4322 }),
       resolveRepoIdFn: vi.fn().mockResolvedValue('test-repo-id-0001'),
-      spawnStopWorkerFn,
     });
 
     expect(output).toEqual({ continue: true });
-    expect(registerBackgroundHookFn).toHaveBeenCalledTimes(1);
-    expect(registerBackgroundHookFn).toHaveBeenCalledWith(
+    expect(postEngineJsonFn).toHaveBeenCalledTimes(1);
+    expect(postEngineJsonFn).toHaveBeenCalledWith(
       { host: '127.0.0.1', port: 4322 },
+      '/extraction/enqueue',
       expect.objectContaining({
-        detail: 'transcript=/tmp/transcript.jsonl',
-        hook_name: 'stop/extraction',
+        transcript_path: '/tmp/transcript.jsonl',
+        repo_id: 'test-repo-id-0001',
         session_id: 'session-stop',
       }),
     );
-    expect(spawnStopWorkerFn).toHaveBeenCalledTimes(1);
-    expect(spawnStopWorkerFn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        background_hook_id: expect.any(String),
-        endpoint: { host: '127.0.0.1', port: 4322 },
-        transcript_path: '/tmp/transcript.jsonl',
-      }),
-    );
-    expect(finishBackgroundHookFn).not.toHaveBeenCalled();
   });
 
   it('UserPromptSubmit injects the per-prompt memory reminder', async () => {

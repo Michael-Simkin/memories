@@ -518,7 +518,7 @@ var require_has_flag = __commonJS({
 var require_supports_color = __commonJS({
   "../../node_modules/supports-color/index.js"(exports, module) {
     "use strict";
-    var os3 = __require("os");
+    var os4 = __require("os");
     var tty = __require("tty");
     var hasFlag = require_has_flag();
     var { env } = process;
@@ -566,7 +566,7 @@ var require_supports_color = __commonJS({
         return min;
       }
       if (process.platform === "win32") {
-        const osRelease = os3.release().split(".");
+        const osRelease = os4.release().split(".");
         if (Number(osRelease[0]) >= 10 && Number(osRelease[2]) >= 10586) {
           return Number(osRelease[2]) >= 14931 ? 3 : 2;
         }
@@ -15317,11 +15317,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path5) {
-      if (!path5 || typeof path5 !== "string") {
+    function lookup(path7) {
+      if (!path7 || typeof path7 !== "string") {
         return false;
       }
-      var extension2 = extname("x." + path5).toLowerCase().slice(1);
+      var extension2 = extname("x." + path7).toLowerCase().slice(1);
       if (!extension2) {
         return false;
       }
@@ -18795,13 +18795,13 @@ var require_view = __commonJS({
   "../../node_modules/express/lib/view.js"(exports, module) {
     "use strict";
     var debug = require_src()("express:view");
-    var path5 = __require("path");
+    var path7 = __require("path");
     var fs = __require("fs");
-    var dirname = path5.dirname;
-    var basename = path5.basename;
-    var extname = path5.extname;
-    var join = path5.join;
-    var resolve = path5.resolve;
+    var dirname = path7.dirname;
+    var basename = path7.basename;
+    var extname = path7.extname;
+    var join = path7.join;
+    var resolve = path7.resolve;
     module.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -18830,17 +18830,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path6;
+      var path8;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i = 0; i < roots.length && !path6; i++) {
+      for (var i = 0; i < roots.length && !path8; i++) {
         var root = roots[i];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file2 = basename(loc);
-        path6 = this.resolve(dir, file2);
+        path8 = this.resolve(dir, file2);
       }
-      return path6;
+      return path8;
     };
     View.prototype.render = function render(options, callback) {
       var sync = true;
@@ -18862,21 +18862,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file2) {
       var ext = this.ext;
-      var path6 = join(dir, file2);
-      var stat = tryStat(path6);
-      if (stat && stat.isFile()) {
-        return path6;
+      var path8 = join(dir, file2);
+      var stat2 = tryStat(path8);
+      if (stat2 && stat2.isFile()) {
+        return path8;
       }
-      path6 = join(dir, basename(file2, ext), "index" + ext);
-      stat = tryStat(path6);
-      if (stat && stat.isFile()) {
-        return path6;
+      path8 = join(dir, basename(file2, ext), "index" + ext);
+      stat2 = tryStat(path8);
+      if (stat2 && stat2.isFile()) {
+        return path8;
       }
     };
-    function tryStat(path6) {
-      debug('stat "%s"', path6);
+    function tryStat(path8) {
+      debug('stat "%s"', path8);
       try {
-        return fs.statSync(path6);
+        return fs.statSync(path8);
       } catch (e) {
         return void 0;
       }
@@ -18918,9 +18918,9 @@ var require_etag = __commonJS({
       }
       return obj && typeof obj === "object" && "ctime" in obj && toString.call(obj.ctime) === "[object Date]" && "mtime" in obj && toString.call(obj.mtime) === "[object Date]" && "ino" in obj && typeof obj.ino === "number" && "size" in obj && typeof obj.size === "number";
     }
-    function stattag(stat) {
-      var mtime = stat.mtime.getTime().toString(16);
-      var size = stat.size.toString(16);
+    function stattag(stat2) {
+      var mtime = stat2.mtime.getTime().toString(16);
+      var size = stat2.size.toString(16);
       return '"' + size + "-" + mtime + '"';
     }
   }
@@ -20078,15 +20078,15 @@ var require_dist = __commonJS({
           if (token.type === endType)
             break;
           if (token.type === "char" || token.type === "escape") {
-            let path5 = token.value;
+            let path7 = token.value;
             let cur = tokens[pos];
             while (cur.type === "char" || cur.type === "escape") {
-              path5 += cur.value;
+              path7 += cur.value;
               cur = tokens[++pos];
             }
             output.push({
               type: "text",
-              value: encodePath(path5)
+              value: encodePath(path7)
             });
             continue;
           }
@@ -20110,16 +20110,16 @@ var require_dist = __commonJS({
       }
       return new TokenData(consumeUntil("end"), str);
     }
-    function compile(path5, options = {}) {
+    function compile(path7, options = {}) {
       const { encode: encode3 = encodeURIComponent, delimiter = DEFAULT_DELIMITER } = options;
-      const data = typeof path5 === "object" ? path5 : parse3(path5, options);
+      const data = typeof path7 === "object" ? path7 : parse3(path7, options);
       const fn = tokensToFunction(data.tokens, delimiter, encode3);
-      return function path6(params = {}) {
-        const [path7, ...missing] = fn(params);
+      return function path8(params = {}) {
+        const [path9, ...missing] = fn(params);
         if (missing.length) {
           throw new TypeError(`Missing parameters: ${missing.join(", ")}`);
         }
-        return path7;
+        return path9;
       };
     }
     function tokensToFunction(tokens, delimiter, encode3) {
@@ -20175,9 +20175,9 @@ var require_dist = __commonJS({
         return [encodeValue(value)];
       };
     }
-    function match(path5, options = {}) {
+    function match(path7, options = {}) {
       const { decode: decode3 = decodeURIComponent, delimiter = DEFAULT_DELIMITER } = options;
-      const { regexp, keys } = pathToRegexp(path5, options);
+      const { regexp, keys } = pathToRegexp(path7, options);
       const decoders = keys.map((key) => {
         if (decode3 === false)
           return NOOP_VALUE;
@@ -20189,7 +20189,7 @@ var require_dist = __commonJS({
         const m = regexp.exec(input);
         if (!m)
           return false;
-        const path6 = m[0];
+        const path8 = m[0];
         const params = /* @__PURE__ */ Object.create(null);
         for (let i = 1; i < m.length; i++) {
           if (m[i] === void 0)
@@ -20198,15 +20198,15 @@ var require_dist = __commonJS({
           const decoder = decoders[i - 1];
           params[key.name] = decoder(m[i]);
         }
-        return { path: path6, params };
+        return { path: path8, params };
       };
     }
-    function pathToRegexp(path5, options = {}) {
+    function pathToRegexp(path7, options = {}) {
       const { delimiter = DEFAULT_DELIMITER, end = true, sensitive = false, trailing = true } = options;
       const keys = [];
       const flags = sensitive ? "" : "i";
       const sources = [];
-      for (const input of pathsToArray(path5, [])) {
+      for (const input of pathsToArray(path7, [])) {
         const data = typeof input === "object" ? input : parse3(input, options);
         for (const tokens of flatten(data.tokens, 0, [])) {
           sources.push(toRegExpSource(tokens, delimiter, keys, data.originalPath));
@@ -20336,18 +20336,18 @@ var require_layer = __commonJS({
     var TRAILING_SLASH_REGEXP = /\/+$/;
     var MATCHING_GROUP_REGEXP = /\((?:\?<(.*?)>)?(?!\?)/g;
     module.exports = Layer;
-    function Layer(path5, options, fn) {
+    function Layer(path7, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path5, options, fn);
+        return new Layer(path7, options, fn);
       }
-      debug("new %o", path5);
+      debug("new %o", path7);
       const opts = options || {};
       this.handle = fn;
       this.keys = [];
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.slash = path5 === "/" && opts.end === false;
+      this.slash = path7 === "/" && opts.end === false;
       function matcher(_path) {
         if (_path instanceof RegExp) {
           const keys = [];
@@ -20386,7 +20386,7 @@ var require_layer = __commonJS({
           decode: decodeParam
         });
       }
-      this.matchers = Array.isArray(path5) ? path5.map(matcher) : [matcher(path5)];
+      this.matchers = Array.isArray(path7) ? path7.map(matcher) : [matcher(path7)];
     }
     Layer.prototype.handleError = function handleError(error48, req, res, next) {
       const fn = this.handle;
@@ -20426,9 +20426,9 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match(path5) {
+    Layer.prototype.match = function match(path7) {
       let match2;
-      if (path5 != null) {
+      if (path7 != null) {
         if (this.slash) {
           this.params = {};
           this.path = "";
@@ -20436,7 +20436,7 @@ var require_layer = __commonJS({
         }
         let i = 0;
         while (!match2 && i < this.matchers.length) {
-          match2 = this.matchers[i](path5);
+          match2 = this.matchers[i](path7);
           i++;
         }
       }
@@ -20464,13 +20464,13 @@ var require_layer = __commonJS({
         throw err;
       }
     }
-    function loosen(path5) {
-      if (path5 instanceof RegExp || path5 === "/") {
-        return path5;
+    function loosen(path7) {
+      if (path7 instanceof RegExp || path7 === "/") {
+        return path7;
       }
-      return Array.isArray(path5) ? path5.map(function(p) {
+      return Array.isArray(path7) ? path7.map(function(p) {
         return loosen(p);
-      }) : String(path5).replace(TRAILING_SLASH_REGEXP, "");
+      }) : String(path7).replace(TRAILING_SLASH_REGEXP, "");
     }
   }
 });
@@ -20486,9 +20486,9 @@ var require_route = __commonJS({
     var flatten = Array.prototype.flat;
     var methods = METHODS.map((method) => method.toLowerCase());
     module.exports = Route;
-    function Route(path5) {
-      debug("new %o", path5);
-      this.path = path5;
+    function Route(path7) {
+      debug("new %o", path7);
+      this.path = path7;
       this.stack = [];
       this.methods = /* @__PURE__ */ Object.create(null);
     }
@@ -20696,8 +20696,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        const path5 = getPathname(req);
-        if (path5 == null) {
+        const path7 = getPathname(req);
+        if (path7 == null) {
           return done(layerError);
         }
         let layer;
@@ -20705,7 +20705,7 @@ var require_router = __commonJS({
         let route;
         while (match !== true && idx < stack.length) {
           layer = stack[idx++];
-          match = matchLayer(layer, path5);
+          match = matchLayer(layer, path7);
           route = layer.route;
           if (typeof match !== "boolean") {
             layerError = layerError || match;
@@ -20743,18 +20743,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handleRequest(req, res, next);
           } else {
-            trimPrefix(layer, layerError, layerPath, path5);
+            trimPrefix(layer, layerError, layerPath, path7);
           }
           sync = 0;
         });
       }
-      function trimPrefix(layer, layerError, layerPath, path5) {
+      function trimPrefix(layer, layerError, layerPath, path7) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path5.substring(0, layerPath.length)) {
+          if (layerPath !== path7.substring(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          const c = path5[layerPath.length];
+          const c = path7[layerPath.length];
           if (c && c !== "/") {
             next(layerError);
             return;
@@ -20778,7 +20778,7 @@ var require_router = __commonJS({
     };
     Router.prototype.use = function use(handler) {
       let offset = 0;
-      let path5 = "/";
+      let path7 = "/";
       if (typeof handler !== "function") {
         let arg = handler;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -20786,7 +20786,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path5 = handler;
+          path7 = handler;
         }
       }
       const callbacks = flatten.call(slice.call(arguments, offset), Infinity);
@@ -20798,8 +20798,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("argument handler must be a function");
         }
-        debug("use %o %s", path5, fn.name || "<anonymous>");
-        const layer = new Layer(path5, {
+        debug("use %o %s", path7, fn.name || "<anonymous>");
+        const layer = new Layer(path7, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -20809,9 +20809,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    Router.prototype.route = function route(path5) {
-      const route2 = new Route(path5);
-      const layer = new Layer(path5, {
+    Router.prototype.route = function route(path7) {
+      const route2 = new Route(path7);
+      const layer = new Layer(path7, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -20824,8 +20824,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      Router.prototype[method] = function(path5) {
-        const route = this.route(path5);
+      Router.prototype[method] = function(path7) {
+        const route = this.route(path7);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -20854,9 +20854,9 @@ var require_router = __commonJS({
       const fqdnIndex = url2.substring(0, pathLength).indexOf("://");
       return fqdnIndex !== -1 ? url2.substring(0, url2.indexOf("/", 3 + fqdnIndex)) : void 0;
     }
-    function matchLayer(layer, path5) {
+    function matchLayer(layer, path7) {
       try {
-        return layer.match(path5);
+        return layer.match(path7);
       } catch (err) {
         return err;
       }
@@ -21084,7 +21084,7 @@ var require_application = __commonJS({
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path5 = "/";
+      var path7 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -21092,7 +21092,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path5 = fn;
+          path7 = fn;
         }
       }
       var fns = flatten.call(slice.call(arguments, offset), Infinity);
@@ -21102,12 +21102,12 @@ var require_application = __commonJS({
       var router = this.router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router.use(path5, fn2);
+          return router.use(path7, fn2);
         }
-        debug(".use app under %s", path5);
-        fn2.mountpath = path5;
+        debug(".use app under %s", path7);
+        fn2.mountpath = path7;
         fn2.parent = this;
-        router.use(path5, function mounted_app(req, res, next) {
+        router.use(path7, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             Object.setPrototypeOf(req, orig.request);
@@ -21119,8 +21119,8 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path5) {
-      return this.router.route(path5);
+    app.route = function route(path7) {
+      return this.router.route(path7);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -21163,7 +21163,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path5() {
+    app.path = function path7() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -21179,17 +21179,17 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path5) {
+      app[method] = function(path7) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path5);
+          return this.set(path7);
         }
-        var route = this.route(path5);
+        var route = this.route(path7);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all(path5) {
-      var route = this.route(path5);
+    app.all = function all(path7) {
+      var route = this.route(path7);
       var args = slice.call(arguments, 1);
       for (var i = 0; i < methods.length; i++) {
         route[methods[i]].apply(route, args);
@@ -22099,7 +22099,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP(hostname3) ? hostname3.split(".").reverse() : [hostname3];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path5() {
+    defineGetter(req, "path", function path7() {
       return parse3(this).pathname;
     });
     defineGetter(req, "host", function host() {
@@ -22512,27 +22512,27 @@ var require_send = __commonJS({
     var ms = require_ms();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path5 = __require("path");
+    var path7 = __require("path");
     var statuses = require_statuses();
     var Stream = __require("stream");
     var util = __require("util");
-    var extname = path5.extname;
-    var join = path5.join;
-    var normalize = path5.normalize;
-    var resolve = path5.resolve;
-    var sep = path5.sep;
+    var extname = path7.extname;
+    var join = path7.join;
+    var normalize = path7.normalize;
+    var resolve = path7.resolve;
+    var sep = path7.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module.exports = send;
-    function send(req, path6, options) {
-      return new SendStream(req, path6, options);
+    function send(req, path8, options) {
+      return new SendStream(req, path8, options);
     }
-    function SendStream(req, path6, options) {
+    function SendStream(req, path8, options) {
       Stream.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path6;
+      this.path = path8;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -22646,10 +22646,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path6) {
+    SendStream.prototype.redirect = function redirect(path8) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path6);
+        this.emit("directory", res, path8);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -22669,38 +22669,38 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe2(res) {
       var root = this._root;
       this.res = res;
-      var path6 = decode3(this.path);
-      if (path6 === -1) {
+      var path8 = decode3(this.path);
+      if (path8 === -1) {
         this.error(400);
         return res;
       }
-      if (~path6.indexOf("\0")) {
+      if (~path8.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path6) {
-          path6 = normalize("." + sep + path6);
+        if (path8) {
+          path8 = normalize("." + sep + path8);
         }
-        if (UP_PATH_REGEXP.test(path6)) {
-          debug('malicious path "%s"', path6);
+        if (UP_PATH_REGEXP.test(path8)) {
+          debug('malicious path "%s"', path8);
           this.error(403);
           return res;
         }
-        parts = path6.split(sep);
-        path6 = normalize(join(root, path6));
+        parts = path8.split(sep);
+        path8 = normalize(join(root, path8));
       } else {
-        if (UP_PATH_REGEXP.test(path6)) {
-          debug('malicious path "%s"', path6);
+        if (UP_PATH_REGEXP.test(path8)) {
+          debug('malicious path "%s"', path8);
           this.error(403);
           return res;
         }
-        parts = normalize(path6).split(sep);
-        path6 = resolve(path6);
+        parts = normalize(path8).split(sep);
+        path8 = resolve(path8);
       }
       if (containsDotFile(parts)) {
-        debug('%s dotfile "%s"', this._dotfiles, path6);
+        debug('%s dotfile "%s"', this._dotfiles, path8);
         switch (this._dotfiles) {
           case "allow":
             break;
@@ -22714,14 +22714,14 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path6);
+        this.sendIndex(path8);
         return res;
       }
-      this.sendFile(path6);
+      this.sendFile(path8);
       return res;
     };
-    SendStream.prototype.send = function send2(path6, stat) {
-      var len = stat.size;
+    SendStream.prototype.send = function send2(path8, stat2) {
+      var len = stat2.size;
       var options = this.options;
       var opts = {};
       var res = this.res;
@@ -22732,9 +22732,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path6);
-      this.setHeader(path6, stat);
-      this.type(path6);
+      debug('pipe "%s"', path8);
+      this.setHeader(path8, stat2);
+      this.type(path8);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -22783,38 +22783,38 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path6, opts);
+      this.stream(path8, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path6) {
+    SendStream.prototype.sendFile = function sendFile(path8) {
       var i = 0;
       var self2 = this;
-      debug('stat "%s"', path6);
-      fs.stat(path6, function onstat(err, stat) {
-        var pathEndsWithSep = path6[path6.length - 1] === sep;
-        if (err && err.code === "ENOENT" && !extname(path6) && !pathEndsWithSep) {
+      debug('stat "%s"', path8);
+      fs.stat(path8, function onstat(err, stat2) {
+        var pathEndsWithSep = path8[path8.length - 1] === sep;
+        if (err && err.code === "ENOENT" && !extname(path8) && !pathEndsWithSep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat.isDirectory()) return self2.redirect(path6);
+        if (stat2.isDirectory()) return self2.redirect(path8);
         if (pathEndsWithSep) return self2.error(404);
-        self2.emit("file", path6, stat);
-        self2.send(path6, stat);
+        self2.emit("file", path8, stat2);
+        self2.send(path8, stat2);
       });
       function next(err) {
         if (self2._extensions.length <= i) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path6 + "." + self2._extensions[i++];
+        var p = path8 + "." + self2._extensions[i++];
         debug('stat "%s"', p);
-        fs.stat(p, function(err2, stat) {
+        fs.stat(p, function(err2, stat2) {
           if (err2) return next(err2);
-          if (stat.isDirectory()) return next();
-          self2.emit("file", p, stat);
-          self2.send(p, stat);
+          if (stat2.isDirectory()) return next();
+          self2.emit("file", p, stat2);
+          self2.send(p, stat2);
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path6) {
+    SendStream.prototype.sendIndex = function sendIndex(path8) {
       var i = -1;
       var self2 = this;
       function next(err) {
@@ -22822,21 +22822,21 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join(path6, self2._index[i]);
+        var p = join(path8, self2._index[i]);
         debug('stat "%s"', p);
-        fs.stat(p, function(err2, stat) {
+        fs.stat(p, function(err2, stat2) {
           if (err2) return next(err2);
-          if (stat.isDirectory()) return next();
-          self2.emit("file", p, stat);
-          self2.send(p, stat);
+          if (stat2.isDirectory()) return next();
+          self2.emit("file", p, stat2);
+          self2.send(p, stat2);
         });
       }
       next();
     };
-    SendStream.prototype.stream = function stream(path6, options) {
+    SendStream.prototype.stream = function stream(path8, options) {
       var self2 = this;
       var res = this.res;
-      var stream2 = fs.createReadStream(path6, options);
+      var stream2 = fs.createReadStream(path8, options);
       this.emit("stream", stream2);
       stream2.pipe(res);
       function cleanup() {
@@ -22851,17 +22851,17 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path6) {
+    SendStream.prototype.type = function type(path8) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var ext = extname(path6);
+      var ext = extname(path8);
       var type2 = mime.contentType(ext) || "application/octet-stream";
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2);
     };
-    SendStream.prototype.setHeader = function setHeader(path6, stat) {
+    SendStream.prototype.setHeader = function setHeader(path8, stat2) {
       var res = this.res;
-      this.emit("headers", res, path6, stat);
+      this.emit("headers", res, path8, stat2);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -22875,12 +22875,12 @@ var require_send = __commonJS({
         res.setHeader("Cache-Control", cacheControl);
       }
       if (this._lastModified && !res.getHeader("Last-Modified")) {
-        var modified = stat.mtime.toUTCString();
+        var modified = stat2.mtime.toUTCString();
         debug("modified %s", modified);
         res.setHeader("Last-Modified", modified);
       }
       if (this._etag && !res.getHeader("ETag")) {
-        var val = etag(stat);
+        var val = etag(stat2);
         debug("etag %s", val);
         res.setHeader("ETag", val);
       }
@@ -22919,9 +22919,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode3(path6) {
+    function decode3(path8) {
       try {
-        return decodeURIComponent(path6);
+        return decodeURIComponent(path8);
       } catch (err) {
         return -1;
       }
@@ -23065,7 +23065,7 @@ var require_response = __commonJS({
     var http = __require("http");
     var onFinished = require_on_finished();
     var mime = require_mime_types();
-    var path5 = __require("path");
+    var path7 = __require("path");
     var pathIsAbsolute = __require("path").isAbsolute;
     var statuses = require_statuses();
     var sign = require_cookie_signature().sign;
@@ -23074,8 +23074,8 @@ var require_response = __commonJS({
     var setCharset = require_utils3().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path5.extname;
-    var resolve = path5.resolve;
+    var extname = path7.extname;
+    var resolve = path7.resolve;
     var vary = require_vary();
     var { Buffer: Buffer2 } = __require("buffer");
     var res = Object.create(http.ServerResponse.prototype);
@@ -23221,26 +23221,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path6, options, callback) {
+    res.sendFile = function sendFile(path8, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path6) {
+      if (!path8) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path6 !== "string") {
+      if (typeof path8 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !pathIsAbsolute(path6)) {
+      if (!opts.root && !pathIsAbsolute(path8)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path6);
+      var pathname = encodeURI(path8);
       opts.etag = this.app.enabled("etag");
       var file2 = send(req, pathname, opts);
       sendfile(res2, file2, opts, function(err) {
@@ -23251,7 +23251,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.download = function download(path6, filename, options, callback) {
+    res.download = function download(path8, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23268,7 +23268,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path6)
+        "Content-Disposition": contentDisposition(name || path8)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23281,7 +23281,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path6) : path6;
+      var fullPath = !opts.root ? resolve(path8) : path8;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23564,11 +23564,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl.original(req);
-        var path5 = parseUrl(req).pathname;
-        if (path5 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path5 = "";
+        var path7 = parseUrl(req).pathname;
+        if (path7 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path7 = "";
         }
-        var stream = send(req, path5, opts);
+        var stream = send(req, path7, opts);
         stream.on("directory", onDirectory);
         if (setHeaders) {
           stream.on("headers", setHeaders);
@@ -23927,8 +23927,8 @@ var require_utils4 = __commonJS({
       }
       return output;
     };
-    exports.basename = (path5, { windows } = {}) => {
-      const segs = path5.split(windows ? /[\\/]/ : "/");
+    exports.basename = (path7, { windows } = {}) => {
+      const segs = path7.split(windows ? /[\\/]/ : "/");
       const last = segs[segs.length - 1];
       if (last === "") {
         return segs[segs.length - 2];
@@ -25194,16 +25194,18 @@ var require_picomatch2 = __commonJS({
 });
 
 // src/engine/main.ts
-import { existsSync as existsSync2 } from "fs";
+import { existsSync as existsSync3 } from "fs";
 import net from "net";
-import os2 from "os";
-import path4 from "path";
-import { promisify } from "util";
+import os3 from "os";
+import path6 from "path";
+import { promisify as promisify2 } from "util";
 
 // src/api/app.ts
 var import_express = __toESM(require_express2(), 1);
-import { existsSync } from "fs";
-import path2 from "path";
+import { spawn as spawn3 } from "child_process";
+import { randomUUID } from "crypto";
+import { existsSync as existsSync2 } from "fs";
+import path4 from "path";
 
 // ../../node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -25972,10 +25974,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path5) {
-  if (!path5)
+function getElementAtPath(obj, path7) {
+  if (!path7)
     return obj;
-  return path5.reduce((acc, key) => acc?.[key], obj);
+  return path7.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -26358,11 +26360,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path5, issues) {
+function prefixIssues(path7, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path5);
+    iss.path.unshift(path7);
     return iss;
   });
 }
@@ -26545,7 +26547,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path5 = []) => {
+  const processError = (error49, path7 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -26555,7 +26557,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path5, ...issue2.path];
+        const fullpath = [...path7, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -26587,8 +26589,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path5 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path5) {
+  const path7 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path7) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -38565,13 +38567,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path5 = ref.slice(1).split("/").filter(Boolean);
-  if (path5.length === 0) {
+  const path7 = ref.slice(1).split("/").filter(Boolean);
+  if (path7.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path5[0] === defsKey) {
-    const key = path5[1];
+  if (path7[0] === defsKey) {
+    const key = path7[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -40338,6 +40340,868 @@ var MemoryStore = class {
   }
 };
 
+// src/backfill/orchestrator.ts
+import { existsSync } from "fs";
+
+// src/backfill/consolidate.ts
+import { spawn } from "child_process";
+import path2 from "path";
+
+// src/extraction/contracts.ts
+var workerPayloadSchema = external_exports.object({
+  background_hook_id: external_exports.string().trim().min(1).optional(),
+  endpoint: external_exports.object({
+    host: external_exports.string().min(1),
+    port: external_exports.number().int().min(1).max(65535)
+  }),
+  project_root: external_exports.string().min(1),
+  repo_id: external_exports.string().min(1),
+  transcript_path: external_exports.string().min(1),
+  last_assistant_message: external_exports.string().optional(),
+  session_id: external_exports.string().optional()
+});
+var updateFieldsSchema = external_exports.object({
+  content: external_exports.string().trim().min(1).optional(),
+  tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
+  is_pinned: external_exports.boolean().optional(),
+  path_matchers: external_exports.array(pathMatcherSchema).optional()
+}).refine((value) => Object.keys(value).length > 0, "Update action must include at least one field");
+var createActionSchema = external_exports.object({
+  action: external_exports.literal("create"),
+  confidence: external_exports.number().min(0).max(1),
+  reason: external_exports.string().optional(),
+  memory_type: memoryTypeSchema,
+  content: external_exports.string().trim().min(1),
+  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
+  is_pinned: external_exports.boolean().default(false),
+  path_matchers: external_exports.array(pathMatcherSchema).default([])
+});
+var updateActionSchema = external_exports.object({
+  action: external_exports.literal("update"),
+  confidence: external_exports.number().min(0).max(1),
+  reason: external_exports.string().optional(),
+  memory_id: external_exports.string().trim().min(1),
+  updates: updateFieldsSchema
+});
+var deleteActionSchema = external_exports.object({
+  action: external_exports.literal("delete"),
+  confidence: external_exports.number().min(0).max(1),
+  reason: external_exports.string().optional(),
+  memory_id: external_exports.string().trim().min(1)
+});
+var skipActionSchema = external_exports.object({
+  action: external_exports.literal("skip"),
+  confidence: external_exports.number().min(0).max(1).default(1),
+  reason: external_exports.string().optional()
+});
+var workerActionSchema = external_exports.discriminatedUnion("action", [
+  createActionSchema,
+  updateActionSchema,
+  deleteActionSchema,
+  skipActionSchema
+]);
+var workerOutputSchema = external_exports.object({
+  actions: external_exports.array(workerActionSchema)
+});
+
+// src/backfill/consolidate.ts
+function buildConsolidationPrompt(candidates, projectRoot) {
+  const candidatesText = JSON.stringify(
+    candidates.map((c, i) => ({
+      index: i,
+      content: c.content,
+      memory_type: c.memory_type,
+      tags: c.tags,
+      is_pinned: c.is_pinned,
+      path_matchers: c.path_matchers,
+      confidence: c.confidence,
+      source_session: c.source_session
+    })),
+    null,
+    2
+  );
+  return [
+    "You are a memory consolidation agent. You have candidate memory insights extracted from multiple historical sessions for a single project.",
+    "Your job is to deduplicate, merge, and select the best version of each concept, then output final memory actions.",
+    "Return strict JSON only (no prose, no markdown fences) with this exact shape:",
+    '{"actions":[...]}',
+    "",
+    "## Available tool",
+    "",
+    "**recall tool** \u2014 Search existing project memories to check for duplicates before creating.",
+    `Always pass project_root: "${projectRoot}"`,
+    "Always pass include_debug_metadata: true (to get memory IDs for update/delete).",
+    "",
+    "## Workflow",
+    "",
+    "1. Group the candidates below by concept/topic.",
+    "2. For each group, call recall to check if the concept already exists in the database.",
+    "3. Decide:",
+    "   - If it already exists and is up-to-date \u2192 skip",
+    "   - If it exists but needs updating \u2192 emit update with the memory_id from recall",
+    "   - If multiple candidates express the same concept \u2192 merge into one create with the best wording",
+    "   - If the concept is unique and valuable \u2192 emit create",
+    "   - If a candidate is low-quality or ephemeral \u2192 skip",
+    "",
+    "## Action contracts",
+    "",
+    '- create: {"action":"create","confidence":0..1,"reason":"...","memory_type":"fact|rule|decision|episode","content":"...","tags":[...],"is_pinned":boolean,"path_matchers":[{"path_matcher":"..."}]}',
+    '- update: {"action":"update","confidence":0..1,"reason":"...","memory_id":"...","updates":{"content?":"...","tags?":[...],"is_pinned?":boolean,"path_matchers?":[{"path_matcher":"..."}]}}',
+    '- delete: {"action":"delete","confidence":0..1,"reason":"...","memory_id":"..."}',
+    '- skip: {"action":"skip","confidence":0..1,"reason":"..."}',
+    "",
+    "## Rules",
+    "",
+    "- Do not invent memory IDs \u2014 only use IDs returned by the recall tool.",
+    "- update/delete must target existing memory IDs from recall results.",
+    "- ALMOST ALL memories should be is_pinned=false.",
+    "- is_pinned=true only for rare project-wide invariants.",
+    "- Prefer fewer, higher-quality memories over many similar ones.",
+    "- Never include secrets.",
+    "",
+    `## Candidates (${candidates.length} total from ${new Set(candidates.map((c) => c.source_session)).size} sessions)`,
+    "",
+    candidatesText
+  ].join("\n");
+}
+async function consolidateProject(candidates, projectRoot, endpoint, repoId, pluginRoot) {
+  if (candidates.length === 0) {
+    return { actions: [], actionsApplied: 0, errors: [] };
+  }
+  const prompt = buildConsolidationPrompt(candidates, projectRoot);
+  const claudeResult = await runClaudeWithRecall(prompt, projectRoot, pluginRoot);
+  if (claudeResult.code !== 0) {
+    throw new Error(`Claude exited with status ${claudeResult.code}: ${claudeResult.stderr}`);
+  }
+  const actions = parseConsolidationOutput(claudeResult.stdout);
+  const errors = [];
+  let actionsApplied = 0;
+  for (const action of actions) {
+    if (action.action === "skip" || action.confidence < 0.75) {
+      continue;
+    }
+    const result = await applyAction(endpoint, repoId, action);
+    if (result.ok) {
+      actionsApplied++;
+    } else {
+      errors.push(`${action.action}: ${result.message}`);
+    }
+  }
+  return { actions, actionsApplied, errors };
+}
+function parseConsolidationOutput(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return [];
+  }
+  const jsonText = extractJsonText(trimmed);
+  if (!jsonText) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (Array.isArray(parsed.actions)) {
+      parsed.actions = parsed.actions.map(normalizeAction);
+    }
+    const result = workerOutputSchema.parse(parsed);
+    return result.actions;
+  } catch {
+    return [];
+  }
+}
+function normalizeAction(action) {
+  if (Array.isArray(action.path_matchers)) {
+    action.path_matchers = action.path_matchers.map(
+      (pm) => typeof pm === "string" ? { path_matcher: pm } : pm
+    );
+  }
+  if (action.updates && typeof action.updates === "object") {
+    const updates = action.updates;
+    if (Array.isArray(updates.path_matchers)) {
+      updates.path_matchers = updates.path_matchers.map(
+        (pm) => typeof pm === "string" ? { path_matcher: pm } : pm
+      );
+    }
+  }
+  return action;
+}
+function extractJsonText(raw) {
+  let outer;
+  try {
+    outer = JSON.parse(raw);
+  } catch {
+    return extractFromText(raw);
+  }
+  if (!outer || typeof outer !== "object") {
+    return null;
+  }
+  const record2 = outer;
+  if (typeof record2.result === "string") {
+    return extractFromText(record2.result);
+  }
+  if (Array.isArray(record2.actions)) {
+    return raw;
+  }
+  return raw;
+}
+function extractFromText(text) {
+  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (fenceMatch?.[1]) return fenceMatch[1].trim();
+  const braceIdx = text.indexOf('{"actions"');
+  if (braceIdx !== -1) {
+    const jsonPart = text.slice(braceIdx);
+    try {
+      JSON.parse(jsonPart);
+      return jsonPart;
+    } catch {
+    }
+  }
+  return null;
+}
+function runClaudeWithRecall(prompt, projectRoot, pluginRoot) {
+  const mcpServerPath = path2.join(pluginRoot, "dist", "mcp", "search-server.js");
+  const mcpConfig = JSON.stringify({
+    mcpServers: {
+      memories: {
+        type: "stdio",
+        command: process.execPath,
+        args: [mcpServerPath]
+      }
+    }
+  });
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "claude",
+      [
+        "-p",
+        "--output-format",
+        "json",
+        "--no-session-persistence",
+        "--model",
+        "claude-sonnet-4-6",
+        "--mcp-config",
+        mcpConfig,
+        "--allowedTools",
+        "mcp__memories__recall"
+      ],
+      {
+        cwd: projectRoot,
+        env: process.env,
+        stdio: ["pipe", "pipe", "pipe"]
+      }
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({ code: code ?? 1, stdout, stderr });
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+}
+async function applyAction(endpoint, repoId, action) {
+  if (action.action === "skip") {
+    return { ok: true };
+  }
+  try {
+    if (action.action === "create") {
+      const response = await fetch(`http://${endpoint.host}:${endpoint.port}/memories/add`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          repo_id: repoId,
+          memory_type: action.memory_type,
+          content: action.content,
+          tags: action.tags,
+          is_pinned: action.is_pinned,
+          path_matchers: action.path_matchers
+        })
+      });
+      if (!response.ok) {
+        return { ok: false, message: `create failed: ${response.status}` };
+      }
+      return { ok: true };
+    }
+    if (action.action === "update") {
+      const response = await fetch(
+        `http://${endpoint.host}:${endpoint.port}/memories/${action.memory_id}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ repo_id: repoId, ...action.updates })
+        }
+      );
+      if (!response.ok) {
+        return { ok: false, message: `update failed: ${response.status}` };
+      }
+      return { ok: true };
+    }
+    if (action.action === "delete") {
+      const response = await fetch(
+        `http://${endpoint.host}:${endpoint.port}/memories/${action.memory_id}?repo_id=${encodeURIComponent(repoId)}`,
+        { method: "DELETE" }
+      );
+      if (!response.ok) {
+        return { ok: false, message: `delete failed: ${response.status}` };
+      }
+      return { ok: true };
+    }
+    return { ok: true };
+  } catch (error48) {
+    return { ok: false, message: error48 instanceof Error ? error48.message : String(error48) };
+  }
+}
+
+// src/backfill/discover.ts
+import { readFile as readFile3, readdir, stat } from "fs/promises";
+import os from "os";
+import path3 from "path";
+
+// src/shared/repo-identity.ts
+import { execFile } from "child_process";
+import { createHash } from "crypto";
+import { realpath } from "fs/promises";
+import { promisify } from "util";
+var execFileAsync = promisify(execFile);
+var GIT_TIMEOUT_MS = 3e3;
+var repoIdCache = /* @__PURE__ */ new Map();
+var repoLabelCache = /* @__PURE__ */ new Map();
+function hashIdentity(identity) {
+  return createHash("sha256").update(identity).digest("hex").slice(0, 16);
+}
+function normalizeRemoteUrl(url2) {
+  let normalized = url2.trim();
+  normalized = normalized.replace(/\.git\/?$/, "");
+  normalized = normalized.replace(/\/+$/, "");
+  const sshMatch = normalized.match(/^[\w.-]+@([\w.-]+):(.*)/);
+  if (sshMatch) {
+    const host = sshMatch[1].toLowerCase();
+    const path7 = sshMatch[2];
+    return `${host}/${path7}`;
+  }
+  const httpsMatch = normalized.match(/^https?:\/\/([\w.-]+(?::\d+)?)\/(.*)/);
+  if (httpsMatch) {
+    const host = httpsMatch[1].toLowerCase();
+    const path7 = httpsMatch[2];
+    return `${host}/${path7}`;
+  }
+  const sshProtoMatch = normalized.match(/^ssh:\/\/[\w.-]+@([\w.-]+(?::\d+)?)\/(.*)/);
+  if (sshProtoMatch) {
+    const host = sshProtoMatch[1].toLowerCase();
+    const path7 = sshProtoMatch[2];
+    return `${host}/${path7}`;
+  }
+  return normalized;
+}
+async function gitExec(projectRoot, args) {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", projectRoot, ...args], {
+      timeout: GIT_TIMEOUT_MS
+    });
+    const trimmed = stdout.trim();
+    return trimmed || null;
+  } catch {
+    return null;
+  }
+}
+async function resolveIdentity(projectRoot) {
+  const originUrl = await gitExec(projectRoot, ["remote", "get-url", "origin"]);
+  if (originUrl) {
+    const normalized = normalizeRemoteUrl(originUrl);
+    return { id: hashIdentity(normalized), label: normalized };
+  }
+  const toplevel = await gitExec(projectRoot, ["rev-parse", "--show-toplevel"]);
+  if (toplevel) {
+    let resolved2;
+    try {
+      resolved2 = await realpath(toplevel);
+    } catch {
+      resolved2 = toplevel;
+    }
+    return { id: hashIdentity(resolved2), label: resolved2 };
+  }
+  let resolved;
+  try {
+    resolved = await realpath(projectRoot);
+  } catch {
+    resolved = projectRoot;
+  }
+  return { id: hashIdentity(resolved), label: resolved };
+}
+async function resolveRepoId(projectRoot) {
+  const cached2 = repoIdCache.get(projectRoot);
+  if (cached2) {
+    return cached2;
+  }
+  const { id, label } = await resolveIdentity(projectRoot);
+  repoIdCache.set(projectRoot, id);
+  repoLabelCache.set(projectRoot, label);
+  return id;
+}
+
+// src/backfill/discover.ts
+var MIN_LINE_COUNT = 3;
+async function discoverTranscripts() {
+  const claudeDir = path3.join(os.homedir(), ".claude", "projects");
+  let projectFolders;
+  try {
+    projectFolders = await readdir(claudeDir);
+  } catch {
+    return { transcripts: [], projects: /* @__PURE__ */ new Map() };
+  }
+  const transcripts = [];
+  for (const folder of projectFolders) {
+    const folderPath = path3.join(claudeDir, folder);
+    const folderStat = await stat(folderPath).catch(() => null);
+    if (!folderStat?.isDirectory()) {
+      continue;
+    }
+    const entries = await readdir(folderPath).catch(() => []);
+    const jsonlFiles = entries.filter((e) => e.endsWith(".jsonl"));
+    for (const file2 of jsonlFiles) {
+      const transcriptPath = path3.join(folderPath, file2);
+      const transcript = await probeTranscript(transcriptPath, folder, file2);
+      if (transcript) {
+        transcripts.push(transcript);
+      }
+    }
+  }
+  const projects = /* @__PURE__ */ new Map();
+  for (const t of transcripts) {
+    const list = projects.get(t.repoId) ?? [];
+    list.push(t);
+    projects.set(t.repoId, list);
+  }
+  for (const list of projects.values()) {
+    list.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  }
+  return { transcripts, projects };
+}
+async function probeTranscript(transcriptPath, projectFolder, fileName) {
+  try {
+    const raw = await readFile3(transcriptPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim());
+    if (lines.length < MIN_LINE_COUNT) {
+      return null;
+    }
+    const firstLine = parseFirstEntry(lines);
+    if (!firstLine?.cwd || !path3.isAbsolute(firstLine.cwd)) {
+      return null;
+    }
+    const cwd = firstLine.cwd;
+    let repoId;
+    try {
+      repoId = await resolveRepoId(cwd);
+    } catch {
+      return null;
+    }
+    return {
+      transcriptPath,
+      projectFolder,
+      cwd,
+      repoId,
+      sessionId: firstLine.sessionId ?? path3.basename(fileName, ".jsonl"),
+      timestamp: firstLine.timestamp ?? "",
+      lineCount: lines.length
+    };
+  } catch {
+    return null;
+  }
+}
+function parseFirstEntry(lines) {
+  for (const line of lines) {
+    try {
+      const obj = JSON.parse(line);
+      if (typeof obj.cwd === "string") {
+        return {
+          cwd: obj.cwd,
+          sessionId: typeof obj.sessionId === "string" ? obj.sessionId : void 0,
+          timestamp: typeof obj.timestamp === "string" ? obj.timestamp : void 0
+        };
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+// src/backfill/extract-candidates.ts
+import { spawn as spawn2 } from "child_process";
+var candidateSchema = external_exports.object({
+  content: external_exports.string().trim().min(1),
+  memory_type: external_exports.enum(["fact", "rule", "decision", "episode"]),
+  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
+  is_pinned: external_exports.boolean().default(false),
+  path_matchers: external_exports.array(
+    external_exports.union([
+      external_exports.object({ path_matcher: external_exports.string() }),
+      external_exports.string().transform((s) => ({ path_matcher: s }))
+    ])
+  ).default([]),
+  confidence: external_exports.number().min(0).max(1),
+  reason: external_exports.string().default("")
+});
+var candidatesOutputSchema = external_exports.object({
+  candidates: external_exports.array(candidateSchema)
+});
+function buildPhase1Prompt(transcriptPath) {
+  return [
+    "You are a memory extraction agent. Your job is to read a Claude Code session transcript and extract durable insights worth remembering for future sessions.",
+    "",
+    "## Transcript",
+    "",
+    `The transcript is a JSONL file at: ${transcriptPath}`,
+    "The file is JSONL (one JSON object per line) and may be very large.",
+    "IMPORTANT: Use Bash to pre-filter the file before reading. For example:",
+    `  grep -E '"type":"(user|assistant)"' '${transcriptPath}' | head -200`,
+    "This extracts only user/assistant conversation lines, skipping noise (progress, system, etc.).",
+    "Then use the Read tool or Bash to examine the filtered content.",
+    "",
+    "## Understanding the transcript format",
+    "",
+    "Each line is a JSON object. Key fields:",
+    '- `type`: "user", "assistant", "progress", "system", "file-history-snapshot"',
+    "- `message.content`: the actual text (string) or content blocks (array)",
+    "",
+    'Focus on lines where `type` is "user" or "assistant" \u2014 these are the actual conversation.',
+    'SKIP these entirely: `type` = "progress" (streaming updates), "system", "file-history-snapshot".',
+    "SKIP lines where `isSidechain` = true (internal subagent work).",
+    'For assistant messages, ignore content blocks with `type` = "thinking" (internal reasoning).',
+    "Tool calls (`tool_use`) and tool results (`tool_result`) have some context but the real insights are in user/assistant text.",
+    "",
+    "## What to extract",
+    "",
+    '- General principles, rules, preferences ("always do X", "never do Y", "we use X for Y")',
+    "- Structural facts about the project (file locations, architecture, key exports)",
+    "- Architectural decisions and trade-offs discussed",
+    "- Workflow conventions and patterns",
+    "",
+    "Do NOT extract:",
+    "- Ephemeral debugging steps, typo fixes, or one-off tasks",
+    "- Secrets, credentials, or tokens",
+    "- Content that only makes sense in the context of that one session",
+    "",
+    "## Output format",
+    "",
+    "After reading the transcript, return strict JSON only (no prose, no markdown fences):",
+    '{"candidates":[...]}',
+    "",
+    "Each candidate:",
+    "- content: the memory text (clear, self-contained)",
+    '- memory_type: "fact" | "rule" | "decision" | "episode"',
+    "- tags: relevant keywords",
+    "- is_pinned: almost always false (true only for rare project-wide invariants)",
+    "- path_matchers: file paths this relates to (if any)",
+    "- confidence: 0..1",
+    "- reason: why this is worth remembering",
+    "",
+    "Split composite insights into separate candidates (one concept each).",
+    'If nothing is worth extracting, return {"candidates":[]}.'
+  ].join("\n");
+}
+async function extractCandidates(transcriptPath, sessionId) {
+  const prompt = buildPhase1Prompt(transcriptPath);
+  const result = await runClaudeWithRead(prompt);
+  if (result.code !== 0) {
+    throw new Error(`Claude exited with status ${result.code}: ${result.stderr}`);
+  }
+  const parsed = parsePhase1Output(result.stdout);
+  return parsed.map((c) => ({ ...c, source_session: sessionId }));
+}
+function parsePhase1Output(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return [];
+  }
+  const jsonText = extractJsonText2(trimmed);
+  if (!jsonText) {
+    return [];
+  }
+  try {
+    const result = candidatesOutputSchema.parse(JSON.parse(jsonText));
+    return result.candidates;
+  } catch {
+    return [];
+  }
+}
+function extractJsonText2(raw) {
+  let outer;
+  try {
+    outer = JSON.parse(raw);
+  } catch {
+    return extractFromFences(raw);
+  }
+  if (!outer || typeof outer !== "object") {
+    return null;
+  }
+  const record2 = outer;
+  if (typeof record2.result === "string") {
+    const inner = record2.result;
+    const fromFences = extractFromFences(inner);
+    if (fromFences) return fromFences;
+    const fromBrace = extractJsonFromBrace(inner);
+    if (fromBrace) return fromBrace;
+    return inner;
+  }
+  if (Array.isArray(record2.candidates)) {
+    return raw;
+  }
+  if (Array.isArray(record2.content)) {
+    for (const block of record2.content) {
+      if (block?.type === "text" && typeof block.text === "string") {
+        const fromFences = extractFromFences(block.text);
+        if (fromFences) return fromFences;
+        return block.text;
+      }
+    }
+  }
+  return raw;
+}
+function extractFromFences(text) {
+  const match = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  return match?.[1]?.trim() ?? null;
+}
+function extractJsonFromBrace(text) {
+  const idx = text.indexOf('{"candidates"');
+  if (idx === -1) return null;
+  const jsonPart = text.slice(idx);
+  try {
+    JSON.parse(jsonPart);
+    return jsonPart;
+  } catch {
+    return null;
+  }
+}
+function runClaudeWithRead(prompt) {
+  return new Promise((resolve, reject) => {
+    const child = spawn2(
+      "claude",
+      [
+        "--bare",
+        "-p",
+        "--output-format",
+        "json",
+        "--no-session-persistence",
+        "--model",
+        "claude-sonnet-4-6",
+        "--allowedTools",
+        "Read,Bash"
+      ],
+      {
+        env: process.env,
+        stdio: ["pipe", "pipe", "pipe"]
+      }
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({ code: code ?? 1, stdout, stderr });
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+}
+
+// src/backfill/orchestrator.ts
+var DEFAULT_CONCURRENCY = 5;
+var BackfillOrchestrator = class {
+  state = createIdleState();
+  candidatesByRepo = /* @__PURE__ */ new Map();
+  cancelled = false;
+  endpoint;
+  pluginRoot;
+  constructor(endpoint, pluginRoot) {
+    this.endpoint = endpoint;
+    this.pluginRoot = pluginRoot;
+  }
+  getState() {
+    return this.state;
+  }
+  isRunning() {
+    return !["idle", "done", "error"].includes(this.state.status);
+  }
+  cancel() {
+    this.cancelled = true;
+    this.state.status = "done";
+  }
+  async run(targetRepoId) {
+    if (this.isRunning()) {
+      throw new Error("Backfill is already running");
+    }
+    this.state = createIdleState();
+    this.state.repoId = targetRepoId;
+    this.candidatesByRepo.clear();
+    this.cancelled = false;
+    try {
+      this.state.status = "discovering";
+      this.state.startedAt = (/* @__PURE__ */ new Date()).toISOString();
+      logInfo("Backfill started: discovering transcripts", { targetRepoId });
+      const discovery = await discoverTranscripts();
+      if (this.cancelled) return;
+      const repoTranscripts = discovery.transcripts.filter((t) => t.repoId === targetRepoId);
+      const repoProjects = /* @__PURE__ */ new Map();
+      if (repoTranscripts.length > 0) {
+        repoProjects.set(targetRepoId, repoTranscripts);
+      }
+      this.state.discovery = {
+        totalTranscripts: repoTranscripts.length,
+        totalProjects: repoProjects.size
+      };
+      logInfo("Backfill discovery complete", {
+        transcripts: repoTranscripts.length,
+        targetRepoId
+      });
+      this.state.status = "phase1";
+      this.state.phase1.total = repoTranscripts.length;
+      this.state.phase1.results = repoTranscripts.map((t) => ({
+        sessionId: t.sessionId,
+        repoId: t.repoId,
+        transcriptPath: t.transcriptPath,
+        status: "pending"
+      }));
+      await this.runPhase1(repoTranscripts);
+      if (this.cancelled) return;
+      this.state.status = "phase2";
+      const repoIds = [...repoProjects.keys()];
+      this.state.phase2.total = repoIds.length;
+      this.state.phase2.results = repoIds.map((repoId) => ({
+        repoId,
+        status: "pending"
+      }));
+      await this.runPhase2(repoProjects);
+      if (this.cancelled) return;
+      this.state.status = "done";
+      logInfo("Backfill complete");
+    } catch (error48) {
+      this.state.status = "error";
+      logError("Backfill failed", {
+        error: error48 instanceof Error ? error48.message : String(error48)
+      });
+    }
+  }
+  async runPhase1(transcripts) {
+    const queue = [...transcripts];
+    const running = /* @__PURE__ */ new Map();
+    const processNext = async () => {
+      while (queue.length > 0 && running.size < DEFAULT_CONCURRENCY && !this.cancelled) {
+        const transcript = queue.shift();
+        const resultEntry = this.state.phase1.results.find(
+          (r) => r.sessionId === transcript.sessionId
+        );
+        if (!resultEntry) continue;
+        resultEntry.status = "running";
+        this.state.phase1.running++;
+        const promise2 = this.extractOne(transcript, resultEntry).then(() => {
+          running.delete(transcript.sessionId);
+        });
+        running.set(transcript.sessionId, promise2);
+      }
+    };
+    await processNext();
+    while (running.size > 0 && !this.cancelled) {
+      await Promise.race([...running.values()]);
+      await processNext();
+    }
+  }
+  async extractOne(transcript, resultEntry) {
+    try {
+      const candidates = await extractCandidates(
+        transcript.transcriptPath,
+        transcript.sessionId
+      );
+      resultEntry.status = "done";
+      resultEntry.candidateCount = candidates.length;
+      this.state.phase1.completed++;
+      this.state.phase1.running--;
+      const existing = this.candidatesByRepo.get(transcript.repoId) ?? [];
+      existing.push(...candidates);
+      this.candidatesByRepo.set(transcript.repoId, existing);
+    } catch (error48) {
+      resultEntry.status = "error";
+      resultEntry.error = error48 instanceof Error ? error48.message : String(error48);
+      this.state.phase1.failed++;
+      this.state.phase1.running--;
+      logError("Phase 1 extraction failed", {
+        sessionId: transcript.sessionId,
+        error: error48 instanceof Error ? error48.message : String(error48)
+      });
+    }
+  }
+  async runPhase2(projects) {
+    for (const [repoId, transcripts] of projects) {
+      if (this.cancelled) return;
+      const resultEntry = this.state.phase2.results.find((r) => r.repoId === repoId);
+      if (!resultEntry) continue;
+      const candidates = this.candidatesByRepo.get(repoId) ?? [];
+      resultEntry.candidateInputCount = candidates.length;
+      const projectRoot = transcripts[0].cwd;
+      if (candidates.length === 0 || !existsSync(projectRoot)) {
+        resultEntry.status = "done";
+        resultEntry.actionsApplied = 0;
+        if (!existsSync(projectRoot)) {
+          resultEntry.error = "project directory no longer exists";
+        }
+        this.state.phase2.completed++;
+        continue;
+      }
+      resultEntry.status = "running";
+      this.state.phase2.running++;
+      try {
+        const result = await consolidateProject(
+          candidates,
+          projectRoot,
+          this.endpoint,
+          repoId,
+          this.pluginRoot
+        );
+        resultEntry.status = "done";
+        resultEntry.actionsApplied = result.actionsApplied;
+        this.state.phase2.completed++;
+        this.state.phase2.running--;
+        if (result.errors.length > 0) {
+          resultEntry.error = result.errors.join("; ");
+        }
+        logInfo("Phase 2 consolidation complete", {
+          repoId,
+          candidateCount: candidates.length,
+          actionsApplied: result.actionsApplied
+        });
+      } catch (error48) {
+        resultEntry.status = "error";
+        resultEntry.error = error48 instanceof Error ? error48.message : String(error48);
+        this.state.phase2.completed++;
+        this.state.phase2.running--;
+        logError("Phase 2 consolidation failed", {
+          repoId,
+          error: error48 instanceof Error ? error48.message : String(error48)
+        });
+      }
+    }
+  }
+};
+function createIdleState() {
+  return {
+    status: "idle",
+    phase1: { total: 0, completed: 0, running: 0, failed: 0, results: [] },
+    phase2: { total: 0, completed: 0, running: 0, results: [] }
+  };
+}
+
 // src/api/errors.ts
 function sendError(response, status, code, message) {
   return response.status(status).json({
@@ -40384,6 +41248,13 @@ var backgroundHookFinishSchema = external_exports.object({
   detail: external_exports.string().trim().min(1).optional(),
   pid: external_exports.number().int().positive().optional()
 });
+var extractionEnqueueSchema = external_exports.object({
+  transcript_path: external_exports.string().trim().min(1),
+  project_root: external_exports.string().trim().min(1),
+  repo_id: external_exports.string().trim().min(1),
+  session_id: external_exports.string().trim().min(1).optional(),
+  last_assistant_message: external_exports.string().optional()
+});
 function toEventLog(input) {
   return memoryEventLogSchema.parse(input);
 }
@@ -40409,6 +41280,9 @@ function createEngineApp(options) {
   const activeBackgroundHooks = /* @__PURE__ */ new Map();
   let lastInteractionAtMs = Date.now();
   let idleShutdownTriggered = false;
+  const extractionQueue = [];
+  let activeExtractionChild = null;
+  let activeExtractionJob = null;
   function resetIdleTimer() {
     lastInteractionAtMs = Date.now();
   }
@@ -40507,6 +41381,68 @@ function createEngineApp(options) {
       );
     }
   }
+  function processNextExtraction() {
+    if (activeExtractionChild || extractionQueue.length === 0) {
+      return;
+    }
+    const job = extractionQueue.shift();
+    activeExtractionJob = job;
+    const backgroundHookId = randomUUID();
+    const now = Date.now();
+    const hook = {
+      id: backgroundHookId,
+      hook_name: "extraction",
+      startedAtMs: now,
+      lastHeartbeatAtMs: now,
+      staleAtMs: now + backgroundHookPolicy.heartbeatTimeoutMs,
+      hardTimeoutAtMs: now + backgroundHookPolicy.maxRuntimeMs,
+      ...job.session_id ? { session_id: job.session_id } : {}
+    };
+    activeBackgroundHooks.set(backgroundHookId, hook);
+    void appendBackgroundHookLifecycleEvent("background-hook/start", hook, "ok");
+    const handoff = {
+      background_hook_id: backgroundHookId,
+      endpoint: { host: LOOPBACK_HOST, port: options.port },
+      ...job
+    };
+    const encoded = Buffer.from(JSON.stringify(handoff), "utf8").toString("base64");
+    const workerPath = path4.join(options.pluginRoot, "dist", "extraction", "run.js");
+    const child = spawn3(process.execPath, [workerPath, "--handoff", encoded], {
+      stdio: "ignore",
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: options.pluginRoot }
+    });
+    if (typeof child.pid === "number") {
+      hook.pid = child.pid;
+    }
+    activeExtractionChild = child;
+    let exited = false;
+    const onChildExit = () => {
+      if (exited) {
+        return;
+      }
+      exited = true;
+      const finished = activeBackgroundHooks.get(backgroundHookId);
+      if (finished) {
+        activeBackgroundHooks.delete(backgroundHookId);
+        void appendBackgroundHookLifecycleEvent(
+          "background-hook/finish",
+          finished,
+          "ok",
+          "extraction worker exited"
+        );
+      }
+      activeExtractionChild = null;
+      activeExtractionJob = null;
+      processNextExtraction();
+    };
+    child.on("close", onChildExit);
+    child.on("error", (error48) => {
+      logError("Extraction worker spawn error", {
+        error: error48 instanceof Error ? error48.message : String(error48)
+      });
+      onChildExit();
+    });
+  }
   const backgroundHookSweepTimer = setInterval(() => {
     void sweepExpiredBackgroundHooks().catch((error48) => {
       logError("Background hook sweep failed", {
@@ -40519,15 +41455,15 @@ function createEngineApp(options) {
     checkIdleTimeout();
   }, idleCheckIntervalMs);
   idleCheckTimer.unref?.();
-  const staticUiDir = path2.join(options.pluginRoot, "web", "dist");
-  if (existsSync(staticUiDir)) {
+  const staticUiDir = path4.join(options.pluginRoot, "web", "dist");
+  if (existsSync2(staticUiDir)) {
     app.use("/ui", import_express.default.static(staticUiDir));
     app.get("/ui{*path}", (request, response, next) => {
       if (request.path.startsWith("/ui/assets/")) {
         next();
         return;
       }
-      response.sendFile(path2.join(staticUiDir, "index.html"));
+      response.sendFile(path4.join(staticUiDir, "index.html"));
     });
   }
   app.get("/health", (_request, response) => {
@@ -40535,6 +41471,44 @@ function createEngineApp(options) {
       ok: true,
       port: options.port
     });
+  });
+  app.post("/shutdown", async (_request, response) => {
+    if (!options.onShutdownRequest) {
+      return sendError(response, 501, "NOT_CONFIGURED", "Shutdown callback not configured");
+    }
+    response.json({ status: "shutting_down" });
+    response.once("finish", () => {
+      void options.onShutdownRequest().catch((error48) => {
+        logError("Shutdown request callback failed", {
+          error: error48 instanceof Error ? error48.message : String(error48)
+        });
+      });
+    });
+  });
+  const backfillOrchestrator = new BackfillOrchestrator(
+    { host: LOOPBACK_HOST, port: options.port },
+    options.pluginRoot
+  );
+  app.post("/backfill/start", (request, response) => {
+    const repoId = request.body?.repo_id;
+    if (typeof repoId !== "string" || !repoId.trim()) {
+      return sendError(response, 400, "MISSING_REPO_ID", "repo_id is required");
+    }
+    if (backfillOrchestrator.isRunning()) {
+      return sendError(response, 409, "ALREADY_RUNNING", "Backfill is already in progress");
+    }
+    void backfillOrchestrator.run(repoId);
+    response.json({ status: "started" });
+  });
+  app.get("/backfill/status", (_request, response) => {
+    response.json(backfillOrchestrator.getState());
+  });
+  app.post("/backfill/cancel", (_request, response) => {
+    if (!backfillOrchestrator.isRunning()) {
+      return sendError(response, 400, "NOT_RUNNING", "No backfill in progress");
+    }
+    backfillOrchestrator.cancel();
+    response.json({ status: "cancelled" });
   });
   app.get("/stats", async (_request, response) => {
     await sweepExpiredBackgroundHooks();
@@ -40647,6 +41621,31 @@ function createEngineApp(options) {
       parsedBody.data.detail
     );
     return response.json({ active: false, ok: true });
+  });
+  app.get("/extraction/status", (_request, response) => {
+    const summary = (job) => ({
+      repo_id: job.repo_id,
+      transcript_path: job.transcript_path,
+      ...job.session_id ? { session_id: job.session_id } : {}
+    });
+    return response.json({
+      active: activeExtractionJob ? summary(activeExtractionJob) : null,
+      queue: extractionQueue.map(summary)
+    });
+  });
+  app.post("/extraction/enqueue", (request, response) => {
+    const parsed = extractionEnqueueSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendError(response, 400, "INVALID_PAYLOAD", parsed.error.message);
+    }
+    const existingIndex = extractionQueue.findIndex((job) => job.repo_id === parsed.data.repo_id);
+    if (existingIndex !== -1) {
+      extractionQueue[existingIndex] = parsed.data;
+    } else {
+      extractionQueue.push(parsed.data);
+    }
+    processNextExtraction();
+    return response.status(202).json({ ok: true });
   });
   app.get("/memories/pinned", (request, response) => {
     const parsed = pinnedQuerySchema.safeParse(request.query);
@@ -40811,6 +41810,12 @@ function createEngineApp(options) {
     close: () => {
       clearInterval(backgroundHookSweepTimer);
       clearInterval(idleCheckTimer);
+      extractionQueue.length = 0;
+      activeExtractionJob = null;
+      if (activeExtractionChild) {
+        activeExtractionChild.kill();
+        activeExtractionChild = null;
+      }
       store.close();
     }
   };
@@ -40857,27 +41862,27 @@ async function removeLockIfOwned(lockPath, ownerPid) {
 
 // src/shared/paths.ts
 import { mkdir } from "fs/promises";
-import os from "os";
-import path3 from "path";
+import os2 from "os";
+import path5 from "path";
 import { fileURLToPath } from "url";
 function resolvePluginRoot() {
   const envPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-  if (envPluginRoot && path3.isAbsolute(envPluginRoot)) {
+  if (envPluginRoot && path5.isAbsolute(envPluginRoot)) {
     return envPluginRoot;
   }
   const currentFilePath = fileURLToPath(import.meta.url);
-  const moduleDirectory = path3.dirname(currentFilePath);
-  return path3.resolve(moduleDirectory, "..", "..");
+  const moduleDirectory = path5.dirname(currentFilePath);
+  return path5.resolve(moduleDirectory, "..", "..");
 }
 function getGlobalPaths() {
-  const memoriesDir = path3.join(os.homedir(), ".claude", "memories");
+  const memoriesDir = path5.join(os2.homedir(), ".claude", "memories");
   return {
     memoriesDir,
-    dbPath: path3.join(memoriesDir, MEMORY_DB_FILE),
-    lockPath: path3.join(memoriesDir, ENGINE_LOCK_FILE),
-    startupLockPath: path3.join(memoriesDir, ENGINE_STARTUP_LOCK_FILE),
-    engineStderrPath: path3.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
-    eventLogPath: path3.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
+    dbPath: path5.join(memoriesDir, MEMORY_DB_FILE),
+    lockPath: path5.join(memoriesDir, ENGINE_LOCK_FILE),
+    startupLockPath: path5.join(memoriesDir, ENGINE_STARTUP_LOCK_FILE),
+    engineStderrPath: path5.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
+    eventLogPath: path5.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
   };
 }
 async function ensureGlobalDirectories() {
@@ -40887,12 +41892,12 @@ async function ensureGlobalDirectories() {
 }
 
 // src/engine/main.ts
-var closeServer = promisify((server, callback) => {
+var closeServer = promisify2((server, callback) => {
   server.close(callback);
 });
 function resolveSqliteVecPath(pluginRoot) {
-  const vecPath = path4.join(pluginRoot, "vendor", "sqlite-vec", `darwin-${os2.arch()}`, "vec0.dylib");
-  if (existsSync2(vecPath)) {
+  const vecPath = path6.join(pluginRoot, "vendor", "sqlite-vec", `darwin-${os3.arch()}`, "vec0.dylib");
+  if (existsSync3(vecPath)) {
     return vecPath;
   }
   logWarn("sqlite-vec binary not found; continuing without vec table", { expectedPath: vecPath });
@@ -40940,6 +41945,9 @@ async function bootstrap() {
     sqliteVecExtensionPath: vecExtensionPath,
     onIdleTimeout: async () => {
       await shutdown("idle-timeout");
+    },
+    onShutdownRequest: async () => {
+      await shutdown("api-request");
     }
   });
   let server = null;

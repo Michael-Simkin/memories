@@ -14148,7 +14148,6 @@ async function probeNodeVersion(executable) {
 
 // src/engine/ensure-engine.ts
 var ENGINE_UNAVAILABLE_PREFIX = "ENGINE_UNAVAILABLE";
-var REQUIRED_NODE_MAJOR = 20;
 var DEFAULT_HEALTH_TIMEOUT_MS = 1e3;
 var DEFAULT_BOOT_TIMEOUT_MS = 45e3;
 var DEFAULT_BOOT_POLL_MS = 120;
@@ -14169,12 +14168,6 @@ function parseTimeoutMs(environmentName, fallback) {
 }
 function engineUnavailable(message) {
   return new Error(`${ENGINE_UNAVAILABLE_PREFIX}: ${message}`);
-}
-function ensureNodeRuntimeSupported() {
-  const major = Number.parseInt(process.versions.node.split(".")[0] ?? "", 10);
-  if (!Number.isFinite(major) || major < REQUIRED_NODE_MAJOR) {
-    throw engineUnavailable(`Node.js >=${REQUIRED_NODE_MAJOR} is required for engine startup.`);
-  }
 }
 async function isEngineHealthy(endpoint) {
   const timeoutMs = parseTimeoutMs("MEMORIES_ENGINE_HEALTH_TIMEOUT_MS", DEFAULT_HEALTH_TIMEOUT_MS);
@@ -14348,7 +14341,6 @@ function isErrnoException2(error48) {
   return typeof error48 === "object" && error48 !== null && "code" in error48;
 }
 async function ensureEngine() {
-  ensureNodeRuntimeSupported();
   const paths = await ensureGlobalDirectories();
   const pluginRoot = resolvePluginRoot();
   const engineEntrypoint = `${pluginRoot}/dist/engine/main.js`;
@@ -14875,12 +14867,6 @@ var stopPayloadSchema = external_exports.object({
   transcript_path: external_exports.string().trim().min(1),
   last_assistant_message: external_exports.string().optional(),
   stop_hook_active: external_exports.boolean().optional()
-}).catchall(external_exports.unknown());
-var sessionEndPayloadSchema = external_exports.object({
-  cwd: external_exports.string().optional(),
-  project_root: external_exports.string().optional(),
-  reason: external_exports.string().trim().min(1).optional(),
-  session_id: external_exports.string().trim().min(1)
 }).catchall(external_exports.unknown());
 
 // src/hooks/session-start.ts

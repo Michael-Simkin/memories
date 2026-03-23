@@ -16,7 +16,6 @@ export interface EngineEndpoint {
 }
 
 const ENGINE_UNAVAILABLE_PREFIX = 'ENGINE_UNAVAILABLE';
-const REQUIRED_NODE_MAJOR = 20;
 const DEFAULT_HEALTH_TIMEOUT_MS = 1000;
 const DEFAULT_BOOT_TIMEOUT_MS = 45_000;
 const DEFAULT_BOOT_POLL_MS = 120;
@@ -50,13 +49,6 @@ function parseTimeoutMs(environmentName: string, fallback: number): number {
 
 function engineUnavailable(message: string): Error {
   return new Error(`${ENGINE_UNAVAILABLE_PREFIX}: ${message}`);
-}
-
-function ensureNodeRuntimeSupported(): void {
-  const major = Number.parseInt(process.versions.node.split('.')[0] ?? '', 10);
-  if (!Number.isFinite(major) || major < REQUIRED_NODE_MAJOR) {
-    throw engineUnavailable(`Node.js >=${REQUIRED_NODE_MAJOR} is required for engine startup.`);
-  }
 }
 
 async function isEngineHealthy(endpoint: EngineEndpoint): Promise<boolean> {
@@ -277,8 +269,6 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
 }
 
 export async function ensureEngine(): Promise<EngineEndpoint> {
-  ensureNodeRuntimeSupported();
-
   const paths = await ensureGlobalDirectories();
   const pluginRoot = resolvePluginRoot();
   const engineEntrypoint = `${pluginRoot}/dist/engine/main.js`;
