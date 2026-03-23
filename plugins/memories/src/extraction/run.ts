@@ -484,10 +484,10 @@ export async function prepareTranscriptContext(
 
   const last3 = extractLast3Interactions(filteredLines);
 
-  const memoryDir = path.join(projectRoot, '.claude-memory');
-  await mkdir(memoryDir, { recursive: true });
+  const tmpDir = path.join(getGlobalPaths().memoriesDir, 'tmp');
+  await mkdir(tmpDir, { recursive: true });
   const filteredTranscriptPath = path.join(
-    memoryDir,
+    tmpDir,
     `transcript-filtered-${sessionId ?? 'unknown'}.jsonl`,
   );
   await writeFile(filteredTranscriptPath, filteredLines.join('\n'), 'utf8');
