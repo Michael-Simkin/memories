@@ -21,7 +21,7 @@ Declared in `.mcp.json`:
 }
 ```
 
-Server metadata: name = `memories`, version = `0.2.26`
+Server metadata: name = `memories`, version = `0.2.27`
 
 ## Recall Tool
 
