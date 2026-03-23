@@ -38975,56 +38975,8 @@ function date4(params) {
 // ../../node_modules/zod/v4/classic/external.js
 config(en_default());
 
-// src/shared/constants.ts
-var LOOPBACK_HOST = "127.0.0.1";
-var LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, "localhost", "::1"];
-var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
-var MEMORY_DB_FILE = "ai_memory.db";
-var ENGINE_LOCK_FILE = "engine.lock.json";
-var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
-var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
-var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
-var DEFAULT_SEARCH_LIMIT = 10;
-var MAX_SEARCH_LIMIT = 50;
-var DEFAULT_SEMANTIC_K = 30;
-var DEFAULT_LEXICAL_K = 30;
-var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
-var MIN_SEMANTIC_SCORE = 0.6;
-var MIN_LEXICAL_SCORE = 0.1;
-var DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
-var DEFAULT_OLLAMA_TIMEOUT_MS = 1e4;
-var DEFAULT_IDLE_TIMEOUT_MS = 36e5;
-var DEFAULT_IDLE_CHECK_INTERVAL_MS = 3e4;
-var DEFAULT_BACKGROUND_HOOK_HEARTBEAT_TIMEOUT_MS = 2e4;
-var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
-var DEFAULT_BACKGROUND_HOOK_SWEEP_INTERVAL_MS = 5e3;
-var OLLAMA_PROFILE_CONFIG = {
-  bge: {
-    dimensions: 1024,
-    model: "bge-m3"
-  },
-  nomic: {
-    dimensions: 768,
-    model: "nomic-embed-text"
-  }
-};
-function parsePositiveInteger(rawValue, fallback) {
-  if (!rawValue) {
-    return fallback;
-  }
-  const parsed = Number.parseInt(rawValue.trim(), 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-  return parsed;
-}
-function resolveOllamaProfile(rawProfile) {
-  const normalized = rawProfile?.trim().toLowerCase();
-  if (normalized === "nomic") {
-    return "nomic";
-  }
-  return "bge";
-}
+// src/backfill/orchestrator.ts
+import { existsSync } from "fs";
 
 // src/shared/logger.ts
 var LOG_LEVEL_ORDER = {
@@ -39098,6 +39050,1016 @@ function logWarn(message, data) {
 }
 function logError(message, data) {
   writeLog("error", message, data);
+}
+
+// src/backfill/consolidate.ts
+import { spawn } from "child_process";
+import path from "path";
+
+// src/shared/constants.ts
+var LOOPBACK_HOST = "127.0.0.1";
+var LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, "localhost", "::1"];
+var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
+var MEMORY_DB_FILE = "ai_memory.db";
+var ENGINE_LOCK_FILE = "engine.lock.json";
+var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
+var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
+var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
+var DEFAULT_SEARCH_LIMIT = 10;
+var MAX_SEARCH_LIMIT = 50;
+var DEFAULT_SEMANTIC_K = 30;
+var DEFAULT_LEXICAL_K = 30;
+var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
+var MIN_SEMANTIC_SCORE = 0.6;
+var MIN_LEXICAL_SCORE = 0.1;
+var DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
+var DEFAULT_OLLAMA_TIMEOUT_MS = 1e4;
+var DEFAULT_IDLE_TIMEOUT_MS = 36e5;
+var DEFAULT_IDLE_CHECK_INTERVAL_MS = 3e4;
+var DEFAULT_BACKGROUND_HOOK_HEARTBEAT_TIMEOUT_MS = 2e4;
+var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
+var DEFAULT_BACKGROUND_HOOK_SWEEP_INTERVAL_MS = 5e3;
+var OLLAMA_PROFILE_CONFIG = {
+  bge: {
+    dimensions: 1024,
+    model: "bge-m3"
+  },
+  nomic: {
+    dimensions: 768,
+    model: "nomic-embed-text"
+  }
+};
+function parsePositiveInteger(rawValue, fallback) {
+  if (!rawValue) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(rawValue.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+function resolveOllamaProfile(rawProfile) {
+  const normalized = rawProfile?.trim().toLowerCase();
+  if (normalized === "nomic") {
+    return "nomic";
+  }
+  return "bge";
+}
+
+// src/shared/types.ts
+var memoryTypeSchema = external_exports.enum(MEMORY_TYPES);
+var pathMatcherSchema = external_exports.object({
+  path_matcher: external_exports.string().trim().min(1).max(512)
+});
+var memoryRecordSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  memory_type: memoryTypeSchema,
+  content: external_exports.string().min(1),
+  tags: external_exports.array(external_exports.string()),
+  is_pinned: external_exports.boolean(),
+  path_matchers: external_exports.array(pathMatcherSchema),
+  created_at: external_exports.string().min(1),
+  updated_at: external_exports.string().min(1)
+});
+var addMemoryInputSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
+  memory_type: memoryTypeSchema,
+  content: external_exports.string().trim().min(1),
+  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
+  is_pinned: external_exports.boolean().default(false),
+  path_matchers: external_exports.array(pathMatcherSchema).default([])
+});
+var updateMemoryInputSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
+  content: external_exports.string().trim().min(1).optional(),
+  tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
+  is_pinned: external_exports.boolean().optional(),
+  path_matchers: external_exports.array(pathMatcherSchema).optional()
+}).refine(
+  (value) => value.content !== void 0 || value.tags !== void 0 || value.is_pinned !== void 0 || value.path_matchers !== void 0,
+  "At least one update field must be provided"
+);
+var searchRequestSchema = external_exports.object({
+  repo_id: external_exports.string().trim().min(1),
+  query: external_exports.string().default(""),
+  limit: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT),
+  target_paths: external_exports.array(external_exports.string()).default([]),
+  memory_types: external_exports.array(memoryTypeSchema).optional(),
+  include_pinned: external_exports.boolean().default(true),
+  semantic_k: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEMANTIC_K),
+  lexical_k: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_LEXICAL_K),
+  response_token_budget: external_exports.number().int().min(200).max(2e4).default(DEFAULT_RESPONSE_TOKEN_BUDGET)
+});
+var searchMatchSourceSchema = external_exports.enum(["path", "lexical", "semantic"]);
+var searchResultSchema = external_exports.object({
+  id: external_exports.string(),
+  memory_type: memoryTypeSchema,
+  content: external_exports.string(),
+  tags: external_exports.array(external_exports.string()),
+  is_pinned: external_exports.boolean(),
+  path_matchers: external_exports.array(external_exports.string()),
+  score: external_exports.number().min(0).max(1),
+  source: external_exports.enum(["path", "hybrid"]),
+  matched_by: external_exports.array(searchMatchSourceSchema).optional(),
+  path_score: external_exports.number().min(0).max(1).optional(),
+  lexical_score: external_exports.number().min(0).max(1).optional(),
+  semantic_score: external_exports.number().min(0).max(1).optional(),
+  rrf_score: external_exports.number().nonnegative().optional(),
+  updated_at: external_exports.string()
+});
+var searchResponseSchema = external_exports.object({
+  results: external_exports.array(searchResultSchema),
+  meta: external_exports.object({
+    query: external_exports.string(),
+    returned: external_exports.number().int().nonnegative(),
+    duration_ms: external_exports.number().int().nonnegative(),
+    source: external_exports.literal("hybrid")
+  })
+});
+var memoryEventLogSchema = external_exports.object({
+  at: external_exports.string().min(1),
+  event: external_exports.string().min(1),
+  status: external_exports.enum(["ok", "error", "skipped"]),
+  kind: external_exports.enum(["hook", "operation", "system"]),
+  session_id: external_exports.string().optional(),
+  memory_id: external_exports.string().optional(),
+  detail: external_exports.string().optional(),
+  data: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
+});
+var backgroundHookRecordSchema = external_exports.object({
+  id: external_exports.string().trim().min(1),
+  hook_name: external_exports.string().trim().min(1),
+  state: external_exports.literal("running"),
+  started_at: external_exports.string().min(1),
+  last_heartbeat_at: external_exports.string().min(1),
+  stale_at: external_exports.string().min(1),
+  hard_timeout_at: external_exports.string().min(1),
+  session_id: external_exports.string().trim().min(1).optional(),
+  detail: external_exports.string().trim().min(1).optional(),
+  pid: external_exports.number().int().positive().optional()
+});
+var backgroundHooksResponseSchema = external_exports.object({
+  items: external_exports.array(backgroundHookRecordSchema),
+  meta: external_exports.object({
+    active: external_exports.number().int().nonnegative(),
+    now: external_exports.string().min(1)
+  })
+});
+
+// src/extraction/contracts.ts
+var workerPayloadSchema = external_exports.object({
+  background_hook_id: external_exports.string().trim().min(1).optional(),
+  endpoint: external_exports.object({
+    host: external_exports.string().min(1),
+    port: external_exports.number().int().min(1).max(65535)
+  }),
+  project_root: external_exports.string().min(1),
+  repo_id: external_exports.string().min(1),
+  transcript_path: external_exports.string().min(1),
+  last_assistant_message: external_exports.string().optional(),
+  session_id: external_exports.string().optional()
+});
+var updateFieldsSchema = external_exports.object({
+  content: external_exports.string().trim().min(1).optional(),
+  tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
+  is_pinned: external_exports.boolean().optional(),
+  path_matchers: external_exports.array(pathMatcherSchema).optional()
+}).refine((value) => Object.keys(value).length > 0, "Update action must include at least one field");
+var createActionSchema = external_exports.object({
+  action: external_exports.literal("create"),
+  confidence: external_exports.number().min(0).max(1),
+  reason: external_exports.string().optional(),
+  memory_type: memoryTypeSchema,
+  content: external_exports.string().trim().min(1),
+  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
+  is_pinned: external_exports.boolean().default(false),
+  path_matchers: external_exports.array(pathMatcherSchema).default([])
+});
+var updateActionSchema = external_exports.object({
+  action: external_exports.literal("update"),
+  confidence: external_exports.number().min(0).max(1),
+  reason: external_exports.string().optional(),
+  memory_id: external_exports.string().trim().min(1),
+  updates: updateFieldsSchema
+});
+var deleteActionSchema = external_exports.object({
+  action: external_exports.literal("delete"),
+  confidence: external_exports.number().min(0).max(1),
+  reason: external_exports.string().optional(),
+  memory_id: external_exports.string().trim().min(1)
+});
+var skipActionSchema = external_exports.object({
+  action: external_exports.literal("skip"),
+  confidence: external_exports.number().min(0).max(1).default(1),
+  reason: external_exports.string().optional()
+});
+var workerActionSchema = external_exports.discriminatedUnion("action", [
+  createActionSchema,
+  updateActionSchema,
+  deleteActionSchema,
+  skipActionSchema
+]);
+var workerOutputSchema = external_exports.object({
+  actions: external_exports.array(workerActionSchema)
+});
+
+// src/backfill/consolidate.ts
+function buildConsolidationPrompt(candidates, projectRoot) {
+  const candidatesText = JSON.stringify(
+    candidates.map((c, i) => ({
+      index: i,
+      content: c.content,
+      memory_type: c.memory_type,
+      tags: c.tags,
+      is_pinned: c.is_pinned,
+      path_matchers: c.path_matchers,
+      confidence: c.confidence,
+      source_session: c.source_session
+    })),
+    null,
+    2
+  );
+  return [
+    "You are a memory consolidation agent. You have candidate memory insights extracted from multiple historical sessions for a single project.",
+    "Your job is to deduplicate, merge, and select the best version of each concept, then output final memory actions.",
+    "Return strict JSON only (no prose, no markdown fences) with this exact shape:",
+    '{"actions":[...]}',
+    "",
+    "## Available tool",
+    "",
+    "**recall tool** \u2014 Search existing project memories to check for duplicates before creating.",
+    `Always pass project_root: "${projectRoot}"`,
+    "Always pass include_debug_metadata: true (to get memory IDs for update/delete).",
+    "",
+    "## Workflow",
+    "",
+    "1. Group the candidates below by concept/topic.",
+    "2. For each group, call recall to check if the concept already exists in the database.",
+    "3. Decide:",
+    "   - If it already exists and is up-to-date \u2192 skip",
+    "   - If it exists but needs updating \u2192 emit update with the memory_id from recall",
+    "   - If multiple candidates express the same concept \u2192 merge into one create with the best wording",
+    "   - If the concept is unique and valuable \u2192 emit create",
+    "   - If a candidate is low-quality or ephemeral \u2192 skip",
+    "",
+    "## Action contracts",
+    "",
+    '- create: {"action":"create","confidence":0..1,"reason":"...","memory_type":"fact|rule|decision|episode","content":"...","tags":[...],"is_pinned":boolean,"path_matchers":[{"path_matcher":"..."}]}',
+    '- update: {"action":"update","confidence":0..1,"reason":"...","memory_id":"...","updates":{"content?":"...","tags?":[...],"is_pinned?":boolean,"path_matchers?":[{"path_matcher":"..."}]}}',
+    '- delete: {"action":"delete","confidence":0..1,"reason":"...","memory_id":"..."}',
+    '- skip: {"action":"skip","confidence":0..1,"reason":"..."}',
+    "",
+    "## Rules",
+    "",
+    "- Do not invent memory IDs \u2014 only use IDs returned by the recall tool.",
+    "- update/delete must target existing memory IDs from recall results.",
+    "- ALMOST ALL memories should be is_pinned=false.",
+    "- is_pinned=true only for rare project-wide invariants.",
+    "- Prefer fewer, higher-quality memories over many similar ones.",
+    "- Never include secrets.",
+    "",
+    `## Candidates (${candidates.length} total from ${new Set(candidates.map((c) => c.source_session)).size} sessions)`,
+    "",
+    candidatesText
+  ].join("\n");
+}
+async function consolidateProject(candidates, projectRoot, endpoint, repoId, pluginRoot) {
+  if (candidates.length === 0) {
+    return { actions: [], actionsApplied: 0, errors: [] };
+  }
+  const prompt = buildConsolidationPrompt(candidates, projectRoot);
+  const claudeResult = await runClaudeWithRecall(prompt, projectRoot, pluginRoot);
+  if (claudeResult.code !== 0) {
+    throw new Error(`Claude exited with status ${claudeResult.code}: ${claudeResult.stderr}`);
+  }
+  const actions = parseConsolidationOutput(claudeResult.stdout);
+  const errors = [];
+  let actionsApplied = 0;
+  for (const action of actions) {
+    if (action.action === "skip" || action.confidence < 0.75) {
+      continue;
+    }
+    const result = await applyAction(endpoint, repoId, action);
+    if (result.ok) {
+      actionsApplied++;
+    } else {
+      errors.push(`${action.action}: ${result.message}`);
+    }
+  }
+  return { actions, actionsApplied, errors };
+}
+function parseConsolidationOutput(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return [];
+  }
+  const jsonText = extractJsonText(trimmed);
+  if (!jsonText) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (Array.isArray(parsed.actions)) {
+      parsed.actions = parsed.actions.map(normalizeAction);
+    }
+    const result = workerOutputSchema.parse(parsed);
+    return result.actions;
+  } catch {
+    return [];
+  }
+}
+function normalizeAction(action) {
+  if (Array.isArray(action.path_matchers)) {
+    action.path_matchers = action.path_matchers.map(
+      (pm) => typeof pm === "string" ? { path_matcher: pm } : pm
+    );
+  }
+  if (action.updates && typeof action.updates === "object") {
+    const updates = action.updates;
+    if (Array.isArray(updates.path_matchers)) {
+      updates.path_matchers = updates.path_matchers.map(
+        (pm) => typeof pm === "string" ? { path_matcher: pm } : pm
+      );
+    }
+  }
+  return action;
+}
+function extractJsonText(raw) {
+  let outer;
+  try {
+    outer = JSON.parse(raw);
+  } catch {
+    return extractFromText(raw);
+  }
+  if (!outer || typeof outer !== "object") {
+    return null;
+  }
+  const record2 = outer;
+  if (typeof record2.result === "string") {
+    return extractFromText(record2.result);
+  }
+  if (Array.isArray(record2.actions)) {
+    return raw;
+  }
+  return raw;
+}
+function extractFromText(text) {
+  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (fenceMatch?.[1]) return fenceMatch[1].trim();
+  const braceIdx = text.indexOf('{"actions"');
+  if (braceIdx !== -1) {
+    const jsonPart = text.slice(braceIdx);
+    try {
+      JSON.parse(jsonPart);
+      return jsonPart;
+    } catch {
+    }
+  }
+  return null;
+}
+function runClaudeWithRecall(prompt, projectRoot, pluginRoot) {
+  const mcpServerPath = path.join(pluginRoot, "dist", "mcp", "search-server.js");
+  const mcpConfig = JSON.stringify({
+    mcpServers: {
+      memories: {
+        type: "stdio",
+        command: process.execPath,
+        args: [mcpServerPath]
+      }
+    }
+  });
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "claude",
+      [
+        "-p",
+        "--output-format",
+        "json",
+        "--no-session-persistence",
+        "--model",
+        "claude-sonnet-4-6",
+        "--mcp-config",
+        mcpConfig,
+        "--allowedTools",
+        "mcp__memories__recall"
+      ],
+      {
+        cwd: projectRoot,
+        env: process.env,
+        stdio: ["pipe", "pipe", "pipe"]
+      }
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({ code: code ?? 1, stdout, stderr });
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+}
+async function applyAction(endpoint, repoId, action) {
+  if (action.action === "skip") {
+    return { ok: true };
+  }
+  try {
+    if (action.action === "create") {
+      const response = await fetch(`http://${endpoint.host}:${endpoint.port}/memories/add`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          repo_id: repoId,
+          memory_type: action.memory_type,
+          content: action.content,
+          tags: action.tags,
+          is_pinned: action.is_pinned,
+          path_matchers: action.path_matchers
+        })
+      });
+      if (!response.ok) {
+        return { ok: false, message: `create failed: ${response.status}` };
+      }
+      return { ok: true };
+    }
+    if (action.action === "update") {
+      const response = await fetch(
+        `http://${endpoint.host}:${endpoint.port}/memories/${action.memory_id}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ repo_id: repoId, ...action.updates })
+        }
+      );
+      if (!response.ok) {
+        return { ok: false, message: `update failed: ${response.status}` };
+      }
+      return { ok: true };
+    }
+    if (action.action === "delete") {
+      const response = await fetch(
+        `http://${endpoint.host}:${endpoint.port}/memories/${action.memory_id}?repo_id=${encodeURIComponent(repoId)}`,
+        { method: "DELETE" }
+      );
+      if (!response.ok) {
+        return { ok: false, message: `delete failed: ${response.status}` };
+      }
+      return { ok: true };
+    }
+    return { ok: true };
+  } catch (error48) {
+    return { ok: false, message: error48 instanceof Error ? error48.message : String(error48) };
+  }
+}
+
+// src/backfill/discover.ts
+import { readdir, readFile, stat } from "fs/promises";
+import os from "os";
+import path2 from "path";
+
+// src/shared/repo-identity.ts
+import { execFile } from "child_process";
+import { createHash } from "crypto";
+import { realpath } from "fs/promises";
+import { promisify } from "util";
+var execFileAsync = promisify(execFile);
+var GIT_TIMEOUT_MS = 3e3;
+var repoIdCache = /* @__PURE__ */ new Map();
+var repoLabelCache = /* @__PURE__ */ new Map();
+function hashIdentity(identity) {
+  return createHash("sha256").update(identity).digest("hex").slice(0, 16);
+}
+function normalizeRemoteUrl(url2) {
+  let normalized = url2.trim();
+  normalized = normalized.replace(/\.git\/?$/, "");
+  normalized = normalized.replace(/\/+$/, "");
+  const sshMatch = normalized.match(/^[\w.-]+@([\w.-]+):(.*)/);
+  if (sshMatch) {
+    const host = sshMatch[1].toLowerCase();
+    const path7 = sshMatch[2];
+    return `${host}/${path7}`;
+  }
+  const httpsMatch = normalized.match(/^https?:\/\/([\w.-]+(?::\d+)?)\/(.*)/);
+  if (httpsMatch) {
+    const host = httpsMatch[1].toLowerCase();
+    const path7 = httpsMatch[2];
+    return `${host}/${path7}`;
+  }
+  const sshProtoMatch = normalized.match(/^ssh:\/\/[\w.-]+@([\w.-]+(?::\d+)?)\/(.*)/);
+  if (sshProtoMatch) {
+    const host = sshProtoMatch[1].toLowerCase();
+    const path7 = sshProtoMatch[2];
+    return `${host}/${path7}`;
+  }
+  return normalized;
+}
+async function gitExec(projectRoot, args) {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", projectRoot, ...args], {
+      timeout: GIT_TIMEOUT_MS
+    });
+    const trimmed = stdout.trim();
+    return trimmed || null;
+  } catch {
+    return null;
+  }
+}
+async function resolveIdentity(projectRoot) {
+  const originUrl = await gitExec(projectRoot, ["remote", "get-url", "origin"]);
+  if (originUrl) {
+    const normalized = normalizeRemoteUrl(originUrl);
+    return { id: hashIdentity(normalized), label: normalized };
+  }
+  const toplevel = await gitExec(projectRoot, ["rev-parse", "--show-toplevel"]);
+  if (toplevel) {
+    let resolved2;
+    try {
+      resolved2 = await realpath(toplevel);
+    } catch {
+      resolved2 = toplevel;
+    }
+    return { id: hashIdentity(resolved2), label: resolved2 };
+  }
+  let resolved;
+  try {
+    resolved = await realpath(projectRoot);
+  } catch {
+    resolved = projectRoot;
+  }
+  return { id: hashIdentity(resolved), label: resolved };
+}
+async function resolveRepoId(projectRoot) {
+  const cached2 = repoIdCache.get(projectRoot);
+  if (cached2) {
+    return cached2;
+  }
+  const { id, label } = await resolveIdentity(projectRoot);
+  repoIdCache.set(projectRoot, id);
+  repoLabelCache.set(projectRoot, label);
+  return id;
+}
+
+// src/backfill/discover.ts
+var MIN_LINE_COUNT = 3;
+async function discoverTranscripts() {
+  const claudeDir = path2.join(os.homedir(), ".claude", "projects");
+  let projectFolders;
+  try {
+    projectFolders = await readdir(claudeDir);
+  } catch {
+    return { transcripts: [], projects: /* @__PURE__ */ new Map() };
+  }
+  const transcripts = [];
+  for (const folder of projectFolders) {
+    const folderPath = path2.join(claudeDir, folder);
+    const folderStat = await stat(folderPath).catch(() => null);
+    if (!folderStat?.isDirectory()) {
+      continue;
+    }
+    const entries = await readdir(folderPath).catch(() => []);
+    const jsonlFiles = entries.filter((e) => e.endsWith(".jsonl"));
+    for (const file2 of jsonlFiles) {
+      const transcriptPath = path2.join(folderPath, file2);
+      const transcript = await probeTranscript(transcriptPath, folder, file2);
+      if (transcript) {
+        transcripts.push(transcript);
+      }
+    }
+  }
+  const projects = /* @__PURE__ */ new Map();
+  for (const t of transcripts) {
+    const list = projects.get(t.repoId) ?? [];
+    list.push(t);
+    projects.set(t.repoId, list);
+  }
+  for (const list of projects.values()) {
+    list.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  }
+  return { transcripts, projects };
+}
+async function probeTranscript(transcriptPath, projectFolder, fileName) {
+  try {
+    const raw = await readFile(transcriptPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim());
+    if (lines.length < MIN_LINE_COUNT) {
+      return null;
+    }
+    const firstLine = parseFirstEntry(lines);
+    if (!firstLine?.cwd || !path2.isAbsolute(firstLine.cwd)) {
+      return null;
+    }
+    const cwd = firstLine.cwd;
+    let repoId;
+    try {
+      repoId = await resolveRepoId(cwd);
+    } catch {
+      return null;
+    }
+    return {
+      transcriptPath,
+      projectFolder,
+      cwd,
+      repoId,
+      sessionId: firstLine.sessionId ?? path2.basename(fileName, ".jsonl"),
+      timestamp: firstLine.timestamp ?? "",
+      lineCount: lines.length
+    };
+  } catch {
+    return null;
+  }
+}
+function parseFirstEntry(lines) {
+  for (const line of lines) {
+    try {
+      const obj = JSON.parse(line);
+      if (typeof obj.cwd === "string") {
+        return {
+          cwd: obj.cwd,
+          sessionId: typeof obj.sessionId === "string" ? obj.sessionId : void 0,
+          timestamp: typeof obj.timestamp === "string" ? obj.timestamp : void 0
+        };
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+// src/backfill/extract-candidates.ts
+import { spawn as spawn2 } from "child_process";
+var candidateSchema = external_exports.object({
+  content: external_exports.string().trim().min(1),
+  memory_type: external_exports.enum(["fact", "rule", "decision", "episode"]),
+  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
+  is_pinned: external_exports.boolean().default(false),
+  path_matchers: external_exports.array(
+    external_exports.union([
+      external_exports.object({ path_matcher: external_exports.string() }),
+      external_exports.string().transform((s) => ({ path_matcher: s }))
+    ])
+  ).default([]),
+  confidence: external_exports.number().min(0).max(1),
+  reason: external_exports.string().default("")
+});
+var candidatesOutputSchema = external_exports.object({
+  candidates: external_exports.array(candidateSchema)
+});
+function buildPhase1Prompt(transcriptPath) {
+  return [
+    "You are a memory extraction agent. Your job is to read a Claude Code session transcript and extract durable insights worth remembering for future sessions.",
+    "",
+    "## Transcript",
+    "",
+    `The transcript is a JSONL file at: ${transcriptPath}`,
+    "The file is JSONL (one JSON object per line) and may be very large.",
+    "IMPORTANT: Use Bash to pre-filter the file before reading. For example:",
+    `  grep -E '"type":"(user|assistant)"' '${transcriptPath}' | head -200`,
+    "This extracts only user/assistant conversation lines, skipping noise (progress, system, etc.).",
+    "Then use the Read tool or Bash to examine the filtered content.",
+    "",
+    "## Understanding the transcript format",
+    "",
+    "Each line is a JSON object. Key fields:",
+    '- `type`: "user", "assistant", "progress", "system", "file-history-snapshot"',
+    "- `message.content`: the actual text (string) or content blocks (array)",
+    "",
+    'Focus on lines where `type` is "user" or "assistant" \u2014 these are the actual conversation.',
+    'SKIP these entirely: `type` = "progress" (streaming updates), "system", "file-history-snapshot".',
+    "SKIP lines where `isSidechain` = true (internal subagent work).",
+    'For assistant messages, ignore content blocks with `type` = "thinking" (internal reasoning).',
+    "Tool calls (`tool_use`) and tool results (`tool_result`) have some context but the real insights are in user/assistant text.",
+    "",
+    "## What to extract",
+    "",
+    '- General principles, rules, preferences ("always do X", "never do Y", "we use X for Y")',
+    "- Structural facts about the project (file locations, architecture, key exports)",
+    "- Architectural decisions and trade-offs discussed",
+    "- Workflow conventions and patterns",
+    "",
+    "Do NOT extract:",
+    "- Ephemeral debugging steps, typo fixes, or one-off tasks",
+    "- Secrets, credentials, or tokens",
+    "- Content that only makes sense in the context of that one session",
+    "",
+    "## Output format",
+    "",
+    "After reading the transcript, return strict JSON only (no prose, no markdown fences):",
+    '{"candidates":[...]}',
+    "",
+    "Each candidate:",
+    "- content: the memory text (clear, self-contained)",
+    '- memory_type: "fact" | "rule" | "decision" | "episode"',
+    "- tags: relevant keywords",
+    "- is_pinned: almost always false (true only for rare project-wide invariants)",
+    "- path_matchers: file paths this relates to (if any)",
+    "- confidence: 0..1",
+    "- reason: why this is worth remembering",
+    "",
+    "Split composite insights into separate candidates (one concept each).",
+    'If nothing is worth extracting, return {"candidates":[]}.'
+  ].join("\n");
+}
+async function extractCandidates(transcriptPath, sessionId) {
+  const prompt = buildPhase1Prompt(transcriptPath);
+  const result = await runClaudeWithRead(prompt);
+  if (result.code !== 0) {
+    throw new Error(`Claude exited with status ${result.code}: ${result.stderr}`);
+  }
+  const parsed = parsePhase1Output(result.stdout);
+  return parsed.map((c) => ({ ...c, source_session: sessionId }));
+}
+function parsePhase1Output(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return [];
+  }
+  const jsonText = extractJsonText2(trimmed);
+  if (!jsonText) {
+    return [];
+  }
+  try {
+    const result = candidatesOutputSchema.parse(JSON.parse(jsonText));
+    return result.candidates;
+  } catch {
+    return [];
+  }
+}
+function extractJsonText2(raw) {
+  let outer;
+  try {
+    outer = JSON.parse(raw);
+  } catch {
+    return extractFromFences(raw);
+  }
+  if (!outer || typeof outer !== "object") {
+    return null;
+  }
+  const record2 = outer;
+  if (typeof record2.result === "string") {
+    const inner = record2.result;
+    const fromFences = extractFromFences(inner);
+    if (fromFences) return fromFences;
+    const fromBrace = extractJsonFromBrace(inner);
+    if (fromBrace) return fromBrace;
+    return inner;
+  }
+  if (Array.isArray(record2.candidates)) {
+    return raw;
+  }
+  if (Array.isArray(record2.content)) {
+    for (const block of record2.content) {
+      if (block?.type === "text" && typeof block.text === "string") {
+        const fromFences = extractFromFences(block.text);
+        if (fromFences) return fromFences;
+        return block.text;
+      }
+    }
+  }
+  return raw;
+}
+function extractFromFences(text) {
+  const match = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  return match?.[1]?.trim() ?? null;
+}
+function extractJsonFromBrace(text) {
+  const idx = text.indexOf('{"candidates"');
+  if (idx === -1) return null;
+  const jsonPart = text.slice(idx);
+  try {
+    JSON.parse(jsonPart);
+    return jsonPart;
+  } catch {
+    return null;
+  }
+}
+function runClaudeWithRead(prompt) {
+  return new Promise((resolve, reject) => {
+    const child = spawn2(
+      "claude",
+      [
+        "--bare",
+        "-p",
+        "--output-format",
+        "json",
+        "--no-session-persistence",
+        "--model",
+        "claude-sonnet-4-6",
+        "--allowedTools",
+        "Read,Bash"
+      ],
+      {
+        env: process.env,
+        stdio: ["pipe", "pipe", "pipe"]
+      }
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({ code: code ?? 1, stdout, stderr });
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+}
+
+// src/backfill/orchestrator.ts
+var DEFAULT_CONCURRENCY = 5;
+var BackfillOrchestrator = class {
+  state = createIdleState();
+  candidatesByRepo = /* @__PURE__ */ new Map();
+  cancelled = false;
+  endpoint;
+  pluginRoot;
+  constructor(endpoint, pluginRoot) {
+    this.endpoint = endpoint;
+    this.pluginRoot = pluginRoot;
+  }
+  getState() {
+    return this.state;
+  }
+  isRunning() {
+    return !["idle", "done", "error"].includes(this.state.status);
+  }
+  cancel() {
+    this.cancelled = true;
+    this.state.status = "done";
+  }
+  async run(targetRepoId) {
+    if (this.isRunning()) {
+      throw new Error("Backfill is already running");
+    }
+    this.state = createIdleState();
+    this.state.repoId = targetRepoId;
+    this.candidatesByRepo.clear();
+    this.cancelled = false;
+    try {
+      this.state.status = "discovering";
+      this.state.startedAt = (/* @__PURE__ */ new Date()).toISOString();
+      logInfo("Backfill started: discovering transcripts", { targetRepoId });
+      const discovery = await discoverTranscripts();
+      if (this.cancelled) return;
+      const repoTranscripts = discovery.transcripts.filter((t) => t.repoId === targetRepoId);
+      const repoProjects = /* @__PURE__ */ new Map();
+      if (repoTranscripts.length > 0) {
+        repoProjects.set(targetRepoId, repoTranscripts);
+      }
+      this.state.discovery = {
+        totalTranscripts: repoTranscripts.length,
+        totalProjects: repoProjects.size
+      };
+      logInfo("Backfill discovery complete", {
+        transcripts: repoTranscripts.length,
+        targetRepoId
+      });
+      this.state.status = "phase1";
+      this.state.phase1.total = repoTranscripts.length;
+      this.state.phase1.results = repoTranscripts.map((t) => ({
+        sessionId: t.sessionId,
+        repoId: t.repoId,
+        transcriptPath: t.transcriptPath,
+        status: "pending"
+      }));
+      await this.runPhase1(repoTranscripts);
+      if (this.cancelled) return;
+      this.state.status = "phase2";
+      const repoIds = [...repoProjects.keys()];
+      this.state.phase2.total = repoIds.length;
+      this.state.phase2.results = repoIds.map((repoId) => ({
+        repoId,
+        status: "pending"
+      }));
+      await this.runPhase2(repoProjects);
+      if (this.cancelled) return;
+      this.state.status = "done";
+      logInfo("Backfill complete");
+    } catch (error48) {
+      this.state.status = "error";
+      logError("Backfill failed", {
+        error: error48 instanceof Error ? error48.message : String(error48)
+      });
+    }
+  }
+  async runPhase1(transcripts) {
+    const queue = [...transcripts];
+    const running = /* @__PURE__ */ new Map();
+    const processNext = async () => {
+      while (queue.length > 0 && running.size < DEFAULT_CONCURRENCY && !this.cancelled) {
+        const transcript = queue.shift();
+        const resultEntry = this.state.phase1.results.find(
+          (r) => r.sessionId === transcript.sessionId
+        );
+        if (!resultEntry) continue;
+        resultEntry.status = "running";
+        this.state.phase1.running++;
+        const promise2 = this.extractOne(transcript, resultEntry).then(() => {
+          running.delete(transcript.sessionId);
+        });
+        running.set(transcript.sessionId, promise2);
+      }
+    };
+    await processNext();
+    while (running.size > 0 && !this.cancelled) {
+      await Promise.race([...running.values()]);
+      await processNext();
+    }
+  }
+  async extractOne(transcript, resultEntry) {
+    try {
+      const candidates = await extractCandidates(
+        transcript.transcriptPath,
+        transcript.sessionId
+      );
+      resultEntry.status = "done";
+      resultEntry.candidateCount = candidates.length;
+      this.state.phase1.completed++;
+      this.state.phase1.running--;
+      const existing = this.candidatesByRepo.get(transcript.repoId) ?? [];
+      existing.push(...candidates);
+      this.candidatesByRepo.set(transcript.repoId, existing);
+    } catch (error48) {
+      resultEntry.status = "error";
+      resultEntry.error = error48 instanceof Error ? error48.message : String(error48);
+      this.state.phase1.failed++;
+      this.state.phase1.running--;
+      logError("Phase 1 extraction failed", {
+        sessionId: transcript.sessionId,
+        error: error48 instanceof Error ? error48.message : String(error48)
+      });
+    }
+  }
+  async runPhase2(projects) {
+    for (const [repoId, transcripts] of projects) {
+      if (this.cancelled) return;
+      const resultEntry = this.state.phase2.results.find((r) => r.repoId === repoId);
+      if (!resultEntry) continue;
+      const candidates = this.candidatesByRepo.get(repoId) ?? [];
+      resultEntry.candidateInputCount = candidates.length;
+      const projectRoot = transcripts[0].cwd;
+      if (candidates.length === 0 || !existsSync(projectRoot)) {
+        resultEntry.status = "done";
+        resultEntry.actionsApplied = 0;
+        if (!existsSync(projectRoot)) {
+          resultEntry.error = "project directory no longer exists";
+        }
+        this.state.phase2.completed++;
+        continue;
+      }
+      resultEntry.status = "running";
+      this.state.phase2.running++;
+      try {
+        const result = await consolidateProject(
+          candidates,
+          projectRoot,
+          this.endpoint,
+          repoId,
+          this.pluginRoot
+        );
+        resultEntry.status = "done";
+        resultEntry.actionsApplied = result.actionsApplied;
+        this.state.phase2.completed++;
+        this.state.phase2.running--;
+        if (result.errors.length > 0) {
+          resultEntry.error = result.errors.join("; ");
+        }
+        logInfo("Phase 2 consolidation complete", {
+          repoId,
+          candidateCount: candidates.length,
+          actionsApplied: result.actionsApplied
+        });
+      } catch (error48) {
+        resultEntry.status = "error";
+        resultEntry.error = error48 instanceof Error ? error48.message : String(error48);
+        this.state.phase2.completed++;
+        this.state.phase2.running--;
+        logError("Phase 2 consolidation failed", {
+          repoId,
+          error: error48 instanceof Error ? error48.message : String(error48)
+        });
+      }
+    }
+  }
+};
+function createIdleState() {
+  return {
+    status: "idle",
+    phase1: { total: 0, completed: 0, running: 0, failed: 0, results: [] },
+    phase2: { total: 0, completed: 0, running: 0, results: [] }
+  };
 }
 
 // src/retrieval/embeddings.ts
@@ -39215,8 +40177,8 @@ function isNumber(value) {
 var import_picomatch = __toESM(require_picomatch2(), 1);
 
 // src/shared/fs-utils.ts
-import { appendFile, readFile, rename, rm, writeFile } from "fs/promises";
-import path from "path";
+import { appendFile, readFile as readFile2, rename, rm, writeFile } from "fs/promises";
+import path3 from "path";
 async function atomicWriteJson(filePath, payload) {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   const content = `${JSON.stringify(payload, null, 2)}
@@ -39226,7 +40188,7 @@ async function atomicWriteJson(filePath, payload) {
 }
 async function readJsonFile(filePath) {
   try {
-    const raw = await readFile(filePath, "utf8");
+    const raw = await readFile2(filePath, "utf8");
     return JSON.parse(raw);
   } catch (error48) {
     if (isErrnoException(error48) && error48.code === "ENOENT") {
@@ -39261,7 +40223,7 @@ function normalizePathForMatch(inputPath) {
   if (!posixPath) {
     return "";
   }
-  const normalized = path.posix.normalize(posixPath);
+  const normalized = path3.posix.normalize(posixPath);
   if (normalized === ".") {
     return "";
   }
@@ -39615,109 +40577,7 @@ var RetrievalService = class {
 };
 
 // src/shared/logs.ts
-import { readFile as readFile2 } from "fs/promises";
-
-// src/shared/types.ts
-var memoryTypeSchema = external_exports.enum(MEMORY_TYPES);
-var pathMatcherSchema = external_exports.object({
-  path_matcher: external_exports.string().trim().min(1).max(512)
-});
-var memoryRecordSchema = external_exports.object({
-  id: external_exports.string().min(1),
-  memory_type: memoryTypeSchema,
-  content: external_exports.string().min(1),
-  tags: external_exports.array(external_exports.string()),
-  is_pinned: external_exports.boolean(),
-  path_matchers: external_exports.array(pathMatcherSchema),
-  created_at: external_exports.string().min(1),
-  updated_at: external_exports.string().min(1)
-});
-var addMemoryInputSchema = external_exports.object({
-  repo_id: external_exports.string().trim().min(1),
-  memory_type: memoryTypeSchema,
-  content: external_exports.string().trim().min(1),
-  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
-  is_pinned: external_exports.boolean().default(false),
-  path_matchers: external_exports.array(pathMatcherSchema).default([])
-});
-var updateMemoryInputSchema = external_exports.object({
-  repo_id: external_exports.string().trim().min(1),
-  content: external_exports.string().trim().min(1).optional(),
-  tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
-  is_pinned: external_exports.boolean().optional(),
-  path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine(
-  (value) => value.content !== void 0 || value.tags !== void 0 || value.is_pinned !== void 0 || value.path_matchers !== void 0,
-  "At least one update field must be provided"
-);
-var searchRequestSchema = external_exports.object({
-  repo_id: external_exports.string().trim().min(1),
-  query: external_exports.string().default(""),
-  limit: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT),
-  target_paths: external_exports.array(external_exports.string()).default([]),
-  memory_types: external_exports.array(memoryTypeSchema).optional(),
-  include_pinned: external_exports.boolean().default(true),
-  semantic_k: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEMANTIC_K),
-  lexical_k: external_exports.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_LEXICAL_K),
-  response_token_budget: external_exports.number().int().min(200).max(2e4).default(DEFAULT_RESPONSE_TOKEN_BUDGET)
-});
-var searchMatchSourceSchema = external_exports.enum(["path", "lexical", "semantic"]);
-var searchResultSchema = external_exports.object({
-  id: external_exports.string(),
-  memory_type: memoryTypeSchema,
-  content: external_exports.string(),
-  tags: external_exports.array(external_exports.string()),
-  is_pinned: external_exports.boolean(),
-  path_matchers: external_exports.array(external_exports.string()),
-  score: external_exports.number().min(0).max(1),
-  source: external_exports.enum(["path", "hybrid"]),
-  matched_by: external_exports.array(searchMatchSourceSchema).optional(),
-  path_score: external_exports.number().min(0).max(1).optional(),
-  lexical_score: external_exports.number().min(0).max(1).optional(),
-  semantic_score: external_exports.number().min(0).max(1).optional(),
-  rrf_score: external_exports.number().nonnegative().optional(),
-  updated_at: external_exports.string()
-});
-var searchResponseSchema = external_exports.object({
-  results: external_exports.array(searchResultSchema),
-  meta: external_exports.object({
-    query: external_exports.string(),
-    returned: external_exports.number().int().nonnegative(),
-    duration_ms: external_exports.number().int().nonnegative(),
-    source: external_exports.literal("hybrid")
-  })
-});
-var memoryEventLogSchema = external_exports.object({
-  at: external_exports.string().min(1),
-  event: external_exports.string().min(1),
-  status: external_exports.enum(["ok", "error", "skipped"]),
-  kind: external_exports.enum(["hook", "operation", "system"]),
-  session_id: external_exports.string().optional(),
-  memory_id: external_exports.string().optional(),
-  detail: external_exports.string().optional(),
-  data: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
-});
-var backgroundHookRecordSchema = external_exports.object({
-  id: external_exports.string().trim().min(1),
-  hook_name: external_exports.string().trim().min(1),
-  state: external_exports.literal("running"),
-  started_at: external_exports.string().min(1),
-  last_heartbeat_at: external_exports.string().min(1),
-  stale_at: external_exports.string().min(1),
-  hard_timeout_at: external_exports.string().min(1),
-  session_id: external_exports.string().trim().min(1).optional(),
-  detail: external_exports.string().trim().min(1).optional(),
-  pid: external_exports.number().int().positive().optional()
-});
-var backgroundHooksResponseSchema = external_exports.object({
-  items: external_exports.array(backgroundHookRecordSchema),
-  meta: external_exports.object({
-    active: external_exports.number().int().nonnegative(),
-    now: external_exports.string().min(1)
-  })
-});
-
-// src/shared/logs.ts
+import { readFile as readFile3 } from "fs/promises";
 var SECRET_PATTERNS = [
   /sk-[A-Za-z0-9_-]{12,}/g,
   /AIza[0-9A-Za-z\-_]{20,}/g,
@@ -39751,7 +40611,7 @@ async function appendEventLog(logPath, event) {
 }
 async function readEventLogs(logPath, limit = 200) {
   try {
-    const raw = await readFile2(logPath, "utf8");
+    const raw = await readFile3(logPath, "utf8");
     const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
     const selected = lines.slice(Math.max(0, lines.length - limit));
     return selected.flatMap((line) => {
@@ -40341,868 +41201,6 @@ var MemoryStore = class {
     }
   }
 };
-
-// src/backfill/orchestrator.ts
-import { existsSync } from "fs";
-
-// src/backfill/consolidate.ts
-import { spawn } from "child_process";
-import path2 from "path";
-
-// src/extraction/contracts.ts
-var workerPayloadSchema = external_exports.object({
-  background_hook_id: external_exports.string().trim().min(1).optional(),
-  endpoint: external_exports.object({
-    host: external_exports.string().min(1),
-    port: external_exports.number().int().min(1).max(65535)
-  }),
-  project_root: external_exports.string().min(1),
-  repo_id: external_exports.string().min(1),
-  transcript_path: external_exports.string().min(1),
-  last_assistant_message: external_exports.string().optional(),
-  session_id: external_exports.string().optional()
-});
-var updateFieldsSchema = external_exports.object({
-  content: external_exports.string().trim().min(1).optional(),
-  tags: external_exports.array(external_exports.string().trim().min(1)).optional(),
-  is_pinned: external_exports.boolean().optional(),
-  path_matchers: external_exports.array(pathMatcherSchema).optional()
-}).refine((value) => Object.keys(value).length > 0, "Update action must include at least one field");
-var createActionSchema = external_exports.object({
-  action: external_exports.literal("create"),
-  confidence: external_exports.number().min(0).max(1),
-  reason: external_exports.string().optional(),
-  memory_type: memoryTypeSchema,
-  content: external_exports.string().trim().min(1),
-  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
-  is_pinned: external_exports.boolean().default(false),
-  path_matchers: external_exports.array(pathMatcherSchema).default([])
-});
-var updateActionSchema = external_exports.object({
-  action: external_exports.literal("update"),
-  confidence: external_exports.number().min(0).max(1),
-  reason: external_exports.string().optional(),
-  memory_id: external_exports.string().trim().min(1),
-  updates: updateFieldsSchema
-});
-var deleteActionSchema = external_exports.object({
-  action: external_exports.literal("delete"),
-  confidence: external_exports.number().min(0).max(1),
-  reason: external_exports.string().optional(),
-  memory_id: external_exports.string().trim().min(1)
-});
-var skipActionSchema = external_exports.object({
-  action: external_exports.literal("skip"),
-  confidence: external_exports.number().min(0).max(1).default(1),
-  reason: external_exports.string().optional()
-});
-var workerActionSchema = external_exports.discriminatedUnion("action", [
-  createActionSchema,
-  updateActionSchema,
-  deleteActionSchema,
-  skipActionSchema
-]);
-var workerOutputSchema = external_exports.object({
-  actions: external_exports.array(workerActionSchema)
-});
-
-// src/backfill/consolidate.ts
-function buildConsolidationPrompt(candidates, projectRoot) {
-  const candidatesText = JSON.stringify(
-    candidates.map((c, i) => ({
-      index: i,
-      content: c.content,
-      memory_type: c.memory_type,
-      tags: c.tags,
-      is_pinned: c.is_pinned,
-      path_matchers: c.path_matchers,
-      confidence: c.confidence,
-      source_session: c.source_session
-    })),
-    null,
-    2
-  );
-  return [
-    "You are a memory consolidation agent. You have candidate memory insights extracted from multiple historical sessions for a single project.",
-    "Your job is to deduplicate, merge, and select the best version of each concept, then output final memory actions.",
-    "Return strict JSON only (no prose, no markdown fences) with this exact shape:",
-    '{"actions":[...]}',
-    "",
-    "## Available tool",
-    "",
-    "**recall tool** \u2014 Search existing project memories to check for duplicates before creating.",
-    `Always pass project_root: "${projectRoot}"`,
-    "Always pass include_debug_metadata: true (to get memory IDs for update/delete).",
-    "",
-    "## Workflow",
-    "",
-    "1. Group the candidates below by concept/topic.",
-    "2. For each group, call recall to check if the concept already exists in the database.",
-    "3. Decide:",
-    "   - If it already exists and is up-to-date \u2192 skip",
-    "   - If it exists but needs updating \u2192 emit update with the memory_id from recall",
-    "   - If multiple candidates express the same concept \u2192 merge into one create with the best wording",
-    "   - If the concept is unique and valuable \u2192 emit create",
-    "   - If a candidate is low-quality or ephemeral \u2192 skip",
-    "",
-    "## Action contracts",
-    "",
-    '- create: {"action":"create","confidence":0..1,"reason":"...","memory_type":"fact|rule|decision|episode","content":"...","tags":[...],"is_pinned":boolean,"path_matchers":[{"path_matcher":"..."}]}',
-    '- update: {"action":"update","confidence":0..1,"reason":"...","memory_id":"...","updates":{"content?":"...","tags?":[...],"is_pinned?":boolean,"path_matchers?":[{"path_matcher":"..."}]}}',
-    '- delete: {"action":"delete","confidence":0..1,"reason":"...","memory_id":"..."}',
-    '- skip: {"action":"skip","confidence":0..1,"reason":"..."}',
-    "",
-    "## Rules",
-    "",
-    "- Do not invent memory IDs \u2014 only use IDs returned by the recall tool.",
-    "- update/delete must target existing memory IDs from recall results.",
-    "- ALMOST ALL memories should be is_pinned=false.",
-    "- is_pinned=true only for rare project-wide invariants.",
-    "- Prefer fewer, higher-quality memories over many similar ones.",
-    "- Never include secrets.",
-    "",
-    `## Candidates (${candidates.length} total from ${new Set(candidates.map((c) => c.source_session)).size} sessions)`,
-    "",
-    candidatesText
-  ].join("\n");
-}
-async function consolidateProject(candidates, projectRoot, endpoint, repoId, pluginRoot) {
-  if (candidates.length === 0) {
-    return { actions: [], actionsApplied: 0, errors: [] };
-  }
-  const prompt = buildConsolidationPrompt(candidates, projectRoot);
-  const claudeResult = await runClaudeWithRecall(prompt, projectRoot, pluginRoot);
-  if (claudeResult.code !== 0) {
-    throw new Error(`Claude exited with status ${claudeResult.code}: ${claudeResult.stderr}`);
-  }
-  const actions = parseConsolidationOutput(claudeResult.stdout);
-  const errors = [];
-  let actionsApplied = 0;
-  for (const action of actions) {
-    if (action.action === "skip" || action.confidence < 0.75) {
-      continue;
-    }
-    const result = await applyAction(endpoint, repoId, action);
-    if (result.ok) {
-      actionsApplied++;
-    } else {
-      errors.push(`${action.action}: ${result.message}`);
-    }
-  }
-  return { actions, actionsApplied, errors };
-}
-function parseConsolidationOutput(raw) {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return [];
-  }
-  const jsonText = extractJsonText(trimmed);
-  if (!jsonText) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(jsonText);
-    if (Array.isArray(parsed.actions)) {
-      parsed.actions = parsed.actions.map(normalizeAction);
-    }
-    const result = workerOutputSchema.parse(parsed);
-    return result.actions;
-  } catch {
-    return [];
-  }
-}
-function normalizeAction(action) {
-  if (Array.isArray(action.path_matchers)) {
-    action.path_matchers = action.path_matchers.map(
-      (pm) => typeof pm === "string" ? { path_matcher: pm } : pm
-    );
-  }
-  if (action.updates && typeof action.updates === "object") {
-    const updates = action.updates;
-    if (Array.isArray(updates.path_matchers)) {
-      updates.path_matchers = updates.path_matchers.map(
-        (pm) => typeof pm === "string" ? { path_matcher: pm } : pm
-      );
-    }
-  }
-  return action;
-}
-function extractJsonText(raw) {
-  let outer;
-  try {
-    outer = JSON.parse(raw);
-  } catch {
-    return extractFromText(raw);
-  }
-  if (!outer || typeof outer !== "object") {
-    return null;
-  }
-  const record2 = outer;
-  if (typeof record2.result === "string") {
-    return extractFromText(record2.result);
-  }
-  if (Array.isArray(record2.actions)) {
-    return raw;
-  }
-  return raw;
-}
-function extractFromText(text) {
-  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-  if (fenceMatch?.[1]) return fenceMatch[1].trim();
-  const braceIdx = text.indexOf('{"actions"');
-  if (braceIdx !== -1) {
-    const jsonPart = text.slice(braceIdx);
-    try {
-      JSON.parse(jsonPart);
-      return jsonPart;
-    } catch {
-    }
-  }
-  return null;
-}
-function runClaudeWithRecall(prompt, projectRoot, pluginRoot) {
-  const mcpServerPath = path2.join(pluginRoot, "dist", "mcp", "search-server.js");
-  const mcpConfig = JSON.stringify({
-    mcpServers: {
-      memories: {
-        type: "stdio",
-        command: process.execPath,
-        args: [mcpServerPath]
-      }
-    }
-  });
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      "claude",
-      [
-        "-p",
-        "--output-format",
-        "json",
-        "--no-session-persistence",
-        "--model",
-        "claude-sonnet-4-6",
-        "--mcp-config",
-        mcpConfig,
-        "--allowedTools",
-        "mcp__memories__recall"
-      ],
-      {
-        cwd: projectRoot,
-        env: process.env,
-        stdio: ["pipe", "pipe", "pipe"]
-      }
-    );
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({ code: code ?? 1, stdout, stderr });
-    });
-    child.stdin.write(prompt);
-    child.stdin.end();
-  });
-}
-async function applyAction(endpoint, repoId, action) {
-  if (action.action === "skip") {
-    return { ok: true };
-  }
-  try {
-    if (action.action === "create") {
-      const response = await fetch(`http://${endpoint.host}:${endpoint.port}/memories/add`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          repo_id: repoId,
-          memory_type: action.memory_type,
-          content: action.content,
-          tags: action.tags,
-          is_pinned: action.is_pinned,
-          path_matchers: action.path_matchers
-        })
-      });
-      if (!response.ok) {
-        return { ok: false, message: `create failed: ${response.status}` };
-      }
-      return { ok: true };
-    }
-    if (action.action === "update") {
-      const response = await fetch(
-        `http://${endpoint.host}:${endpoint.port}/memories/${action.memory_id}`,
-        {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ repo_id: repoId, ...action.updates })
-        }
-      );
-      if (!response.ok) {
-        return { ok: false, message: `update failed: ${response.status}` };
-      }
-      return { ok: true };
-    }
-    if (action.action === "delete") {
-      const response = await fetch(
-        `http://${endpoint.host}:${endpoint.port}/memories/${action.memory_id}?repo_id=${encodeURIComponent(repoId)}`,
-        { method: "DELETE" }
-      );
-      if (!response.ok) {
-        return { ok: false, message: `delete failed: ${response.status}` };
-      }
-      return { ok: true };
-    }
-    return { ok: true };
-  } catch (error48) {
-    return { ok: false, message: error48 instanceof Error ? error48.message : String(error48) };
-  }
-}
-
-// src/backfill/discover.ts
-import { readFile as readFile3, readdir, stat } from "fs/promises";
-import os from "os";
-import path3 from "path";
-
-// src/shared/repo-identity.ts
-import { execFile } from "child_process";
-import { createHash } from "crypto";
-import { realpath } from "fs/promises";
-import { promisify } from "util";
-var execFileAsync = promisify(execFile);
-var GIT_TIMEOUT_MS = 3e3;
-var repoIdCache = /* @__PURE__ */ new Map();
-var repoLabelCache = /* @__PURE__ */ new Map();
-function hashIdentity(identity) {
-  return createHash("sha256").update(identity).digest("hex").slice(0, 16);
-}
-function normalizeRemoteUrl(url2) {
-  let normalized = url2.trim();
-  normalized = normalized.replace(/\.git\/?$/, "");
-  normalized = normalized.replace(/\/+$/, "");
-  const sshMatch = normalized.match(/^[\w.-]+@([\w.-]+):(.*)/);
-  if (sshMatch) {
-    const host = sshMatch[1].toLowerCase();
-    const path7 = sshMatch[2];
-    return `${host}/${path7}`;
-  }
-  const httpsMatch = normalized.match(/^https?:\/\/([\w.-]+(?::\d+)?)\/(.*)/);
-  if (httpsMatch) {
-    const host = httpsMatch[1].toLowerCase();
-    const path7 = httpsMatch[2];
-    return `${host}/${path7}`;
-  }
-  const sshProtoMatch = normalized.match(/^ssh:\/\/[\w.-]+@([\w.-]+(?::\d+)?)\/(.*)/);
-  if (sshProtoMatch) {
-    const host = sshProtoMatch[1].toLowerCase();
-    const path7 = sshProtoMatch[2];
-    return `${host}/${path7}`;
-  }
-  return normalized;
-}
-async function gitExec(projectRoot, args) {
-  try {
-    const { stdout } = await execFileAsync("git", ["-C", projectRoot, ...args], {
-      timeout: GIT_TIMEOUT_MS
-    });
-    const trimmed = stdout.trim();
-    return trimmed || null;
-  } catch {
-    return null;
-  }
-}
-async function resolveIdentity(projectRoot) {
-  const originUrl = await gitExec(projectRoot, ["remote", "get-url", "origin"]);
-  if (originUrl) {
-    const normalized = normalizeRemoteUrl(originUrl);
-    return { id: hashIdentity(normalized), label: normalized };
-  }
-  const toplevel = await gitExec(projectRoot, ["rev-parse", "--show-toplevel"]);
-  if (toplevel) {
-    let resolved2;
-    try {
-      resolved2 = await realpath(toplevel);
-    } catch {
-      resolved2 = toplevel;
-    }
-    return { id: hashIdentity(resolved2), label: resolved2 };
-  }
-  let resolved;
-  try {
-    resolved = await realpath(projectRoot);
-  } catch {
-    resolved = projectRoot;
-  }
-  return { id: hashIdentity(resolved), label: resolved };
-}
-async function resolveRepoId(projectRoot) {
-  const cached2 = repoIdCache.get(projectRoot);
-  if (cached2) {
-    return cached2;
-  }
-  const { id, label } = await resolveIdentity(projectRoot);
-  repoIdCache.set(projectRoot, id);
-  repoLabelCache.set(projectRoot, label);
-  return id;
-}
-
-// src/backfill/discover.ts
-var MIN_LINE_COUNT = 3;
-async function discoverTranscripts() {
-  const claudeDir = path3.join(os.homedir(), ".claude", "projects");
-  let projectFolders;
-  try {
-    projectFolders = await readdir(claudeDir);
-  } catch {
-    return { transcripts: [], projects: /* @__PURE__ */ new Map() };
-  }
-  const transcripts = [];
-  for (const folder of projectFolders) {
-    const folderPath = path3.join(claudeDir, folder);
-    const folderStat = await stat(folderPath).catch(() => null);
-    if (!folderStat?.isDirectory()) {
-      continue;
-    }
-    const entries = await readdir(folderPath).catch(() => []);
-    const jsonlFiles = entries.filter((e) => e.endsWith(".jsonl"));
-    for (const file2 of jsonlFiles) {
-      const transcriptPath = path3.join(folderPath, file2);
-      const transcript = await probeTranscript(transcriptPath, folder, file2);
-      if (transcript) {
-        transcripts.push(transcript);
-      }
-    }
-  }
-  const projects = /* @__PURE__ */ new Map();
-  for (const t of transcripts) {
-    const list = projects.get(t.repoId) ?? [];
-    list.push(t);
-    projects.set(t.repoId, list);
-  }
-  for (const list of projects.values()) {
-    list.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  }
-  return { transcripts, projects };
-}
-async function probeTranscript(transcriptPath, projectFolder, fileName) {
-  try {
-    const raw = await readFile3(transcriptPath, "utf8");
-    const lines = raw.split("\n").filter((l) => l.trim());
-    if (lines.length < MIN_LINE_COUNT) {
-      return null;
-    }
-    const firstLine = parseFirstEntry(lines);
-    if (!firstLine?.cwd || !path3.isAbsolute(firstLine.cwd)) {
-      return null;
-    }
-    const cwd = firstLine.cwd;
-    let repoId;
-    try {
-      repoId = await resolveRepoId(cwd);
-    } catch {
-      return null;
-    }
-    return {
-      transcriptPath,
-      projectFolder,
-      cwd,
-      repoId,
-      sessionId: firstLine.sessionId ?? path3.basename(fileName, ".jsonl"),
-      timestamp: firstLine.timestamp ?? "",
-      lineCount: lines.length
-    };
-  } catch {
-    return null;
-  }
-}
-function parseFirstEntry(lines) {
-  for (const line of lines) {
-    try {
-      const obj = JSON.parse(line);
-      if (typeof obj.cwd === "string") {
-        return {
-          cwd: obj.cwd,
-          sessionId: typeof obj.sessionId === "string" ? obj.sessionId : void 0,
-          timestamp: typeof obj.timestamp === "string" ? obj.timestamp : void 0
-        };
-      }
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-
-// src/backfill/extract-candidates.ts
-import { spawn as spawn2 } from "child_process";
-var candidateSchema = external_exports.object({
-  content: external_exports.string().trim().min(1),
-  memory_type: external_exports.enum(["fact", "rule", "decision", "episode"]),
-  tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
-  is_pinned: external_exports.boolean().default(false),
-  path_matchers: external_exports.array(
-    external_exports.union([
-      external_exports.object({ path_matcher: external_exports.string() }),
-      external_exports.string().transform((s) => ({ path_matcher: s }))
-    ])
-  ).default([]),
-  confidence: external_exports.number().min(0).max(1),
-  reason: external_exports.string().default("")
-});
-var candidatesOutputSchema = external_exports.object({
-  candidates: external_exports.array(candidateSchema)
-});
-function buildPhase1Prompt(transcriptPath) {
-  return [
-    "You are a memory extraction agent. Your job is to read a Claude Code session transcript and extract durable insights worth remembering for future sessions.",
-    "",
-    "## Transcript",
-    "",
-    `The transcript is a JSONL file at: ${transcriptPath}`,
-    "The file is JSONL (one JSON object per line) and may be very large.",
-    "IMPORTANT: Use Bash to pre-filter the file before reading. For example:",
-    `  grep -E '"type":"(user|assistant)"' '${transcriptPath}' | head -200`,
-    "This extracts only user/assistant conversation lines, skipping noise (progress, system, etc.).",
-    "Then use the Read tool or Bash to examine the filtered content.",
-    "",
-    "## Understanding the transcript format",
-    "",
-    "Each line is a JSON object. Key fields:",
-    '- `type`: "user", "assistant", "progress", "system", "file-history-snapshot"',
-    "- `message.content`: the actual text (string) or content blocks (array)",
-    "",
-    'Focus on lines where `type` is "user" or "assistant" \u2014 these are the actual conversation.',
-    'SKIP these entirely: `type` = "progress" (streaming updates), "system", "file-history-snapshot".',
-    "SKIP lines where `isSidechain` = true (internal subagent work).",
-    'For assistant messages, ignore content blocks with `type` = "thinking" (internal reasoning).',
-    "Tool calls (`tool_use`) and tool results (`tool_result`) have some context but the real insights are in user/assistant text.",
-    "",
-    "## What to extract",
-    "",
-    '- General principles, rules, preferences ("always do X", "never do Y", "we use X for Y")',
-    "- Structural facts about the project (file locations, architecture, key exports)",
-    "- Architectural decisions and trade-offs discussed",
-    "- Workflow conventions and patterns",
-    "",
-    "Do NOT extract:",
-    "- Ephemeral debugging steps, typo fixes, or one-off tasks",
-    "- Secrets, credentials, or tokens",
-    "- Content that only makes sense in the context of that one session",
-    "",
-    "## Output format",
-    "",
-    "After reading the transcript, return strict JSON only (no prose, no markdown fences):",
-    '{"candidates":[...]}',
-    "",
-    "Each candidate:",
-    "- content: the memory text (clear, self-contained)",
-    '- memory_type: "fact" | "rule" | "decision" | "episode"',
-    "- tags: relevant keywords",
-    "- is_pinned: almost always false (true only for rare project-wide invariants)",
-    "- path_matchers: file paths this relates to (if any)",
-    "- confidence: 0..1",
-    "- reason: why this is worth remembering",
-    "",
-    "Split composite insights into separate candidates (one concept each).",
-    'If nothing is worth extracting, return {"candidates":[]}.'
-  ].join("\n");
-}
-async function extractCandidates(transcriptPath, sessionId) {
-  const prompt = buildPhase1Prompt(transcriptPath);
-  const result = await runClaudeWithRead(prompt);
-  if (result.code !== 0) {
-    throw new Error(`Claude exited with status ${result.code}: ${result.stderr}`);
-  }
-  const parsed = parsePhase1Output(result.stdout);
-  return parsed.map((c) => ({ ...c, source_session: sessionId }));
-}
-function parsePhase1Output(raw) {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return [];
-  }
-  const jsonText = extractJsonText2(trimmed);
-  if (!jsonText) {
-    return [];
-  }
-  try {
-    const result = candidatesOutputSchema.parse(JSON.parse(jsonText));
-    return result.candidates;
-  } catch {
-    return [];
-  }
-}
-function extractJsonText2(raw) {
-  let outer;
-  try {
-    outer = JSON.parse(raw);
-  } catch {
-    return extractFromFences(raw);
-  }
-  if (!outer || typeof outer !== "object") {
-    return null;
-  }
-  const record2 = outer;
-  if (typeof record2.result === "string") {
-    const inner = record2.result;
-    const fromFences = extractFromFences(inner);
-    if (fromFences) return fromFences;
-    const fromBrace = extractJsonFromBrace(inner);
-    if (fromBrace) return fromBrace;
-    return inner;
-  }
-  if (Array.isArray(record2.candidates)) {
-    return raw;
-  }
-  if (Array.isArray(record2.content)) {
-    for (const block of record2.content) {
-      if (block?.type === "text" && typeof block.text === "string") {
-        const fromFences = extractFromFences(block.text);
-        if (fromFences) return fromFences;
-        return block.text;
-      }
-    }
-  }
-  return raw;
-}
-function extractFromFences(text) {
-  const match = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-  return match?.[1]?.trim() ?? null;
-}
-function extractJsonFromBrace(text) {
-  const idx = text.indexOf('{"candidates"');
-  if (idx === -1) return null;
-  const jsonPart = text.slice(idx);
-  try {
-    JSON.parse(jsonPart);
-    return jsonPart;
-  } catch {
-    return null;
-  }
-}
-function runClaudeWithRead(prompt) {
-  return new Promise((resolve, reject) => {
-    const child = spawn2(
-      "claude",
-      [
-        "--bare",
-        "-p",
-        "--output-format",
-        "json",
-        "--no-session-persistence",
-        "--model",
-        "claude-sonnet-4-6",
-        "--allowedTools",
-        "Read,Bash"
-      ],
-      {
-        env: process.env,
-        stdio: ["pipe", "pipe", "pipe"]
-      }
-    );
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({ code: code ?? 1, stdout, stderr });
-    });
-    child.stdin.write(prompt);
-    child.stdin.end();
-  });
-}
-
-// src/backfill/orchestrator.ts
-var DEFAULT_CONCURRENCY = 5;
-var BackfillOrchestrator = class {
-  state = createIdleState();
-  candidatesByRepo = /* @__PURE__ */ new Map();
-  cancelled = false;
-  endpoint;
-  pluginRoot;
-  constructor(endpoint, pluginRoot) {
-    this.endpoint = endpoint;
-    this.pluginRoot = pluginRoot;
-  }
-  getState() {
-    return this.state;
-  }
-  isRunning() {
-    return !["idle", "done", "error"].includes(this.state.status);
-  }
-  cancel() {
-    this.cancelled = true;
-    this.state.status = "done";
-  }
-  async run(targetRepoId) {
-    if (this.isRunning()) {
-      throw new Error("Backfill is already running");
-    }
-    this.state = createIdleState();
-    this.state.repoId = targetRepoId;
-    this.candidatesByRepo.clear();
-    this.cancelled = false;
-    try {
-      this.state.status = "discovering";
-      this.state.startedAt = (/* @__PURE__ */ new Date()).toISOString();
-      logInfo("Backfill started: discovering transcripts", { targetRepoId });
-      const discovery = await discoverTranscripts();
-      if (this.cancelled) return;
-      const repoTranscripts = discovery.transcripts.filter((t) => t.repoId === targetRepoId);
-      const repoProjects = /* @__PURE__ */ new Map();
-      if (repoTranscripts.length > 0) {
-        repoProjects.set(targetRepoId, repoTranscripts);
-      }
-      this.state.discovery = {
-        totalTranscripts: repoTranscripts.length,
-        totalProjects: repoProjects.size
-      };
-      logInfo("Backfill discovery complete", {
-        transcripts: repoTranscripts.length,
-        targetRepoId
-      });
-      this.state.status = "phase1";
-      this.state.phase1.total = repoTranscripts.length;
-      this.state.phase1.results = repoTranscripts.map((t) => ({
-        sessionId: t.sessionId,
-        repoId: t.repoId,
-        transcriptPath: t.transcriptPath,
-        status: "pending"
-      }));
-      await this.runPhase1(repoTranscripts);
-      if (this.cancelled) return;
-      this.state.status = "phase2";
-      const repoIds = [...repoProjects.keys()];
-      this.state.phase2.total = repoIds.length;
-      this.state.phase2.results = repoIds.map((repoId) => ({
-        repoId,
-        status: "pending"
-      }));
-      await this.runPhase2(repoProjects);
-      if (this.cancelled) return;
-      this.state.status = "done";
-      logInfo("Backfill complete");
-    } catch (error48) {
-      this.state.status = "error";
-      logError("Backfill failed", {
-        error: error48 instanceof Error ? error48.message : String(error48)
-      });
-    }
-  }
-  async runPhase1(transcripts) {
-    const queue = [...transcripts];
-    const running = /* @__PURE__ */ new Map();
-    const processNext = async () => {
-      while (queue.length > 0 && running.size < DEFAULT_CONCURRENCY && !this.cancelled) {
-        const transcript = queue.shift();
-        const resultEntry = this.state.phase1.results.find(
-          (r) => r.sessionId === transcript.sessionId
-        );
-        if (!resultEntry) continue;
-        resultEntry.status = "running";
-        this.state.phase1.running++;
-        const promise2 = this.extractOne(transcript, resultEntry).then(() => {
-          running.delete(transcript.sessionId);
-        });
-        running.set(transcript.sessionId, promise2);
-      }
-    };
-    await processNext();
-    while (running.size > 0 && !this.cancelled) {
-      await Promise.race([...running.values()]);
-      await processNext();
-    }
-  }
-  async extractOne(transcript, resultEntry) {
-    try {
-      const candidates = await extractCandidates(
-        transcript.transcriptPath,
-        transcript.sessionId
-      );
-      resultEntry.status = "done";
-      resultEntry.candidateCount = candidates.length;
-      this.state.phase1.completed++;
-      this.state.phase1.running--;
-      const existing = this.candidatesByRepo.get(transcript.repoId) ?? [];
-      existing.push(...candidates);
-      this.candidatesByRepo.set(transcript.repoId, existing);
-    } catch (error48) {
-      resultEntry.status = "error";
-      resultEntry.error = error48 instanceof Error ? error48.message : String(error48);
-      this.state.phase1.failed++;
-      this.state.phase1.running--;
-      logError("Phase 1 extraction failed", {
-        sessionId: transcript.sessionId,
-        error: error48 instanceof Error ? error48.message : String(error48)
-      });
-    }
-  }
-  async runPhase2(projects) {
-    for (const [repoId, transcripts] of projects) {
-      if (this.cancelled) return;
-      const resultEntry = this.state.phase2.results.find((r) => r.repoId === repoId);
-      if (!resultEntry) continue;
-      const candidates = this.candidatesByRepo.get(repoId) ?? [];
-      resultEntry.candidateInputCount = candidates.length;
-      const projectRoot = transcripts[0].cwd;
-      if (candidates.length === 0 || !existsSync(projectRoot)) {
-        resultEntry.status = "done";
-        resultEntry.actionsApplied = 0;
-        if (!existsSync(projectRoot)) {
-          resultEntry.error = "project directory no longer exists";
-        }
-        this.state.phase2.completed++;
-        continue;
-      }
-      resultEntry.status = "running";
-      this.state.phase2.running++;
-      try {
-        const result = await consolidateProject(
-          candidates,
-          projectRoot,
-          this.endpoint,
-          repoId,
-          this.pluginRoot
-        );
-        resultEntry.status = "done";
-        resultEntry.actionsApplied = result.actionsApplied;
-        this.state.phase2.completed++;
-        this.state.phase2.running--;
-        if (result.errors.length > 0) {
-          resultEntry.error = result.errors.join("; ");
-        }
-        logInfo("Phase 2 consolidation complete", {
-          repoId,
-          candidateCount: candidates.length,
-          actionsApplied: result.actionsApplied
-        });
-      } catch (error48) {
-        resultEntry.status = "error";
-        resultEntry.error = error48 instanceof Error ? error48.message : String(error48);
-        this.state.phase2.completed++;
-        this.state.phase2.running--;
-        logError("Phase 2 consolidation failed", {
-          repoId,
-          error: error48 instanceof Error ? error48.message : String(error48)
-        });
-      }
-    }
-  }
-};
-function createIdleState() {
-  return {
-    status: "idle",
-    phase1: { total: 0, completed: 0, running: 0, failed: 0, results: [] },
-    phase2: { total: 0, completed: 0, running: 0, results: [] }
-  };
-}
 
 // src/api/errors.ts
 function sendError(response, status, code, message) {

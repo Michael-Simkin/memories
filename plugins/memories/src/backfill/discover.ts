@@ -1,9 +1,8 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import { resolveRepoId } from '../shared/repo-identity.js';
-
 import type { DiscoveredTranscript, DiscoveryResult } from './types.js';
 
 const MIN_LINE_COUNT = 3;

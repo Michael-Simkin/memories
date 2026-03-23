@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs';
 
 import { logError, logInfo } from '../shared/logger.js';
-
 import { consolidateProject } from './consolidate.js';
 import { discoverTranscripts } from './discover.js';
 import { extractCandidates } from './extract-candidates.js';

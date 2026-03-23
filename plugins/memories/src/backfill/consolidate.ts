@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-import { z } from 'zod';
+import type { z } from 'zod';
 
-import { workerActionSchema, workerOutputSchema } from '../extraction/contracts.js';
-
+import type { workerActionSchema} from '../extraction/contracts.js';
+import { workerOutputSchema } from '../extraction/contracts.js';
 import type { CandidateInsight } from './types.js';
 
 type WorkerAction = z.infer<typeof workerActionSchema>;
@@ -186,7 +186,7 @@ function extractFromText(text: string): string | null {
   const braceIdx = text.indexOf('{"actions"');
   if (braceIdx !== -1) {
     const jsonPart = text.slice(braceIdx);
-    try { JSON.parse(jsonPart); return jsonPart; } catch {}
+    try { JSON.parse(jsonPart); return jsonPart; } catch { /* invalid JSON, fall through */ }
   }
 
   return null;

@@ -13813,114 +13813,6 @@ function normalizePathForMatch(inputPath) {
   return normalized.startsWith("./") ? normalized.slice(2) : normalized;
 }
 
-// src/shared/transcript-filter.ts
-var DROPPED_LINE_TYPES = /* @__PURE__ */ new Set([
-  "progress",
-  "file-history-snapshot",
-  "system",
-  "queue-operation",
-  "last-prompt"
-]);
-var TOOL_RESULT_TRUNCATION_CHARS = 150;
-var ERROR_RESULT_TRUNCATION_CHARS = 500;
-function transcriptToMarkdown(lines) {
-  const parts = [];
-  for (const line of lines) {
-    const parsed = safeJsonParse(line);
-    if (!parsed || typeof parsed !== "object") {
-      continue;
-    }
-    const obj = parsed;
-    if (DROPPED_LINE_TYPES.has(obj.type)) {
-      continue;
-    }
-    if (obj.isSidechain === true) {
-      continue;
-    }
-    const md = lineToMarkdown(obj);
-    if (md) {
-      parts.push(md);
-    }
-  }
-  return parts.join("\n");
-}
-function lineToMarkdown(obj) {
-  const type = obj.type;
-  const message = obj.message;
-  if (!message) {
-    return null;
-  }
-  const content = message.content;
-  if (type === "user") {
-    return `User: ${contentToText(content)}`;
-  }
-  if (type === "assistant") {
-    return `Assistant: ${contentToText(content)}`;
-  }
-  return null;
-}
-function contentToText(content) {
-  if (typeof content === "string") {
-    return content.trim();
-  }
-  if (!Array.isArray(content)) {
-    return "";
-  }
-  const parts = [];
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const blockType = block.type;
-    if (blockType === "thinking") {
-      continue;
-    }
-    if (blockType === "text") {
-      const text = block.text?.trim();
-      if (text) parts.push(text);
-    } else if (blockType === "tool_use") {
-      parts.push(`[Tool: ${block.name}]`);
-    } else if (blockType === "tool_result") {
-      const resultText = extractToolResultText(block.content);
-      if (resultText) {
-        parts.push(`[Result: ${resultText}]`);
-      }
-    } else if (blockType === "image") {
-      parts.push("[Image]");
-    }
-  }
-  return parts.join("\n") || "";
-}
-function looksLikeError(text) {
-  return /error|fail|exception|stderr|traceback|panic/i.test(text.slice(0, 200));
-}
-function extractToolResultText(content) {
-  if (typeof content === "string") {
-    return truncate(content, looksLikeError(content) ? ERROR_RESULT_TRUNCATION_CHARS : TOOL_RESULT_TRUNCATION_CHARS);
-  }
-  if (Array.isArray(content)) {
-    for (const item of content) {
-      if (item?.type === "text" && typeof item.text === "string") {
-        const limit = looksLikeError(item.text) ? ERROR_RESULT_TRUNCATION_CHARS : TOOL_RESULT_TRUNCATION_CHARS;
-        return truncate(item.text, limit);
-      }
-    }
-  }
-  return "";
-}
-function truncate(text, limit = TOOL_RESULT_TRUNCATION_CHARS) {
-  const oneLine = text.replace(/\n/g, " ").trim();
-  if (oneLine.length <= limit) {
-    return oneLine;
-  }
-  return oneLine.slice(0, limit) + "...";
-}
-function safeJsonParse(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
 // src/shared/logger.ts
 var LOG_LEVEL_ORDER = {
   debug: 10,
@@ -14140,6 +14032,114 @@ function getGlobalPaths() {
     engineStderrPath: path2.join(memoriesDir, ENGINE_STDERR_LOG_FILE),
     eventLogPath: path2.join(memoriesDir, MEMORY_EVENTS_LOG_FILE)
   };
+}
+
+// src/shared/transcript-filter.ts
+var DROPPED_LINE_TYPES = /* @__PURE__ */ new Set([
+  "progress",
+  "file-history-snapshot",
+  "system",
+  "queue-operation",
+  "last-prompt"
+]);
+var TOOL_RESULT_TRUNCATION_CHARS = 150;
+var ERROR_RESULT_TRUNCATION_CHARS = 500;
+function transcriptToMarkdown(lines) {
+  const parts = [];
+  for (const line of lines) {
+    const parsed = safeJsonParse(line);
+    if (!parsed || typeof parsed !== "object") {
+      continue;
+    }
+    const obj = parsed;
+    if (DROPPED_LINE_TYPES.has(obj.type)) {
+      continue;
+    }
+    if (obj.isSidechain === true) {
+      continue;
+    }
+    const md = lineToMarkdown(obj);
+    if (md) {
+      parts.push(md);
+    }
+  }
+  return parts.join("\n");
+}
+function lineToMarkdown(obj) {
+  const type = obj.type;
+  const message = obj.message;
+  if (!message) {
+    return null;
+  }
+  const content = message.content;
+  if (type === "user") {
+    return `User: ${contentToText(content)}`;
+  }
+  if (type === "assistant") {
+    return `Assistant: ${contentToText(content)}`;
+  }
+  return null;
+}
+function contentToText(content) {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  const parts = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const blockType = block.type;
+    if (blockType === "thinking") {
+      continue;
+    }
+    if (blockType === "text") {
+      const text = block.text?.trim();
+      if (text) parts.push(text);
+    } else if (blockType === "tool_use") {
+      parts.push(`[Tool: ${block.name}]`);
+    } else if (blockType === "tool_result") {
+      const resultText = extractToolResultText(block.content);
+      if (resultText) {
+        parts.push(`[Result: ${resultText}]`);
+      }
+    } else if (blockType === "image") {
+      parts.push("[Image]");
+    }
+  }
+  return parts.join("\n") || "";
+}
+function looksLikeError(text) {
+  return /error|fail|exception|stderr|traceback|panic/i.test(text.slice(0, 200));
+}
+function extractToolResultText(content) {
+  if (typeof content === "string") {
+    return truncate(content, looksLikeError(content) ? ERROR_RESULT_TRUNCATION_CHARS : TOOL_RESULT_TRUNCATION_CHARS);
+  }
+  if (Array.isArray(content)) {
+    for (const item of content) {
+      if (item?.type === "text" && typeof item.text === "string") {
+        const limit = looksLikeError(item.text) ? ERROR_RESULT_TRUNCATION_CHARS : TOOL_RESULT_TRUNCATION_CHARS;
+        return truncate(item.text, limit);
+      }
+    }
+  }
+  return "";
+}
+function truncate(text, limit = TOOL_RESULT_TRUNCATION_CHARS) {
+  const oneLine = text.replace(/\n/g, " ").trim();
+  if (oneLine.length <= limit) {
+    return oneLine;
+  }
+  return oneLine.slice(0, limit) + "...";
+}
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // src/extraction/contracts.ts

@@ -5,113 +5,6 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// src/shared/hook-io.ts
-async function readStdinText() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks).toString("utf8").trim();
-}
-async function readJsonFromStdin(schema) {
-  const rawText = await readStdinText();
-  if (!rawText) {
-    return null;
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    return null;
-  }
-  const validated = schema.safeParse(parsed);
-  if (!validated.success) {
-    return null;
-  }
-  return validated.data;
-}
-function writeHookOutput(payload) {
-  process.stdout.write(`${JSON.stringify(payload)}
-`);
-}
-function writeFailOpenOutput() {
-  writeHookOutput({ continue: true });
-}
-
-// src/shared/logger.ts
-var LOG_LEVEL_ORDER = {
-  debug: 10,
-  info: 20,
-  warn: 30,
-  error: 40
-};
-var REDACTION_PATTERNS = [
-  /sk-[A-Za-z0-9_-]{12,}/g,
-  /AIza[0-9A-Za-z\-_]{20,}/g,
-  /\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b/g,
-  /(?<=token[=:]\s?)[A-Za-z0-9._-]+/gi
-];
-function resolveLogLevel(raw) {
-  const normalized = raw?.trim().toLowerCase();
-  if (normalized === "debug" || normalized === "info" || normalized === "warn" || normalized === "error" || normalized === "silent") {
-    return normalized;
-  }
-  return "info";
-}
-var configuredLogLevel = resolveLogLevel(process.env.LOG_LEVEL);
-function shouldWrite(level) {
-  if (configuredLogLevel === "silent") {
-    return false;
-  }
-  return LOG_LEVEL_ORDER[level] >= LOG_LEVEL_ORDER[configuredLogLevel];
-}
-function redactString(value) {
-  let redacted = value;
-  for (const pattern of REDACTION_PATTERNS) {
-    redacted = redacted.replaceAll(pattern, "[REDACTED]");
-  }
-  return redacted;
-}
-function redactUnknown(value) {
-  if (typeof value === "string") {
-    return redactString(value);
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactUnknown(entry));
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        redactUnknown(entry)
-      ])
-    );
-  }
-  return value;
-}
-function writeLog(level, message, data) {
-  if (!shouldWrite(level)) {
-    return;
-  }
-  const payload = {
-    at: (/* @__PURE__ */ new Date()).toISOString(),
-    level,
-    message: redactString(message),
-    ...data ? { data: redactUnknown(data) } : {}
-  };
-  process.stderr.write(`${JSON.stringify(payload)}
-`);
-}
-function logInfo(message, data) {
-  writeLog("info", message, data);
-}
-function logWarn(message, data) {
-  writeLog("warn", message, data);
-}
-function logError(message, data) {
-  writeLog("error", message, data);
-}
-
 // src/engine/ensure-engine.ts
 import { execFile as execFile2, spawn } from "child_process";
 import { closeSync, existsSync as existsSync2, openSync } from "fs";
@@ -13957,6 +13850,80 @@ async function readLockMetadata(lockPath) {
   return parsed.data;
 }
 
+// src/shared/logger.ts
+var LOG_LEVEL_ORDER = {
+  debug: 10,
+  info: 20,
+  warn: 30,
+  error: 40
+};
+var REDACTION_PATTERNS = [
+  /sk-[A-Za-z0-9_-]{12,}/g,
+  /AIza[0-9A-Za-z\-_]{20,}/g,
+  /\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b/g,
+  /(?<=token[=:]\s?)[A-Za-z0-9._-]+/gi
+];
+function resolveLogLevel(raw) {
+  const normalized = raw?.trim().toLowerCase();
+  if (normalized === "debug" || normalized === "info" || normalized === "warn" || normalized === "error" || normalized === "silent") {
+    return normalized;
+  }
+  return "info";
+}
+var configuredLogLevel = resolveLogLevel(process.env.LOG_LEVEL);
+function shouldWrite(level) {
+  if (configuredLogLevel === "silent") {
+    return false;
+  }
+  return LOG_LEVEL_ORDER[level] >= LOG_LEVEL_ORDER[configuredLogLevel];
+}
+function redactString(value) {
+  let redacted = value;
+  for (const pattern of REDACTION_PATTERNS) {
+    redacted = redacted.replaceAll(pattern, "[REDACTED]");
+  }
+  return redacted;
+}
+function redactUnknown(value) {
+  if (typeof value === "string") {
+    return redactString(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactUnknown(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        redactUnknown(entry)
+      ])
+    );
+  }
+  return value;
+}
+function writeLog(level, message, data) {
+  if (!shouldWrite(level)) {
+    return;
+  }
+  const payload = {
+    at: (/* @__PURE__ */ new Date()).toISOString(),
+    level,
+    message: redactString(message),
+    ...data ? { data: redactUnknown(data) } : {}
+  };
+  process.stderr.write(`${JSON.stringify(payload)}
+`);
+}
+function logInfo(message, data) {
+  writeLog("info", message, data);
+}
+function logWarn(message, data) {
+  writeLog("warn", message, data);
+}
+function logError(message, data) {
+  writeLog("error", message, data);
+}
+
 // src/shared/paths.ts
 import { mkdir } from "fs/promises";
 import os from "os";
@@ -14448,6 +14415,39 @@ async function ensureEngine() {
       await removeFileIfExists(paths.startupLockPath);
     }
   }
+}
+
+// src/shared/hook-io.ts
+async function readStdinText() {
+  const chunks = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8").trim();
+}
+async function readJsonFromStdin(schema) {
+  const rawText = await readStdinText();
+  if (!rawText) {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    return null;
+  }
+  const validated = schema.safeParse(parsed);
+  if (!validated.success) {
+    return null;
+  }
+  return validated.data;
+}
+function writeHookOutput(payload) {
+  process.stdout.write(`${JSON.stringify(payload)}
+`);
+}
+function writeFailOpenOutput() {
+  writeHookOutput({ continue: true });
 }
 
 // src/hooks/schemas.ts

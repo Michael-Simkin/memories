@@ -1,3 +1,4 @@
+import { ensureEngine } from '../engine/ensure-engine.js';
 import {
   type HookResult,
   readJsonFromStdin,
@@ -5,7 +6,6 @@ import {
   writeHookOutput,
 } from '../shared/hook-io.js';
 import { logError } from '../shared/logger.js';
-import { ensureEngine } from '../engine/ensure-engine.js';
 import { type UserPromptSubmitPayload, userPromptSubmitPayloadSchema } from './schemas.js';
 
 export const userPromptSubmitAdditionalContext = [
