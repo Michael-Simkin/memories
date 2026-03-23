@@ -13814,10 +13814,16 @@ function normalizePathForMatch(inputPath) {
 }
 
 // src/shared/transcript-filter.ts
-var DROPPED_LINE_TYPES = /* @__PURE__ */ new Set(["progress", "file-history-snapshot", "system"]);
-var TOOL_RESULT_TRUNCATION_CHARS = 200;
-function filterTranscriptLines(lines) {
-  const filtered = [];
+var DROPPED_LINE_TYPES = /* @__PURE__ */ new Set([
+  "progress",
+  "file-history-snapshot",
+  "system",
+  "queue-operation",
+  "last-prompt"
+]);
+var TOOL_RESULT_TRUNCATION_CHARS = 150;
+function transcriptToMarkdown(lines) {
+  const parts = [];
   for (const line of lines) {
     const parsed = safeJsonParse(line);
     if (!parsed || typeof parsed !== "object") {
@@ -13830,67 +13836,77 @@ function filterTranscriptLines(lines) {
     if (obj.isSidechain === true) {
       continue;
     }
-    const result = filterContentBlocks(obj);
-    if (result) {
-      filtered.push(JSON.stringify(stripMetadata(result)));
+    const md = lineToMarkdown(obj);
+    if (md) {
+      parts.push(md);
     }
   }
-  return filtered;
+  return parts.join("\n");
 }
-function stripMetadata(obj) {
-  const kept = { type: obj.type };
-  if (obj.message !== void 0) {
-    kept.message = obj.message;
-  }
-  return kept;
-}
-function filterContentBlocks(obj) {
+function lineToMarkdown(obj) {
+  const type = obj.type;
   const message = obj.message;
   if (!message) {
-    return obj;
-  }
-  const content = message.content;
-  if (typeof content === "string") {
-    return obj;
-  }
-  if (!Array.isArray(content)) {
-    return obj;
-  }
-  const filtered = content.filter((block) => block?.type !== "thinking").map((block) => {
-    if (block?.type === "tool_result") {
-      return truncateToolResult(block);
-    }
-    if (block?.type === "tool_use") {
-      return { type: "tool_use", id: block.id, name: block.name };
-    }
-    return block;
-  });
-  if (filtered.length === 0) {
     return null;
   }
-  return {
-    ...obj,
-    message: { ...message, content: filtered }
-  };
+  const content = message.content;
+  if (type === "user") {
+    return `User: ${contentToText(content)}`;
+  }
+  if (type === "assistant") {
+    return `Assistant: ${contentToText(content)}`;
+  }
+  return null;
 }
-function truncateToolResult(block) {
-  const content = block.content;
-  if (typeof content === "string" && content.length > TOOL_RESULT_TRUNCATION_CHARS) {
-    return {
-      ...block,
-      content: content.slice(0, TOOL_RESULT_TRUNCATION_CHARS) + "...[truncated]"
-    };
+function contentToText(content) {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  const parts = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const blockType = block.type;
+    if (blockType === "thinking") {
+      continue;
+    }
+    if (blockType === "text") {
+      const text = block.text?.trim();
+      if (text) parts.push(text);
+    } else if (blockType === "tool_use") {
+      parts.push(`[Tool: ${block.name}]`);
+    } else if (blockType === "tool_result") {
+      const resultText = extractToolResultText(block.content);
+      if (resultText) {
+        parts.push(`[Result: ${resultText}]`);
+      }
+    } else if (blockType === "image") {
+      parts.push("[Image]");
+    }
+  }
+  return parts.join("\n") || "";
+}
+function extractToolResultText(content) {
+  if (typeof content === "string") {
+    return truncate(content);
   }
   if (Array.isArray(content)) {
-    const truncatedContent = content.map((item) => {
-      if (item?.type === "text" && typeof item.text === "string" && item.text.length > TOOL_RESULT_TRUNCATION_CHARS) {
-        return { ...item, text: item.text.slice(0, TOOL_RESULT_TRUNCATION_CHARS) + "...[truncated]" };
+    for (const item of content) {
+      if (item?.type === "text" && typeof item.text === "string") {
+        return truncate(item.text);
       }
-      return item;
-    });
-    return { ...block, content: truncatedContent };
+    }
   }
-  return block;
+  return "";
+}
+function truncate(text) {
+  const oneLine = text.replace(/\n/g, " ").trim();
+  if (oneLine.length <= TOOL_RESULT_TRUNCATION_CHARS) {
+    return oneLine;
+  }
+  return oneLine.slice(0, TOOL_RESULT_TRUNCATION_CHARS) + "...";
 }
 function safeJsonParse(text) {
   try {
@@ -14362,14 +14378,13 @@ async function executeWorker(payload, dependencies = defaultDependencies) {
     ...buildLogData(payload) ? { data: buildLogData(payload) } : {}
   });
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? path3.dirname(path3.dirname(__filename));
-  let filteredTranscriptPath;
+  let transcriptMarkdownPath;
   try {
     const context = await dependencies.prepareTranscriptContextFn(
       payload.transcript_path,
-      payload.project_root,
-      payload.session_id
+      payload.project_root
     );
-    filteredTranscriptPath = context.filteredTranscriptPath;
+    transcriptMarkdownPath = context.transcriptMarkdownPath;
     await dependencies.appendEventLogFn(projectPaths.eventLogPath, {
       at: (/* @__PURE__ */ new Date()).toISOString(),
       event: "extraction/context",
@@ -14379,13 +14394,13 @@ async function executeWorker(payload, dependencies = defaultDependencies) {
       data: buildLogData(payload, {
         related_path_count: context.relatedPaths.length,
         transcript_path: payload.transcript_path,
-        filtered_transcript_path: context.filteredTranscriptPath,
+        transcript_markdown_path: context.transcriptMarkdownPath,
         last3_interactions_chars: context.last3Interactions.length
       })
     });
     const prompt = buildExtractionPrompt({
       last3Interactions: context.last3Interactions,
-      filteredTranscriptPath: context.filteredTranscriptPath,
+      transcriptMarkdownPath: context.transcriptMarkdownPath,
       relatedPaths: context.relatedPaths,
       projectRoot: payload.project_root,
       ...payload.last_assistant_message ? { lastAssistantMessage: payload.last_assistant_message } : {}
@@ -14510,14 +14525,14 @@ async function executeWorker(payload, dependencies = defaultDependencies) {
       ...buildErrorDebugData(error48) ? { debug: buildErrorDebugData(error48) } : {}
     });
   } finally {
-    if (filteredTranscriptPath) {
-      await unlink(filteredTranscriptPath).catch(() => {
+    if (transcriptMarkdownPath) {
+      await unlink(transcriptMarkdownPath).catch(() => {
       });
     }
     await backgroundHookLease.finish(backgroundHookStatus, backgroundHookDetail);
   }
 }
-async function prepareTranscriptContext(transcriptPath, projectRoot, sessionId) {
+async function prepareTranscriptContext(transcriptPath, projectRoot) {
   const raw = await readFile3(transcriptPath, "utf8");
   const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
   const recentLines = lines.slice(Math.max(0, lines.length - 300));
@@ -14534,36 +14549,24 @@ async function prepareTranscriptContext(transcriptPath, projectRoot, sessionId) 
       }
     }
   }
-  const filteredLines = filterTranscriptLines(lines);
-  const last3 = extractLast3Interactions(filteredLines);
+  const markdown = transcriptToMarkdown(lines);
+  const markdownLines = markdown.split("\n");
+  const last3 = extractLast3Interactions(markdownLines);
   const tmpDir = path3.join(getGlobalPaths().memoriesDir, "tmp");
   await mkdir2(tmpDir, { recursive: true });
-  const filteredTranscriptPath = path3.join(
-    tmpDir,
-    `transcript-filtered-${sessionId ?? "unknown"}.jsonl`
-  );
-  await writeFile2(filteredTranscriptPath, filteredLines.join("\n"), "utf8");
+  const transcriptMarkdownPath = path3.join(tmpDir, `transcript-${Date.now()}.md`);
+  await writeFile2(transcriptMarkdownPath, markdown, "utf8");
   return {
-    filteredTranscriptPath,
+    transcriptMarkdownPath,
     last3Interactions: last3,
     relatedPaths: [...relatedPaths].slice(0, 80)
   };
 }
-function extractLast3Interactions(filteredLines) {
+function extractLast3Interactions(markdownLines) {
   let userMessageCount = 0;
   let sliceStart = 0;
-  for (let i = filteredLines.length - 1; i >= 0; i--) {
-    const parsed = safeJsonParse2(filteredLines[i]);
-    if (!parsed || typeof parsed !== "object") {
-      continue;
-    }
-    const obj = parsed;
-    const message = obj.message;
-    if (!message) {
-      continue;
-    }
-    const content = message.content;
-    if (typeof content === "string" && obj.type === "user") {
+  for (let i = markdownLines.length - 1; i >= 0; i--) {
+    if (markdownLines[i].startsWith("User: ")) {
       userMessageCount++;
       if (userMessageCount >= 3) {
         sliceStart = i;
@@ -14571,7 +14574,7 @@ function extractLast3Interactions(filteredLines) {
       }
     }
   }
-  return filteredLines.slice(sliceStart).join("\n");
+  return markdownLines.slice(sliceStart).join("\n");
 }
 function collectPathValues(value) {
   const collected = [];
@@ -14630,19 +14633,14 @@ function buildExtractionPrompt(input) {
     "",
     "## Available tools",
     "",
-    "You have two tools available:",
+    "1. **Read tool** \u2014 The full conversation transcript (cleaned markdown) is available at:",
+    `   ${input.transcriptMarkdownPath}`,
+    "   Use the Read tool if the last 3 interactions below are insufficient context.",
     "",
-    "1. **Read tool** \u2014 Use it to read the filtered transcript file for earlier conversation context.",
-    `   File path: ${input.filteredTranscriptPath}`,
-    "   The transcript has been cleaned: no progress events, no thinking blocks, no subagent content, no system messages.",
-    "   Tool results and tool calls are truncated to reduce noise. Each line is a JSON object.",
-    "   Only read the file if the last 3 interactions below are insufficient to extract memories.",
-    "",
-    "2. **recall tool** \u2014 Use it to search existing project memories before creating, updating, or deleting.",
+    "2. **recall tool** \u2014 Search existing project memories before creating, updating, or deleting.",
     `   Always pass project_root: "${input.projectRoot}"`,
     "   Always pass include_debug_metadata: true (to get memory IDs needed for update/delete actions).",
     "   Search for concepts you intend to memorize to check for duplicates or memories that need updating.",
-    "   You may call recall multiple times with different queries.",
     "",
     "## Workflow",
     "",
@@ -14650,7 +14648,7 @@ function buildExtractionPrompt(input) {
     "2. Identify candidate insights worth memorizing.",
     "3. For each candidate, call the recall tool to check if a similar memory already exists.",
     "4. Decide on actions: create new memories, update existing ones, delete outdated ones, or skip.",
-    "5. If the last 3 interactions lack sufficient context, use the Read tool to read earlier transcript.",
+    "5. If the last 3 interactions lack context, use the Read tool on the full transcript.",
     "6. Output your final JSON with all actions.",
     "",
     "## Extraction strategy",

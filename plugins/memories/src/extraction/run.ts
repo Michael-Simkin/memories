@@ -7,7 +7,7 @@ import { ZodError } from 'zod';
 
 import { DEFAULT_BACKGROUND_HOOK_HEARTBEAT_INTERVAL_MS } from '../shared/constants.js';
 import { normalizePathForMatch } from '../shared/fs-utils.js';
-import { filterTranscriptLines } from '../shared/transcript-filter.js';
+import { transcriptToMarkdown } from '../shared/transcript-filter.js';
 import { logError } from '../shared/logger.js';
 import { appendEventLog } from '../shared/logs.js';
 import { getGlobalPaths } from '../shared/paths.js';
@@ -39,7 +39,7 @@ interface ActionApplyError {
 type ActionApplyOutcome = ActionApplyResult | ActionApplyError;
 
 interface WorkerContext {
-  filteredTranscriptPath: string;
+  transcriptMarkdownPath: string;
   last3Interactions: string;
   relatedPaths: string[];
 }
@@ -284,15 +284,14 @@ export async function executeWorker(
   });
 
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? path.dirname(path.dirname(__filename));
-  let filteredTranscriptPath: string | undefined;
+  let transcriptMarkdownPath: string | undefined;
 
   try {
     const context = await dependencies.prepareTranscriptContextFn(
       payload.transcript_path,
       payload.project_root,
-      payload.session_id,
     );
-    filteredTranscriptPath = context.filteredTranscriptPath;
+    transcriptMarkdownPath = context.transcriptMarkdownPath;
     await dependencies.appendEventLogFn(projectPaths.eventLogPath, {
       at: new Date().toISOString(),
       event: 'extraction/context',
@@ -302,13 +301,13 @@ export async function executeWorker(
       data: buildLogData(payload, {
         related_path_count: context.relatedPaths.length,
         transcript_path: payload.transcript_path,
-        filtered_transcript_path: context.filteredTranscriptPath,
+        transcript_markdown_path: context.transcriptMarkdownPath,
         last3_interactions_chars: context.last3Interactions.length,
       }),
     });
     const prompt = buildExtractionPrompt({
       last3Interactions: context.last3Interactions,
-      filteredTranscriptPath: context.filteredTranscriptPath,
+      transcriptMarkdownPath: context.transcriptMarkdownPath,
       relatedPaths: context.relatedPaths,
       projectRoot: payload.project_root,
       ...(payload.last_assistant_message
@@ -447,8 +446,8 @@ export async function executeWorker(
       ...(buildErrorDebugData(error) ? { debug: buildErrorDebugData(error) } : {}),
     });
   } finally {
-    if (filteredTranscriptPath) {
-      await unlink(filteredTranscriptPath).catch(() => {});
+    if (transcriptMarkdownPath) {
+      await unlink(transcriptMarkdownPath).catch(() => {});
     }
     await backgroundHookLease.finish(backgroundHookStatus, backgroundHookDetail);
   }
@@ -457,7 +456,6 @@ export async function executeWorker(
 export async function prepareTranscriptContext(
   transcriptPath: string,
   projectRoot: string,
-  sessionId?: string,
 ): Promise<WorkerContext> {
   const raw = await readFile(transcriptPath, 'utf8');
   const lines = raw
@@ -480,42 +478,29 @@ export async function prepareTranscriptContext(
     }
   }
 
-  const filteredLines = filterTranscriptLines(lines);
-
-  const last3 = extractLast3Interactions(filteredLines);
+  const markdown = transcriptToMarkdown(lines);
+  const markdownLines = markdown.split('\n');
+  const last3 = extractLast3Interactions(markdownLines);
 
   const tmpDir = path.join(getGlobalPaths().memoriesDir, 'tmp');
   await mkdir(tmpDir, { recursive: true });
-  const filteredTranscriptPath = path.join(
-    tmpDir,
-    `transcript-filtered-${sessionId ?? 'unknown'}.jsonl`,
-  );
-  await writeFile(filteredTranscriptPath, filteredLines.join('\n'), 'utf8');
+  const transcriptMarkdownPath = path.join(tmpDir, `transcript-${Date.now()}.md`);
+  await writeFile(transcriptMarkdownPath, markdown, 'utf8');
 
   return {
-    filteredTranscriptPath,
+    transcriptMarkdownPath,
     last3Interactions: last3,
     relatedPaths: [...relatedPaths].slice(0, 80),
   };
 }
 
 
-function extractLast3Interactions(filteredLines: string[]): string {
+function extractLast3Interactions(markdownLines: string[]): string {
   let userMessageCount = 0;
   let sliceStart = 0;
 
-  for (let i = filteredLines.length - 1; i >= 0; i--) {
-    const parsed = safeJsonParse(filteredLines[i]!);
-    if (!parsed || typeof parsed !== 'object') {
-      continue;
-    }
-    const obj = parsed as Record<string, unknown>;
-    const message = obj.message as Record<string, unknown> | undefined;
-    if (!message) {
-      continue;
-    }
-    const content = message.content;
-    if (typeof content === 'string' && obj.type === 'user') {
+  for (let i = markdownLines.length - 1; i >= 0; i--) {
+    if (markdownLines[i]!.startsWith('User: ')) {
       userMessageCount++;
       if (userMessageCount >= 3) {
         sliceStart = i;
@@ -524,7 +509,7 @@ function extractLast3Interactions(filteredLines: string[]): string {
     }
   }
 
-  return filteredLines.slice(sliceStart).join('\n');
+  return markdownLines.slice(sliceStart).join('\n');
 }
 
 function collectPathValues(value: unknown): string[] {
@@ -585,7 +570,7 @@ function normalizeCandidatePath(rawPath: string, projectRoot: string): string | 
 
 function buildExtractionPrompt(input: {
   last3Interactions: string;
-  filteredTranscriptPath: string;
+  transcriptMarkdownPath: string;
   relatedPaths: string[];
   projectRoot: string;
   lastAssistantMessage?: string;
@@ -597,19 +582,14 @@ function buildExtractionPrompt(input: {
     '',
     '## Available tools',
     '',
-    'You have two tools available:',
+    '1. **Read tool** — The full conversation transcript (cleaned markdown) is available at:',
+    `   ${input.transcriptMarkdownPath}`,
+    '   Use the Read tool if the last 3 interactions below are insufficient context.',
     '',
-    '1. **Read tool** — Use it to read the filtered transcript file for earlier conversation context.',
-    `   File path: ${input.filteredTranscriptPath}`,
-    '   The transcript has been cleaned: no progress events, no thinking blocks, no subagent content, no system messages.',
-    '   Tool results and tool calls are truncated to reduce noise. Each line is a JSON object.',
-    '   Only read the file if the last 3 interactions below are insufficient to extract memories.',
-    '',
-    '2. **recall tool** — Use it to search existing project memories before creating, updating, or deleting.',
+    '2. **recall tool** — Search existing project memories before creating, updating, or deleting.',
     `   Always pass project_root: "${input.projectRoot}"`,
     '   Always pass include_debug_metadata: true (to get memory IDs needed for update/delete actions).',
     '   Search for concepts you intend to memorize to check for duplicates or memories that need updating.',
-    '   You may call recall multiple times with different queries.',
     '',
     '## Workflow',
     '',
@@ -617,7 +597,7 @@ function buildExtractionPrompt(input: {
     '2. Identify candidate insights worth memorizing.',
     '3. For each candidate, call the recall tool to check if a similar memory already exists.',
     '4. Decide on actions: create new memories, update existing ones, delete outdated ones, or skip.',
-    '5. If the last 3 interactions lack sufficient context, use the Read tool to read earlier transcript.',
+    '5. If the last 3 interactions lack context, use the Read tool on the full transcript.',
     '6. Output your final JSON with all actions.',
     '',
     '## Extraction strategy',

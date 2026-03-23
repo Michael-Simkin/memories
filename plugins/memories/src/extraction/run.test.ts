@@ -45,8 +45,8 @@ function createDependencies(options: {
     appendEventLogFn,
     applyActionFn,
     prepareTranscriptContextFn: vi.fn().mockResolvedValue({
-      filteredTranscriptPath: '/tmp/project/.claude-memory/transcript-filtered-session-1.jsonl',
-      last3Interactions: '{"type":"user","message":{"content":"test message"}}',
+      transcriptMarkdownPath: '/tmp/memories/tmp/transcript-123.md',
+      last3Interactions: 'User: test message\nAssistant: I will help with that.',
       relatedPaths: ['src/app.ts'],
     }),
     runClaudeFn,
@@ -209,7 +209,8 @@ describe('extraction worker', () => {
     expect(prompt).toContain("only change an existing memory's is_pinned state");
     expect(prompt).toContain('Read tool');
     expect(prompt).toContain('recall tool');
+    expect(prompt).toContain('transcript-123.md');
     expect(prompt).toContain('Last 3 interactions');
-    expect(prompt).toContain('transcript-filtered-session-1.jsonl');
+    expect(prompt).toContain('User: test message');
   });
 });
