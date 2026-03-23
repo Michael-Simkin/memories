@@ -15,6 +15,9 @@ export const DEFAULT_SEMANTIC_K = 30;
 export const DEFAULT_LEXICAL_K = 30;
 export const DEFAULT_RESPONSE_TOKEN_BUDGET = 6000;
 
+export const MIN_SEMANTIC_SCORE = 0.6;
+export const MIN_LEXICAL_SCORE = 0.1;
+
 export const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
 export const DEFAULT_OLLAMA_TIMEOUT_MS = 10_000;
 export const DEFAULT_MCP_ENGINE_TIMEOUT_MS = 2_500;

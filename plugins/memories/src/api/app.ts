@@ -6,6 +6,7 @@ import path from 'node:path';
 import express, { type Request, type Response } from 'express';
 import { z } from 'zod';
 
+import { BackfillOrchestrator } from '../backfill/orchestrator.js';
 import { EmbeddingClient } from '../retrieval/embeddings.js';
 import { RetrievalService } from '../retrieval/hybrid-retrieval.js';
 import {
@@ -29,7 +30,6 @@ import {
   updateMemoryInputSchema,
 } from '../shared/types.js';
 import { MemoryStore } from '../storage/database.js';
-import { BackfillOrchestrator } from '../backfill/orchestrator.js';
 import { sendError } from './errors.js';
 
 export interface EngineAppOptions {
@@ -559,12 +559,7 @@ export function createEngineApp(options: EngineAppOptions): EngineAppRuntime {
       return sendError(response, 400, 'INVALID_PAYLOAD', parsed.error.message);
     }
 
-    const existingIndex = extractionQueue.findIndex((job) => job.repo_id === parsed.data.repo_id);
-    if (existingIndex !== -1) {
-      extractionQueue[existingIndex] = parsed.data;
-    } else {
-      extractionQueue.push(parsed.data);
-    }
+    extractionQueue.push(parsed.data);
     processNextExtraction();
     return response.status(202).json({ ok: true });
   });

@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { ulid } from 'ulid';
 
+import { MIN_LEXICAL_SCORE } from '../shared/constants.js';
 import { logWarn } from '../shared/logger.js';
 import type {
   AddMemoryInput,
@@ -387,6 +388,7 @@ export class MemoryStore {
           updated_at: row.updated_at,
         };
       })
+      .filter((row) => row.score >= MIN_LEXICAL_SCORE)
       .sort((left, right) => right.score - left.score || right.updated_at.localeCompare(left.updated_at))
       .slice(0, input.limit);
   }

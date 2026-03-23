@@ -38989,6 +38989,8 @@ var MAX_SEARCH_LIMIT = 50;
 var DEFAULT_SEMANTIC_K = 30;
 var DEFAULT_LEXICAL_K = 30;
 var DEFAULT_RESPONSE_TOKEN_BUDGET = 6e3;
+var MIN_SEMANTIC_SCORE = 0.6;
+var MIN_LEXICAL_SCORE = 0.1;
 var DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 var DEFAULT_OLLAMA_TIMEOUT_MS = 1e4;
 var DEFAULT_IDLE_TIMEOUT_MS = 36e5;
@@ -39416,7 +39418,7 @@ var RetrievalService = class {
         source: "hybrid",
         updated_at: row.updated_at
       };
-    }).sort((left, right) => this.sortSearchResults(left, right)).slice(0, input.semanticK);
+    }).filter((row) => row.score >= MIN_SEMANTIC_SCORE).sort((left, right) => this.sortSearchResults(left, right)).slice(0, input.semanticK);
   }
   findPathMatches(repoId, targetPaths, memoryTypes, includePinned) {
     const normalizedTargets = targetPaths.map((value) => normalizePathForMatch(value)).filter(Boolean);
@@ -40133,7 +40135,7 @@ var MemoryStore = class {
         source: "hybrid",
         updated_at: row.updated_at
       };
-    }).sort((left, right) => right.score - left.score || right.updated_at.localeCompare(left.updated_at)).slice(0, input.limit);
+    }).filter((row) => row.score >= MIN_LEXICAL_SCORE).sort((left, right) => right.score - left.score || right.updated_at.localeCompare(left.updated_at)).slice(0, input.limit);
   }
   listEmbeddings(repoId, memoryTypes, includePinned = true) {
     const rows = this.database.prepare(
@@ -41638,12 +41640,7 @@ function createEngineApp(options) {
     if (!parsed.success) {
       return sendError(response, 400, "INVALID_PAYLOAD", parsed.error.message);
     }
-    const existingIndex = extractionQueue.findIndex((job) => job.repo_id === parsed.data.repo_id);
-    if (existingIndex !== -1) {
-      extractionQueue[existingIndex] = parsed.data;
-    } else {
-      extractionQueue.push(parsed.data);
-    }
+    extractionQueue.push(parsed.data);
     processNextExtraction();
     return response.status(202).json({ ok: true });
   });

@@ -1,6 +1,6 @@
 import picomatch from 'picomatch';
 
-import { DEFAULT_LEXICAL_K, DEFAULT_SEMANTIC_K } from '../shared/constants.js';
+import { DEFAULT_LEXICAL_K, DEFAULT_SEMANTIC_K, MIN_SEMANTIC_SCORE } from '../shared/constants.js';
 import { normalizePathForMatch } from '../shared/fs-utils.js';
 import { applyTokenBudget } from '../shared/token-budget.js';
 import type { MemoryType, SearchMatchSource, SearchResult } from '../shared/types.js';
@@ -194,6 +194,7 @@ export class RetrievalService {
           updated_at: row.updated_at,
         };
       })
+      .filter((row) => row.score >= MIN_SEMANTIC_SCORE)
       .sort((left, right) => this.sortSearchResults(left, right))
       .slice(0, input.semanticK);
   }

@@ -13822,6 +13822,7 @@ var DROPPED_LINE_TYPES = /* @__PURE__ */ new Set([
   "last-prompt"
 ]);
 var TOOL_RESULT_TRUNCATION_CHARS = 150;
+var ERROR_RESULT_TRUNCATION_CHARS = 500;
 function transcriptToMarkdown(lines) {
   const parts = [];
   for (const line of lines) {
@@ -13888,25 +13889,29 @@ function contentToText(content) {
   }
   return parts.join("\n") || "";
 }
+function looksLikeError(text) {
+  return /error|fail|exception|stderr|traceback|panic/i.test(text.slice(0, 200));
+}
 function extractToolResultText(content) {
   if (typeof content === "string") {
-    return truncate(content);
+    return truncate(content, looksLikeError(content) ? ERROR_RESULT_TRUNCATION_CHARS : TOOL_RESULT_TRUNCATION_CHARS);
   }
   if (Array.isArray(content)) {
     for (const item of content) {
       if (item?.type === "text" && typeof item.text === "string") {
-        return truncate(item.text);
+        const limit = looksLikeError(item.text) ? ERROR_RESULT_TRUNCATION_CHARS : TOOL_RESULT_TRUNCATION_CHARS;
+        return truncate(item.text, limit);
       }
     }
   }
   return "";
 }
-function truncate(text) {
+function truncate(text, limit = TOOL_RESULT_TRUNCATION_CHARS) {
   const oneLine = text.replace(/\n/g, " ").trim();
-  if (oneLine.length <= TOOL_RESULT_TRUNCATION_CHARS) {
+  if (oneLine.length <= limit) {
     return oneLine;
   }
-  return oneLine.slice(0, TOOL_RESULT_TRUNCATION_CHARS) + "...";
+  return oneLine.slice(0, limit) + "...";
 }
 function safeJsonParse(text) {
   try {
@@ -14195,7 +14200,11 @@ var workerOutputSchema = external_exports.object({
 });
 
 // src/extraction/run.ts
-var CONFIDENCE_THRESHOLD = 0.75;
+var CONFIDENCE_THRESHOLDS = {
+  create: 0.7,
+  update: 0.8,
+  delete: 0.9
+};
 var ExtractionParseError = class extends Error {
   debugInfo;
   constructor(message, debugInfo) {
@@ -14450,7 +14459,8 @@ async function executeWorker(payload, dependencies = defaultDependencies) {
     );
     let failed = false;
     for (const action of sanitizedActions) {
-      if (action.action === "skip" || action.confidence < CONFIDENCE_THRESHOLD) {
+      const threshold = CONFIDENCE_THRESHOLDS[action.action] ?? 1;
+      if (action.action === "skip" || action.confidence < threshold) {
         await dependencies.appendEventLogFn(projectPaths.eventLogPath, {
           at: (/* @__PURE__ */ new Date()).toISOString(),
           event: "extraction/skip",
@@ -14653,9 +14663,36 @@ function buildExtractionPrompt(input) {
     "",
     "## Extraction strategy",
     "",
-    '- Even when the transcript focuses on a specific flow (e.g. tests, a controller, a workflow), actively look for general principles that apply across the project. Phrases like "the core principle is...", "we use real X and only mock Y", "always do X", or similar project-wide guidance should be extracted as separate memories (typically memory_type=rule).',
+    '- Look for general principles that apply across the project when the transcript explicitly generalizes. Phrases like "the core principle is...", "we use real X and only mock Y", "always do X", or "in this repo we..." should be extracted as separate memories (memory_type=rule).',
     '- Split composite content into multiple memories when it mixes distinct concepts. One memory per concept: e.g. a general principle (rule), a file/structure fact (fact), a workflow step (episode), an architectural choice (decision). Do not create a single "kitchen sink" memory that bundles unrelated ideas.',
     '- memory_type guidance: rule = general principles, preferences, constraints, "how we do X"; fact = structural facts, file locations, exports, types; decision = architectural choices, trade-offs; episode = specific event, workflow step, or contextual detail.',
+    "",
+    "## Generalization rules",
+    "",
+    '- Only create memory_type=rule when the transcript explicitly generalizes ("always", "never", "we do X", "the rule is", "in this repo we...") OR there are multiple independent pieces of evidence for the same pattern.',
+    "- A single local fix or one-off debugging step is NOT a project-wide rule. Prefer fact, decision, or skip.",
+    "- Do not generalize assistant suggestions unless the user confirmed or adopted them.",
+    "",
+    "## Durability filter",
+    "",
+    "Only store information likely to remain useful across future sessions. Skip:",
+    "- current task status or in-progress work",
+    "- temporary TODOs",
+    "- one-off debug output or transient failures (unless they reveal a reusable pattern)",
+    "- speculative assistant suggestions the user did not confirm",
+    "- repeated paraphrases of an existing memory",
+    "",
+    "## Correction handling",
+    "",
+    '- Treat phrases like "actually", "not X, Y", "that was wrong", "failed because", "we changed this", and "instead" as high-priority update signals.',
+    "- When the user corrects a prior belief, prefer update on the existing memory over creating a new one.",
+    '- When a fact is superseded (e.g. "we used to do X, now we do Y"), update the existing memory to reflect the current state.',
+    "",
+    "## Update/delete policy",
+    "",
+    "- Use update only when the new transcript refers to the same underlying fact/decision and materially refines or supersedes it.",
+    "- Use delete only when the existing memory is clearly wrong, obsolete, and no longer useful even historically.",
+    "- Otherwise prefer update or skip. Deletes require very high confidence.",
     "",
     "## Allowed action contracts",
     "",
@@ -14671,6 +14708,12 @@ function buildExtractionPrompt(input) {
     "- update/delete must target existing memory ids obtained from the recall tool.",
     "- If required fields are missing or uncertain, emit skip instead of partial create/update/delete.",
     "- Do not invent memory IDs \u2014 only use IDs returned by the recall tool.",
+    "",
+    "## Tag policy",
+    "",
+    "- Generate 3-5 lowercase tags per memory.",
+    "- Include: main concept, component/module name, file basename when clear.",
+    "- Avoid generic tags like: project, important, memory, code, general.",
     "",
     "## Safety rules",
     "",
@@ -14857,9 +14900,11 @@ function sanitizeWorkerAction(action, relatedPaths) {
 }
 function sanitizePathMatchers(matchers, relatedPaths) {
   const disallowed = /* @__PURE__ */ new Set(["*", "**", "**/*", "/", "./"]);
-  const byBasename = new Map(
-    relatedPaths.map((relatedPath) => [path3.posix.basename(relatedPath), relatedPath])
-  );
+  const byBasename = /* @__PURE__ */ new Map();
+  for (const relatedPath of relatedPaths) {
+    const base = path3.posix.basename(relatedPath);
+    byBasename.set(base, byBasename.has(base) ? null : relatedPath);
+  }
   const seen = /* @__PURE__ */ new Set();
   const sanitized = [];
   for (const matcher of matchers) {
@@ -14872,8 +14917,13 @@ function sanitizePathMatchers(matchers, relatedPaths) {
     if (!normalized || disallowed.has(normalized)) {
       continue;
     }
-    if (!normalized.includes("/") && byBasename.has(normalized)) {
-      normalized = byBasename.get(normalized) ?? normalized;
+    if (!normalized.includes("/")) {
+      const expanded = byBasename.get(normalized);
+      if (expanded) {
+        normalized = expanded;
+      } else if (byBasename.has(normalized)) {
+        continue;
+      }
     }
     if (disallowed.has(normalized) || seen.has(normalized)) {
       continue;
@@ -14966,7 +15016,7 @@ async function runFromCli() {
 }
 void runFromCli();
 export {
-  CONFIDENCE_THRESHOLD,
+  CONFIDENCE_THRESHOLDS,
   decodeWorkerPayload,
   executeWorker,
   prepareTranscriptContext,

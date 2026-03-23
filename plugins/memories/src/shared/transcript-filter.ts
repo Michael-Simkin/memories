@@ -6,6 +6,7 @@ const DROPPED_LINE_TYPES = new Set([
   'last-prompt',
 ]);
 const TOOL_RESULT_TRUNCATION_CHARS = 150;
+const ERROR_RESULT_TRUNCATION_CHARS = 500;
 
 export function transcriptToMarkdown(lines: string[]): string {
   const parts: string[] = [];
@@ -83,26 +84,31 @@ function contentToText(content: unknown): string {
   return parts.join('\n') || '';
 }
 
+function looksLikeError(text: string): boolean {
+  return /error|fail|exception|stderr|traceback|panic/i.test(text.slice(0, 200));
+}
+
 function extractToolResultText(content: unknown): string {
   if (typeof content === 'string') {
-    return truncate(content);
+    return truncate(content, looksLikeError(content) ? ERROR_RESULT_TRUNCATION_CHARS : TOOL_RESULT_TRUNCATION_CHARS);
   }
   if (Array.isArray(content)) {
     for (const item of content as Array<Record<string, unknown>>) {
       if (item?.type === 'text' && typeof item.text === 'string') {
-        return truncate(item.text);
+        const limit = looksLikeError(item.text) ? ERROR_RESULT_TRUNCATION_CHARS : TOOL_RESULT_TRUNCATION_CHARS;
+        return truncate(item.text, limit);
       }
     }
   }
   return '';
 }
 
-function truncate(text: string): string {
+function truncate(text: string, limit: number = TOOL_RESULT_TRUNCATION_CHARS): string {
   const oneLine = text.replace(/\n/g, ' ').trim();
-  if (oneLine.length <= TOOL_RESULT_TRUNCATION_CHARS) {
+  if (oneLine.length <= limit) {
     return oneLine;
   }
-  return oneLine.slice(0, TOOL_RESULT_TRUNCATION_CHARS) + '...';
+  return oneLine.slice(0, limit) + '...';
 }
 
 function safeJsonParse(text: string): unknown {

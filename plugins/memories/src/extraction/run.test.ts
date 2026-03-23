@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkerPayload } from './contracts.js';
-import { CONFIDENCE_THRESHOLD, executeWorker } from './run.js';
+import { CONFIDENCE_THRESHOLDS, executeWorker } from './run.js';
 
 function createPayload(): WorkerPayload {
   return {
@@ -91,7 +91,7 @@ describe('extraction worker', () => {
 
     await executeWorker(payload, dependencies);
     expect(applyActionFn).toHaveBeenCalledTimes(1);
-    expect(CONFIDENCE_THRESHOLD).toBe(0.75);
+    expect(CONFIDENCE_THRESHOLDS).toEqual({ create: 0.7, update: 0.8, delete: 0.9 });
   });
 
   it('fails safe on invalid Claude output JSON', async () => {
@@ -199,7 +199,7 @@ describe('extraction worker', () => {
     const prompt = runClaudeFn.mock.calls[0]?.[0];
     expect(typeof prompt).toBe('string');
     expect(prompt).toContain('Extraction strategy');
-    expect(prompt).toContain('actively look for general principles that apply across the project');
+    expect(prompt).toContain('Look for general principles that apply across the project');
     expect(prompt).toContain('Split composite content into multiple memories');
     expect(prompt).toContain('Pinning rules');
     expect(prompt).toContain('ALMOST ALL memories should be is_pinned=false');
