@@ -58,7 +58,7 @@ function toDraft(memory?: DisplayMemory): MemoryDraft {
   return {
     content: memory?.content ?? '',
     is_pinned: memory?.is_pinned ?? false,
-    memory_type: memory?.memory_type ?? 'fact',
+    memory_type: memory?.memory_type ?? 'context',
     path_matchers: memory?.path_matchers.join('\n') ?? '',
     tags: memory?.tags.join(', ') ?? '',
   };
@@ -79,22 +79,6 @@ function parseTags(input: string): string[] {
     .filter(Boolean);
 }
 
-function classifyPolicyEffect(memory: DisplayMemory): 'deny' | 'must' | 'preference' | 'context' {
-  if (memory.memory_type !== 'rule') {
-    return 'context';
-  }
-  const text = `${memory.content} ${memory.tags.join(' ')}`.toLowerCase();
-  if (/\b(do not|don't|never|must not|forbidden|prohibit|cannot|can't)\b/.test(text)) {
-    return 'deny';
-  }
-  if (/\b(must|always|required|enforce|only)\b/.test(text)) {
-    return 'must';
-  }
-  if (/\b(prefer|should|recommended|ideally)\b/.test(text)) {
-    return 'preference';
-  }
-  return 'context';
-}
 
 function classifyMatcherScope(pattern: string): 'exact-file' | 'exact-dir' | 'single-glob' | 'deep-glob' {
   const trimmed = pattern.trim();
@@ -188,10 +172,8 @@ function MemoryModal(props: MemoryModalProps) {
                 setDraft((current) => ({ ...current, memory_type: memoryType }));
               }}
             >
-              <option value="fact">fact</option>
-              <option value="rule">rule</option>
-              <option value="decision">decision</option>
-              <option value="episode">episode</option>
+              <option value="guide">guide</option>
+              <option value="context">context</option>
             </select>
           </label>
           <label>
@@ -766,7 +748,6 @@ export function App() {
 
           <ul className="memory-list">
             {memoryRows.map((memory) => {
-              const policyEffect = classifyPolicyEffect(memory);
               const matchedBy = formatMatchedBy(memory.matched_by);
               const searchDebug = formatSearchDebug(memory);
               return (
@@ -776,7 +757,6 @@ export function App() {
                 >
                   <div className="memory-card-header">
                     <span className={`memory-pill type-${memory.memory_type}`}>{memory.memory_type}</span>
-                    <span className={`memory-pill effect-${policyEffect}`}>{policyEffect}</span>
                     <span className={`memory-pill pin-${memory.is_pinned ? 'pinned' : 'unpinned'}`}>
                       {memory.is_pinned ? 'Pinned' : 'Not pinned'}
                     </span>

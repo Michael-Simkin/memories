@@ -315,20 +315,12 @@ body {
   padding: 10px;
 }
 
-.memory-card.type-fact {
-  border-left: 4px solid #5f89ff;
-}
-
-.memory-card.type-rule {
+.memory-card.type-guide {
   border-left: 4px solid #d09d3d;
 }
 
-.memory-card.type-decision {
-  border-left: 4px solid #66b88f;
-}
-
-.memory-card.type-episode {
-  border-left: 4px solid #ad7df0;
+.memory-card.type-context {
+  border-left: 4px solid #5f89ff;
 }
 
 .memory-card.is-pinned {
@@ -352,24 +344,14 @@ body {
   text-transform: uppercase;
 }
 
-.memory-pill.type-fact {
-  background: #27418c;
-  color: #d7e3ff;
-}
-
-.memory-pill.type-rule {
+.memory-pill.type-guide {
   background: #66461e;
   color: #f5dfb6;
 }
 
-.memory-pill.type-decision {
-  background: #214a3a;
-  color: #caefd9;
-}
-
-.memory-pill.type-episode {
-  background: #4b2f77;
-  color: #e9d7ff;
+.memory-pill.type-context {
+  background: #27418c;
+  color: #d7e3ff;
 }
 
 .memory-pill.pin-pinned {
@@ -382,25 +364,12 @@ body {
   color: #d4dcf6;
 }
 
-.memory-pill.effect-context {
-  background: #2f406f;
-  color: #d6e3ff;
-}
-
-.memory-pill.effect-preference {
-  background: #4a385d;
-  color: #ecd8ff;
-}
 
 .memory-pill.effect-must {
   background: #2f5a46;
   color: #cbf3dc;
 }
 
-.memory-pill.effect-deny {
-  background: #6a3240;
-  color: #ffd8e0;
-}
 
 .memory-updated {
   color: #9eaad0;
