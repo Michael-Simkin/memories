@@ -40876,7 +40876,16 @@ var MemoryStore = class {
       this.database.prepare(
         `INSERT INTO memories (id, repo_id, memory_type, content, tags_json, is_pinned, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(memoryId, repoId, input.memory_type, input.content, JSON.stringify(normalizedTags), input.is_pinned ? 1 : 0, now, now);
+      ).run(
+        memoryId,
+        repoId,
+        input.memory_type,
+        input.content,
+        JSON.stringify(normalizedTags),
+        input.is_pinned ? 1 : 0,
+        now,
+        now
+      );
       this.syncFts(memoryId, normalizedTags);
       this.replacePathMatchers(memoryId, normalizedMatchers, now);
       this.syncEmbedding(memoryId, embeddingVector, now);
@@ -40897,12 +40906,16 @@ var MemoryStore = class {
       return null;
     }
     const nextContent = updates.content ?? current.content;
-    const nextTags = updates.tags?.map((tag) => tag.trim()).filter(Boolean) ?? [...current.tags.map((tag) => tag.trim())];
+    const nextTags = updates.tags?.map((tag) => tag.trim()).filter(Boolean) ?? [
+      ...current.tags.map((tag) => tag.trim())
+    ];
     const nextPinned = updates.is_pinned ?? current.is_pinned;
     const now = (/* @__PURE__ */ new Date()).toISOString();
     this.database.exec("BEGIN");
     try {
-      this.database.prepare("UPDATE memories SET content = ?, tags_json = ?, is_pinned = ?, updated_at = ? WHERE id = ? AND repo_id = ?").run(nextContent, JSON.stringify(nextTags), nextPinned ? 1 : 0, now, memoryId, repoId);
+      this.database.prepare(
+        "UPDATE memories SET content = ?, tags_json = ?, is_pinned = ?, updated_at = ? WHERE id = ? AND repo_id = ?"
+      ).run(nextContent, JSON.stringify(nextTags), nextPinned ? 1 : 0, now, memoryId, repoId);
       this.syncFts(memoryId, nextTags);
       if (updates.path_matchers) {
         this.replacePathMatchers(memoryId, normalizeMatchers(updates.path_matchers), now);
@@ -40995,7 +41008,9 @@ var MemoryStore = class {
         source: "hybrid",
         updated_at: row.updated_at
       };
-    }).filter((row) => row.score >= MIN_LEXICAL_SCORE).sort((left, right) => right.score - left.score || right.updated_at.localeCompare(left.updated_at)).slice(0, input.limit);
+    }).filter((row) => row.score >= MIN_LEXICAL_SCORE).sort(
+      (left, right) => right.score - left.score || right.updated_at.localeCompare(left.updated_at)
+    ).slice(0, input.limit);
   }
   listEmbeddings(repoId, memoryTypes, includePinned = true) {
     const rows = this.database.prepare(
@@ -41046,17 +41061,19 @@ var MemoryStore = class {
       if (!row) {
         return [];
       }
-      return [{
-        id: row.id,
-        memory_type: row.memory_type,
-        content: row.content,
-        tags: parseTags(row.tags_json),
-        is_pinned: row.is_pinned === 1,
-        path_matchers: this.getPathMatchersByMemoryId(row.id),
-        score: 1,
-        source: "hybrid",
-        updated_at: row.updated_at
-      }];
+      return [
+        {
+          id: row.id,
+          memory_type: row.memory_type,
+          content: row.content,
+          tags: parseTags(row.tags_json),
+          is_pinned: row.is_pinned === 1,
+          path_matchers: this.getPathMatchersByMemoryId(row.id),
+          score: 1,
+          source: "hybrid",
+          updated_at: row.updated_at
+        }
+      ];
     });
   }
   listRepos() {
@@ -41154,13 +41171,17 @@ var MemoryStore = class {
       content: row.content,
       tags: parseTags(row.tags_json),
       is_pinned: row.is_pinned === 1,
-      path_matchers: this.getPathMatchersByMemoryId(row.id).map((pathMatcher) => ({ path_matcher: pathMatcher })),
+      path_matchers: this.getPathMatchersByMemoryId(row.id).map((pathMatcher) => ({
+        path_matcher: pathMatcher
+      })),
       created_at: row.created_at,
       updated_at: row.updated_at
     };
   }
   getPathMatchersByMemoryId(memoryId) {
-    const rows = this.database.prepare("SELECT path_matcher FROM memory_path_matchers WHERE memory_id = ? ORDER BY created_at DESC").all(memoryId);
+    const rows = this.database.prepare(
+      "SELECT path_matcher FROM memory_path_matchers WHERE memory_id = ? ORDER BY created_at DESC"
+    ).all(memoryId);
     return rows.map((row) => row.path_matcher);
   }
   syncFts(memoryId, tags) {
@@ -41170,7 +41191,9 @@ var MemoryStore = class {
   replacePathMatchers(memoryId, pathMatchers, createdAt) {
     this.database.prepare("DELETE FROM memory_path_matchers WHERE memory_id = ?").run(memoryId);
     if (pathMatchers.length === 0) return;
-    const stmt = this.database.prepare("INSERT INTO memory_path_matchers (id, memory_id, path_matcher, created_at) VALUES (?, ?, ?, ?)");
+    const stmt = this.database.prepare(
+      "INSERT INTO memory_path_matchers (id, memory_id, path_matcher, created_at) VALUES (?, ?, ?, ?)"
+    );
     for (const matcher of pathMatchers) {
       stmt.run(ulid3(), memoryId, matcher.path_matcher, createdAt);
     }
@@ -41190,14 +41213,21 @@ var MemoryStore = class {
     ).run(memoryId, JSON.stringify(vector), updatedAt);
     if (!this.vecEnabled) return;
     if (vector.length !== this.embeddingDimensions) {
-      logWarn("Skipping vec_memory sync because embedding dimensions mismatch", { actual: vector.length, expected: this.embeddingDimensions, memoryId });
+      logWarn("Skipping vec_memory sync because embedding dimensions mismatch", {
+        actual: vector.length,
+        expected: this.embeddingDimensions,
+        memoryId
+      });
       return;
     }
     try {
       this.database.prepare("DELETE FROM vec_memory WHERE id = ?").run(memoryId);
       this.database.prepare("INSERT INTO vec_memory (id, vector) VALUES (?, ?)").run(memoryId, JSON.stringify(vector));
     } catch (error48) {
-      logWarn("Failed syncing vec_memory row; keeping JSON embedding row", { error: error48 instanceof Error ? error48.message : String(error48), memoryId });
+      logWarn("Failed syncing vec_memory row; keeping JSON embedding row", {
+        error: error48 instanceof Error ? error48.message : String(error48),
+        memoryId
+      });
     }
   }
 };

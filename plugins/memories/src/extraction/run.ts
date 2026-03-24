@@ -840,13 +840,22 @@ function parseWorkerOutputFromText(text: string): unknown | null {
   }
 
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (!fenced || !fenced[1]) {
-    return null;
+  if (fenced?.[1]) {
+    const fromFence = safeJsonParse(fenced[1]);
+    if (fromFence && isActionsObject(fromFence)) {
+      return fromFence;
+    }
   }
-  const fromFence = safeJsonParse(fenced[1]);
-  if (fromFence && isActionsObject(fromFence)) {
-    return fromFence;
+
+  const braceIdx = trimmed.indexOf('{"actions"');
+  if (braceIdx >= 0) {
+    const candidate = trimmed.slice(braceIdx);
+    const fromInline = safeJsonParse(candidate);
+    if (fromInline && isActionsObject(fromInline)) {
+      return fromInline;
+    }
   }
+
   return null;
 }
 

@@ -14285,6 +14285,18 @@ async function handleStopHook(payload, dependencies = defaultDependencies) {
   }
   try {
     await dependencies.accessFn(payload.transcript_path);
+  } catch {
+    await dependencies.appendEventLogFn(paths.eventLogPath, {
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      event: "Stop",
+      kind: "hook",
+      status: "skipped",
+      ...payload.session_id ? { session_id: payload.session_id } : {},
+      detail: `transcript not found: ${payload.transcript_path}`
+    });
+    return { continue: true };
+  }
+  try {
     const repoId = await dependencies.resolveRepoIdFn(projectRoot);
     const endpoint = await dependencies.resolveEndpointFromLockFn();
     await dependencies.postEngineJsonFn(endpoint, "/extraction/enqueue", {
