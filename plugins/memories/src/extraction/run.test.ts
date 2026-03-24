@@ -70,7 +70,7 @@ describe('extraction worker', () => {
           {
             action: 'create',
             confidence: 0.9,
-            memory_type: 'fact',
+            memory_type: 'context',
             content: 'Node 20 baseline',
             tags: ['runtime'],
             is_pinned: true,
@@ -79,7 +79,7 @@ describe('extraction worker', () => {
           {
             action: 'create',
             confidence: 0.2,
-            memory_type: 'fact',
+            memory_type: 'context',
             content: 'low confidence candidate',
             tags: [],
             is_pinned: false,
@@ -133,7 +133,7 @@ describe('extraction worker', () => {
           {
             action: 'create',
             confidence: 0.95,
-            memory_type: 'fact',
+            memory_type: 'context',
             content: 'first action',
             tags: [],
             is_pinned: false,
@@ -199,7 +199,7 @@ describe('extraction worker', () => {
     const prompt = runClaudeFn.mock.calls[0]?.[0];
     expect(typeof prompt).toBe('string');
     expect(prompt).toContain('Extraction strategy');
-    expect(prompt).toContain('Look for general principles that apply across the project');
+    expect(prompt).toContain('Look for general principles that apply across the project when the transcript explicitly generalizes');
     expect(prompt).toContain('Split composite content into multiple memories');
     expect(prompt).toContain('Pinning rules');
     expect(prompt).toContain('ALMOST ALL memories should be is_pinned=false');

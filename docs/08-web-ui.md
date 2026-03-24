@@ -61,7 +61,7 @@ State management:
 ### MemoryModal
 
 Create/edit form with fields:
-- `memory_type` select (fact / rule / decision / episode)
+- `memory_type` select (guide / context)
 - `content` textarea
 - `tags` text input (comma-separated)
 - `path_matchers` textarea (newline-separated)

@@ -13818,11 +13818,11 @@ config(en_default());
 // src/shared/constants.ts
 var LOOPBACK_HOST = "127.0.0.1";
 var LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, "localhost", "::1"];
-var MEMORY_DB_FILE = "ai_memory.db";
+var MEMORY_DB_FILE = "memory.db";
 var ENGINE_LOCK_FILE = "engine.lock.json";
 var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
 var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
-var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
+var MEMORY_EVENTS_LOG_FILE = "memory_events.log";
 var DEFAULT_BACKGROUND_HOOK_MAX_RUNTIME_MS = 10 * 6e4;
 
 // src/shared/lockfile.ts

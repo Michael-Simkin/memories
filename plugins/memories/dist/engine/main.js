@@ -39059,12 +39059,12 @@ import path from "path";
 // src/shared/constants.ts
 var LOOPBACK_HOST = "127.0.0.1";
 var LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, "localhost", "::1"];
-var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
-var MEMORY_DB_FILE = "ai_memory.db";
+var MEMORY_TYPES = ["guide", "context"];
+var MEMORY_DB_FILE = "memory.db";
 var ENGINE_LOCK_FILE = "engine.lock.json";
 var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
 var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
-var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
+var MEMORY_EVENTS_LOG_FILE = "memory_events.log";
 var DEFAULT_SEARCH_LIMIT = 10;
 var MAX_SEARCH_LIMIT = 50;
 var DEFAULT_SEMANTIC_K = 30;
@@ -39305,7 +39305,7 @@ function buildConsolidationPrompt(candidates, projectRoot) {
     "",
     "## Action contracts",
     "",
-    '- create: {"action":"create","confidence":0..1,"reason":"...","memory_type":"fact|rule|decision|episode","content":"...","tags":[...],"is_pinned":boolean,"path_matchers":[{"path_matcher":"..."}]}',
+    '- create: {"action":"create","confidence":0..1,"reason":"...","memory_type":"guide|context","content":"...","tags":[...],"is_pinned":boolean,"path_matchers":[{"path_matcher":"..."}]}',
     '- update: {"action":"update","confidence":0..1,"reason":"...","memory_id":"...","updates":{"content?":"...","tags?":[...],"is_pinned?":boolean,"path_matchers?":[{"path_matcher":"..."}]}}',
     '- delete: {"action":"delete","confidence":0..1,"reason":"...","memory_id":"..."}',
     '- skip: {"action":"skip","confidence":0..1,"reason":"..."}',
@@ -39697,7 +39697,7 @@ function parseFirstEntry(lines) {
 import { spawn as spawn2 } from "child_process";
 var candidateSchema = external_exports.object({
   content: external_exports.string().trim().min(1),
-  memory_type: external_exports.enum(["fact", "rule", "decision", "episode"]),
+  memory_type: external_exports.enum(["guide", "context"]),
   tags: external_exports.array(external_exports.string().trim().min(1)).default([]),
   is_pinned: external_exports.boolean().default(false),
   path_matchers: external_exports.array(
@@ -39739,9 +39739,9 @@ function buildPhase1Prompt(transcriptPath) {
     "",
     "## What to extract",
     "",
-    '- General principles, rules, preferences ("always do X", "never do Y", "we use X for Y")',
-    "- Structural facts about the project (file locations, architecture, key exports)",
-    "- Architectural decisions and trade-offs discussed",
+    '- Conventions, constraints, preferences, behavioral rules ("always do X", "never do Y", "we use X for Y")',
+    "- Stable repo knowledge: structural facts, file locations, architecture, key exports",
+    "- Architectural decisions and their rationale",
     "- Workflow conventions and patterns",
     "",
     "Do NOT extract:",
@@ -39756,7 +39756,7 @@ function buildPhase1Prompt(transcriptPath) {
     "",
     "Each candidate:",
     "- content: the memory text (clear, self-contained)",
-    '- memory_type: "fact" | "rule" | "decision" | "episode"',
+    '- memory_type: "guide" | "context"',
     "- tags: relevant keywords",
     "- is_pinned: almost always false (true only for rare project-wide invariants)",
     "- path_matchers: file paths this relates to (if any)",
@@ -40552,7 +40552,7 @@ var RetrievalService = class {
     };
   }
   classifyPolicyEffect(memory) {
-    if (memory.memory_type !== "rule") {
+    if (memory.memory_type !== "guide") {
       return 0;
     }
     const text = `${memory.content} ${memory.tags.join(" ")}`.toLowerCase();
@@ -41086,7 +41086,7 @@ var MemoryStore = class {
         is_pinned INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        CHECK (memory_type IN ('fact', 'rule', 'decision', 'episode')),
+        CHECK (memory_type IN ('guide', 'context')),
         CHECK (json_valid(tags_json)),
         CHECK (is_pinned IN (0, 1))
       );

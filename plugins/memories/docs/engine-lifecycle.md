@@ -105,5 +105,5 @@ resolveEngineNodeRuntime():
   engine.lock           // Running engine location
   engine-startup.lock   // Startup mutex
   engine-stderr.log     // Engine process stderr
-  ai_memory_events.log  // Persistent event log (JSONL)
+  memory_events.log     // Persistent event log (JSONL)
 ```

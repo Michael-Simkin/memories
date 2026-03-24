@@ -9,7 +9,7 @@ import { MemoryStore } from './database.js';
 
 async function createStore(): Promise<MemoryStore> {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'memories-db-'));
-  const dbPath = path.join(tempDir, 'ai_memory.db');
+  const dbPath = path.join(tempDir, 'memory.db');
   return new MemoryStore({
     dbPath,
     embeddingDimensions: 3,
@@ -42,7 +42,7 @@ describe('MemoryStore', () => {
       repoId,
       {
         repo_id: repoId,
-        memory_type: 'fact',
+        memory_type: 'context',
         content: 'Node runtime is 20+',
         tags: ['runtime', 'node'],
         is_pinned: true,
@@ -94,7 +94,7 @@ describe('MemoryStore', () => {
         )
         .run(
           'mem-raw',
-          'fact',
+          'context',
           'raw insert',
           '{invalid json',
           0,

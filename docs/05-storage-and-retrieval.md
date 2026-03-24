@@ -13,7 +13,7 @@ erDiagram
     memories {
         TEXT id PK "ULID"
         TEXT repo_id "NOT NULL"
-        TEXT memory_type "CHECK: fact|rule|decision|episode"
+        TEXT memory_type "CHECK: guide|context"
         TEXT content "NOT NULL"
         TEXT tags "JSON array"
         INTEGER is_pinned "0 or 1, default 0"
@@ -228,7 +228,7 @@ Embedding is best-effort -- failures don't block memory creation/updates. Memori
   limit?: number,                    // default 10, max 100
   include_pinned?: boolean,          // default true
   target_paths?: string[],           // for path matching
-  memory_types?: ("fact"|"rule"|"decision"|"episode")[]
+  memory_types?: ("guide"|"context")[]
 }
 ```
 

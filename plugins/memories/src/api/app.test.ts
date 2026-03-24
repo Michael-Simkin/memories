@@ -30,9 +30,9 @@ async function setupRuntimeWithOptions(options?: {
   const memoriesDir = path.join(projectRoot, '.memories');
   await mkdir(memoriesDir, { recursive: true });
 
-  const dbPath = path.join(memoriesDir, 'ai_memory.db');
+  const dbPath = path.join(memoriesDir, 'memory.db');
   const lockPath = path.join(memoriesDir, 'engine.lock.json');
-  const eventLogPath = path.join(memoriesDir, 'ai_memory_events.log');
+  const eventLogPath = path.join(memoriesDir, 'memory_events.log');
   await writeLockMetadata(lockPath, {
     host: '127.0.0.1',
     port: 4321,
@@ -95,7 +95,7 @@ describe('createEngineApp', () => {
       .post('/memories/add')
       .send({
         repo_id: REPO_ID,
-        memory_type: 'fact',
+        memory_type: 'context',
         content: 'Runtime baseline is Node 20+.',
         tags: ['runtime', 'node'],
         is_pinned: true,

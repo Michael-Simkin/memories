@@ -111,7 +111,7 @@ describe('RetrievalService', () => {
       'm1',
       makeResult({
         id: 'm1',
-        type: 'rule',
+        type: 'guide',
         content: 'Do not modify generated files.',
         pathMatchers: ['src/**'],
       }),
@@ -120,7 +120,7 @@ describe('RetrievalService', () => {
       'm2',
       makeResult({
         id: 'm2',
-        type: 'rule',
+        type: 'guide',
         content: 'You must keep source files readable.',
         pathMatchers: ['src/app.ts'],
       }),
@@ -129,7 +129,7 @@ describe('RetrievalService', () => {
       'm3',
       makeResult({
         id: 'm3',
-        type: 'rule',
+        type: 'guide',
         content: 'You must follow naming conventions.',
         pinned: true,
         pathMatchers: ['src/*.ts'],
@@ -139,7 +139,7 @@ describe('RetrievalService', () => {
       'm4',
       makeResult({
         id: 'm4',
-        type: 'rule',
+        type: 'guide',
         content: 'Context for this directory.',
         pathMatchers: ['src'],
       }),
@@ -170,14 +170,14 @@ describe('RetrievalService', () => {
     store.lexicalResults = [
       makeResult({
         id: 'a',
-        type: 'fact',
+        type: 'context',
         content: 'A',
         updatedAt: '2026-03-01T00:00:00.000Z',
         score: 0.9,
       }),
       makeResult({
         id: 'b',
-        type: 'fact',
+        type: 'context',
         content: 'B',
         updatedAt: '2026-03-03T00:00:00.000Z',
         score: 0.8,
@@ -189,7 +189,7 @@ describe('RetrievalService', () => {
       'c',
       makeResult({
         id: 'c',
-        type: 'fact',
+        type: 'context',
         content: 'C',
         updatedAt: '2026-03-02T00:00:00.000Z',
       }),
@@ -197,7 +197,7 @@ describe('RetrievalService', () => {
     store.embeddings = [
       {
         id: 'b',
-        memory_type: 'fact',
+        memory_type: 'context',
         content: 'B',
         tags: [],
         is_pinned: false,
@@ -206,7 +206,7 @@ describe('RetrievalService', () => {
       },
       {
         id: 'c',
-        memory_type: 'fact',
+        memory_type: 'context',
         content: 'C',
         tags: [],
         is_pinned: false,
@@ -242,7 +242,7 @@ describe('RetrievalService', () => {
     store.lexicalResults = [
       makeResult({
         id: 'only-lexical',
-        type: 'fact',
+        type: 'context',
         content: 'Lexical result',
       }),
     ];
@@ -267,12 +267,12 @@ describe('RetrievalService', () => {
     store.lexicalResults = [
       makeResult({
         id: 'long-1',
-        type: 'fact',
+        type: 'context',
         content: 'This is a long memory that costs many tokens'.repeat(4),
       }),
       makeResult({
         id: 'long-2',
-        type: 'fact',
+        type: 'context',
         content: 'Another long memory result that should be clipped'.repeat(4),
       }),
     ];

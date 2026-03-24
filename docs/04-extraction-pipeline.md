@@ -170,7 +170,7 @@ CREATE:
   action: "create"
   confidence: 0..1
   reason?: string
-  memory_type: "fact" | "rule" | "decision" | "episode"
+  memory_type: "guide" | "context"
   content: string
   tags: string[]           (default [])
   is_pinned: boolean       (default false)

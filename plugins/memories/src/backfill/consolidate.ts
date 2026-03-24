@@ -53,7 +53,7 @@ function buildConsolidationPrompt(
     '',
     '## Action contracts',
     '',
-    '- create: {"action":"create","confidence":0..1,"reason":"...","memory_type":"fact|rule|decision|episode","content":"...","tags":[...],"is_pinned":boolean,"path_matchers":[{"path_matcher":"..."}]}',
+    '- create: {"action":"create","confidence":0..1,"reason":"...","memory_type":"guide|context","content":"...","tags":[...],"is_pinned":boolean,"path_matchers":[{"path_matcher":"..."}]}',
     '- update: {"action":"update","confidence":0..1,"reason":"...","memory_id":"...","updates":{"content?":"...","tags?":[...],"is_pinned?":boolean,"path_matchers?":[{"path_matcher":"..."}]}}',
     '- delete: {"action":"delete","confidence":0..1,"reason":"...","memory_id":"..."}',
     '- skip: {"action":"skip","confidence":0..1,"reason":"..."}',

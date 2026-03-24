@@ -1,4 +1,4 @@
-export type MemoryType = 'fact' | 'rule' | 'decision' | 'episode';
+export type MemoryType = 'guide' | 'context';
 export type SearchMatchSource = 'path' | 'lexical' | 'semantic';
 
 export interface PathMatcher {

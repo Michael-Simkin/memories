@@ -35786,12 +35786,12 @@ var StdioServerTransport = class {
 // src/shared/constants.ts
 var LOOPBACK_HOST = "127.0.0.1";
 var LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, "localhost", "::1"];
-var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
-var MEMORY_DB_FILE = "ai_memory.db";
+var MEMORY_TYPES = ["guide", "context"];
+var MEMORY_DB_FILE = "memory.db";
 var ENGINE_LOCK_FILE = "engine.lock.json";
 var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
 var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
-var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
+var MEMORY_EVENTS_LOG_FILE = "memory_events.log";
 var DEFAULT_SEARCH_LIMIT = 10;
 var MAX_SEARCH_LIMIT = 50;
 var DEFAULT_SEMANTIC_K = 30;
@@ -35912,17 +35912,13 @@ function logError(message, data) {
 }
 
 // src/shared/markdown.ts
-var MEMORY_SECTION_ORDER = ["fact", "rule", "decision", "episode"];
+var MEMORY_SECTION_ORDER = ["guide", "context"];
 function sectionTitle(memoryType) {
   switch (memoryType) {
-    case "fact":
-      return "Facts";
-    case "rule":
-      return "Rules";
-    case "decision":
-      return "Decisions";
-    case "episode":
-      return "Episodes";
+    case "guide":
+      return "Guides";
+    case "context":
+      return "Context";
   }
 }
 function formatResultLine(result, includeDebugMetadata) {
@@ -36207,7 +36203,7 @@ var recallInputFields = {
   include_debug_metadata: external_exports3.boolean().optional().describe(
     "Include diagnostic recall metadata such as ids, scores, tags, matchers, timestamps, and query timing."
   ),
-  memory_types: external_exports3.array(external_exports3.enum(["fact", "rule", "decision", "episode"])).optional()
+  memory_types: external_exports3.array(external_exports3.enum(["guide", "context"])).optional()
 };
 var recallInputSchema = external_exports3.object(recallInputFields);
 function parseTimeoutMs(rawValue) {
@@ -36268,7 +36264,7 @@ async function runRecall(rawInput) {
 function createRecallMcpServer() {
   const server = new McpServer({
     name: "memories",
-    version: "0.2.27"
+    version: "0.2.28"
   });
   server.registerTool(
     "recall",

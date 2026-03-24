@@ -13780,12 +13780,12 @@ function date4(params) {
 config(en_default());
 
 // src/shared/constants.ts
-var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
-var MEMORY_DB_FILE = "ai_memory.db";
+var MEMORY_TYPES = ["guide", "context"];
+var MEMORY_DB_FILE = "memory.db";
 var ENGINE_LOCK_FILE = "engine.lock.json";
 var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
 var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
-var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
+var MEMORY_EVENTS_LOG_FILE = "memory_events.log";
 var DEFAULT_SEARCH_LIMIT = 10;
 var MAX_SEARCH_LIMIT = 50;
 var DEFAULT_SEMANTIC_K = 30;
@@ -14663,14 +14663,14 @@ function buildExtractionPrompt(input) {
     "",
     "## Extraction strategy",
     "",
-    '- Look for general principles that apply across the project when the transcript explicitly generalizes. Phrases like "the core principle is...", "we use real X and only mock Y", "always do X", or "in this repo we..." should be extracted as separate memories (memory_type=rule).',
-    '- Split composite content into multiple memories when it mixes distinct concepts. One memory per concept: e.g. a general principle (rule), a file/structure fact (fact), a workflow step (episode), an architectural choice (decision). Do not create a single "kitchen sink" memory that bundles unrelated ideas.',
-    '- memory_type guidance: rule = general principles, preferences, constraints, "how we do X"; fact = structural facts, file locations, exports, types; decision = architectural choices, trade-offs; episode = specific event, workflow step, or contextual detail.',
+    '- Look for general principles that apply across the project when the transcript explicitly generalizes. Phrases like "the core principle is...", "we use real X and only mock Y", "always do X", or "in this repo we..." should be extracted as separate memories (memory_type=guide).',
+    '- Split composite content into multiple memories when it mixes distinct concepts. One memory per concept: e.g. a behavioral convention (guide) or a structural/architectural fact (context). Do not create a single "kitchen sink" memory that bundles unrelated ideas.',
+    '- memory_type guidance: guide = conventions, constraints, preferences, decisions with behavioral consequences, "how we do X", "always/never do Y"; context = stable repo knowledge, structural facts, file locations, architecture, rationale behind choices.',
     "",
     "## Generalization rules",
     "",
-    '- Only create memory_type=rule when the transcript explicitly generalizes ("always", "never", "we do X", "the rule is", "in this repo we...") OR there are multiple independent pieces of evidence for the same pattern.',
-    "- A single local fix or one-off debugging step is NOT a project-wide rule. Prefer fact, decision, or skip.",
+    '- Only create memory_type=guide when the transcript explicitly generalizes ("always", "never", "we do X", "the rule is", "in this repo we...") OR there are multiple independent pieces of evidence for the same pattern.',
+    "- A single local fix or one-off debugging step is NOT a guide. Prefer context or skip.",
     "- Do not generalize assistant suggestions unless the user confirmed or adopted them.",
     "",
     "## Durability filter",
@@ -14696,7 +14696,7 @@ function buildExtractionPrompt(input) {
     "",
     "## Allowed action contracts",
     "",
-    '- create: {"action":"create","confidence":0..1,"reason":"...","memory_type":"fact|rule|decision|episode","content":"...","tags":[...],"is_pinned":boolean,"path_matchers":[{"path_matcher":"..."}]}',
+    '- create: {"action":"create","confidence":0..1,"reason":"...","memory_type":"guide|context","content":"...","tags":[...],"is_pinned":boolean,"path_matchers":[{"path_matcher":"..."}]}',
     '- update: {"action":"update","confidence":0..1,"reason":"...","memory_id":"...","updates":{"content?":"...","tags?":[...],"is_pinned?":boolean,"path_matchers?":[{"path_matcher":"..."}]}}',
     '- delete: {"action":"delete","confidence":0..1,"reason":"...","memory_id":"..."}',
     '- skip: {"action":"skip","confidence":0..1,"reason":"..."}',
@@ -14704,7 +14704,7 @@ function buildExtractionPrompt(input) {
     "## Hard requirements",
     "",
     "- Every create action MUST include memory_type.",
-    "- memory_type must be exactly one of: fact, rule, decision, episode.",
+    "- memory_type must be exactly one of: guide, context.",
     "- update/delete must target existing memory ids obtained from the recall tool.",
     "- If required fields are missing or uncertain, emit skip instead of partial create/update/delete.",
     "- Do not invent memory IDs \u2014 only use IDs returned by the recall tool.",

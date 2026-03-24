@@ -104,7 +104,7 @@ Hybrid search: semantic + lexical + path-match + RRF fusion.
   "limit": 20,
   "include_pinned": true,
   "target_paths": ["src/auth/middleware.ts"],
-  "memory_types": ["rule", "fact"],
+  "memory_types": ["guide", "context"],
   "lexical_k": 20,
   "semantic_k": 20,
   "response_token_budget": 4000
@@ -117,7 +117,7 @@ Hybrid search: semantic + lexical + path-match + RRF fusion.
   "meta": { "duration_ms": 45, "query": "...", "returned": 8, "source": "hybrid" },
   "results": [
     {
-      "id": "uuid", "content": "...", "memory_type": "rule",
+      "id": "uuid", "content": "...", "memory_type": "guide",
       "tags": [], "is_pinned": false, "path_matchers": [],
       "score": 0.812, "matched_by": ["semantic", "lexical"],
       "path_score": 0.9, "lexical_score": 0.4, "semantic_score": 0.7,
@@ -136,7 +136,7 @@ Creates a new memory. Generates embedding if Ollama is available.
 ```json
 {
   "repo_id": "abc123",
-  "memory_type": "rule",
+  "memory_type": "guide",
   "content": "Always use TypeScript strict mode",
   "tags": ["typescript"],
   "is_pinned": false,
@@ -176,7 +176,7 @@ Deletes a memory.
 ## Logs
 
 ### `GET /logs?limit=200&order=desc`
-Returns persistent event log entries (from `ai_memory_events.log`).
+Returns persistent event log entries (from `memory_events.log`).
 
 **Response:**
 ```json

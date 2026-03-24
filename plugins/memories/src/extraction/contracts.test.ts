@@ -19,7 +19,7 @@ describe('extraction contracts', () => {
         {
           action: 'create',
           confidence: 0.9,
-          memory_type: 'fact',
+          memory_type: 'context',
           content: 'Use Node 20+',
           tags: ['runtime'],
           is_pinned: true,

@@ -13826,12 +13826,12 @@ config(en_default());
 // src/shared/constants.ts
 var LOOPBACK_HOST = "127.0.0.1";
 var LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, "localhost", "::1"];
-var MEMORY_TYPES = ["fact", "rule", "decision", "episode"];
-var MEMORY_DB_FILE = "ai_memory.db";
+var MEMORY_TYPES = ["guide", "context"];
+var MEMORY_DB_FILE = "memory.db";
 var ENGINE_LOCK_FILE = "engine.lock.json";
 var ENGINE_STARTUP_LOCK_FILE = "engine.startup.lock.json";
 var ENGINE_STDERR_LOG_FILE = "engine.stderr.log";
-var MEMORY_EVENTS_LOG_FILE = "ai_memory_events.log";
+var MEMORY_EVENTS_LOG_FILE = "memory_events.log";
 var DEFAULT_SEARCH_LIMIT = 10;
 var MAX_SEARCH_LIMIT = 50;
 var DEFAULT_SEMANTIC_K = 30;
@@ -14640,17 +14640,13 @@ async function appendEventLog(logPath, event) {
 }
 
 // src/shared/markdown.ts
-var MEMORY_SECTION_ORDER = ["fact", "rule", "decision", "episode"];
+var MEMORY_SECTION_ORDER = ["guide", "context"];
 function sectionTitle(memoryType) {
   switch (memoryType) {
-    case "fact":
-      return "Facts";
-    case "rule":
-      return "Rules";
-    case "decision":
-      return "Decisions";
-    case "episode":
-      return "Episodes";
+    case "guide":
+      return "Guides";
+    case "context":
+      return "Context";
   }
 }
 function formatResultLine(result, includeDebugMetadata) {

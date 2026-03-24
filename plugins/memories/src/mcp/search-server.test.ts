@@ -52,7 +52,7 @@ async function startEngineServer(): Promise<{ close: () => Promise<void>; port: 
           results: [
             {
               id: 'mem-1',
-              memory_type: 'fact',
+              memory_type: 'context',
               content: 'Use Node 20+',
               tags: ['runtime'],
               is_pinned: true,

@@ -14,7 +14,7 @@ graph LR
 
     subgraph System2["System 2: Persistent event log"]
         L2[logs.ts\nappendEventLog]
-        L2 --> ELOG[~/.claude/memories/ai_memory_events.log\nJSONL, append-only]
+        L2 --> ELOG[~/.claude/memories/memory_events.log\nJSONL, append-only]
         ELOG -->|GET /logs| API[Engine HTTP API]
         API --> WEB[Web UI Logs tab]
     end
@@ -65,7 +65,7 @@ Both systems apply the same pattern-based redaction before writing. Patterns inc
 
 **Purpose:** Durable audit trail of all memory operations and hook lifecycle events.  
 **Format:** Zod-validated JSONL, append-only.  
-**Location:** `~/.claude/memories/ai_memory_events.log`  
+**Location:** `~/.claude/memories/memory_events.log`  
 **Retention:** Persists across engine restarts. Never automatically truncated.
 
 ### Event Schema (Zod-validated)

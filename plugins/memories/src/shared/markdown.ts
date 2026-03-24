@@ -1,6 +1,6 @@
 import type { SearchResult } from './types.js';
 
-const MEMORY_SECTION_ORDER = ['fact', 'rule', 'decision', 'episode'] as const;
+const MEMORY_SECTION_ORDER = ['guide', 'context'] as const;
 interface FormatMemoryRecallMarkdownInput {
   query: string;
   results: SearchResult[];
@@ -11,14 +11,10 @@ interface FormatMemoryRecallMarkdownInput {
 
 function sectionTitle(memoryType: (typeof MEMORY_SECTION_ORDER)[number]): string {
   switch (memoryType) {
-    case 'fact':
-      return 'Facts';
-    case 'rule':
-      return 'Rules';
-    case 'decision':
-      return 'Decisions';
-    case 'episode':
-      return 'Episodes';
+    case 'guide':
+      return 'Guides';
+    case 'context':
+      return 'Context';
   }
 }
 

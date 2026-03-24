@@ -6,7 +6,7 @@ import type { CandidateInsight } from './types.js';
 
 const candidateSchema = z.object({
   content: z.string().trim().min(1),
-  memory_type: z.enum(['fact', 'rule', 'decision', 'episode']),
+  memory_type: z.enum(['guide', 'context']),
   tags: z.array(z.string().trim().min(1)).default([]),
   is_pinned: z.boolean().default(false),
   path_matchers: z
@@ -52,9 +52,9 @@ function buildPhase1Prompt(transcriptPath: string): string {
     '',
     '## What to extract',
     '',
-    '- General principles, rules, preferences ("always do X", "never do Y", "we use X for Y")',
-    '- Structural facts about the project (file locations, architecture, key exports)',
-    '- Architectural decisions and trade-offs discussed',
+    '- Conventions, constraints, preferences, behavioral rules ("always do X", "never do Y", "we use X for Y")',
+    '- Stable repo knowledge: structural facts, file locations, architecture, key exports',
+    '- Architectural decisions and their rationale',
     '- Workflow conventions and patterns',
     '',
     'Do NOT extract:',
@@ -69,7 +69,7 @@ function buildPhase1Prompt(transcriptPath: string): string {
     '',
     'Each candidate:',
     '- content: the memory text (clear, self-contained)',
-    '- memory_type: "fact" | "rule" | "decision" | "episode"',
+    '- memory_type: "guide" | "context"',
     '- tags: relevant keywords',
     '- is_pinned: almost always false (true only for rare project-wide invariants)',
     '- path_matchers: file paths this relates to (if any)',

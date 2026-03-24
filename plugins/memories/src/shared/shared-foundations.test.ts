@@ -103,7 +103,7 @@ describe('shared foundations', () => {
     const results: SearchResult[] = [
       {
         id: 'mem-1',
-        memory_type: 'rule',
+        memory_type: 'guide',
         content: 'Never commit credentials.',
         tags: ['security'],
         is_pinned: true,
@@ -114,7 +114,7 @@ describe('shared foundations', () => {
       },
       {
         id: 'mem-2',
-        memory_type: 'fact',
+        memory_type: 'context',
         content: 'Project uses Node 20.',
         tags: ['runtime'],
         is_pinned: false,
@@ -133,7 +133,7 @@ describe('shared foundations', () => {
     });
 
     expect(markdown.includes('# Memory Recall')).toBe(true);
-    expect(markdown.indexOf('## Facts')).toBeLessThan(markdown.indexOf('## Rules'));
+    expect(markdown.indexOf('## Guides')).toBeLessThan(markdown.indexOf('## Context'));
     expect(markdown.includes('Project uses Node 20.')).toBe(true);
     expect(markdown.includes('Never commit credentials.')).toBe(true);
     expect(markdown.includes('id: mem-1')).toBe(false);

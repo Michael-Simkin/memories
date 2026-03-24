@@ -15,7 +15,7 @@ export interface DiscoveryResult {
 
 export interface CandidateInsight {
   content: string;
-  memory_type: 'fact' | 'rule' | 'decision' | 'episode';
+  memory_type: 'guide' | 'context';
   tags: string[];
   is_pinned: boolean;
   path_matchers: Array<{ path_matcher: string }>;

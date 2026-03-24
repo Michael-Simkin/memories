@@ -1,13 +1,13 @@
 export const LOOPBACK_HOST = '127.0.0.1';
 export const LOOPBACK_HOST_ALIASES = [LOOPBACK_HOST, 'localhost', '::1'] as const;
 
-export const MEMORY_TYPES = ['fact', 'rule', 'decision', 'episode'] as const;
+export const MEMORY_TYPES = ['guide', 'context'] as const;
 
-export const MEMORY_DB_FILE = 'ai_memory.db';
+export const MEMORY_DB_FILE = 'memory.db';
 export const ENGINE_LOCK_FILE = 'engine.lock.json';
 export const ENGINE_STARTUP_LOCK_FILE = 'engine.startup.lock.json';
 export const ENGINE_STDERR_LOG_FILE = 'engine.stderr.log';
-export const MEMORY_EVENTS_LOG_FILE = 'ai_memory_events.log';
+export const MEMORY_EVENTS_LOG_FILE = 'memory_events.log';
 
 export const DEFAULT_SEARCH_LIMIT = 10;
 export const MAX_SEARCH_LIMIT = 50;

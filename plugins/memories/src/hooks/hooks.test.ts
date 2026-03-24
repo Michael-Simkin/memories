@@ -20,7 +20,7 @@ function createSessionStartDependencies(
     diagnoseOllamaFn: vi.fn().mockResolvedValue(null),
     ensureGlobalDirectoriesFn: vi.fn().mockResolvedValue({
       memoriesDir: '/tmp/.memories',
-      dbPath: '/tmp/.memories/ai_memory.db',
+      dbPath: '/tmp/.memories/memory.db',
       lockPath: '/tmp/.memories/engine.lock.json',
       startupLockPath: '/tmp/.memories/engine.startup.lock',
       engineStderrPath: '/tmp/.memories/engine.stderr.log',
@@ -37,7 +37,7 @@ function createSessionStartDependencies(
       results: [
         {
           id: 'memory-1',
-          memory_type: 'fact',
+          memory_type: 'context',
           content: 'Pinned memory',
           tags: ['tag'],
           is_pinned: true,
@@ -307,7 +307,7 @@ describe('hook handlers', () => {
       appendEventLogFn: vi.fn().mockResolvedValue(undefined),
       ensureGlobalDirectoriesFn: vi.fn().mockResolvedValue({
         memoriesDir: '/tmp/.memories',
-        dbPath: '/tmp/.memories/ai_memory.db',
+        dbPath: '/tmp/.memories/memory.db',
         lockPath: '/tmp/.memories/engine.lock.json',
         startupLockPath: '/tmp/.memories/engine.startup.lock',
         engineStderrPath: '/tmp/.memories/engine.stderr.log',

@@ -32,7 +32,7 @@ const recallInputFields = {
     .describe(
       'Include diagnostic recall metadata such as ids, scores, tags, matchers, timestamps, and query timing.',
     ),
-  memory_types: z.array(z.enum(['fact', 'rule', 'decision', 'episode'])).optional(),
+  memory_types: z.array(z.enum(['guide', 'context'])).optional(),
 };
 
 export const recallInputSchema = z.object(recallInputFields);
@@ -101,7 +101,7 @@ export async function runRecall(rawInput: unknown): Promise<string> {
 export function createRecallMcpServer(): McpServer {
   const server = new McpServer({
     name: 'memories',
-    version: '0.2.27',
+    version: '0.2.28',
   });
 
   server.registerTool(

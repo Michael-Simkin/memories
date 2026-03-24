@@ -421,7 +421,7 @@ export class RetrievalService {
   }
 
   private classifyPolicyEffect(memory: SearchResult): number {
-    if (memory.memory_type !== 'rule') {
+    if (memory.memory_type !== 'guide') {
       return 0;
     }
 

@@ -21,7 +21,7 @@ Declared in `.mcp.json`:
 }
 ```
 
-Server metadata: name = `memories`, version = `0.2.27`
+Server metadata: name = `memories`, version = `0.2.28`
 
 ## Recall Tool
 
@@ -47,7 +47,7 @@ when broader context may matter.
 | `target_paths` | string[] | No | File paths for path-based matching |
 | `include_pinned` | boolean | No | Include pinned memories (default true) |
 | `include_debug_metadata` | boolean | No | Include ids, scores, tags, matchers, timestamps |
-| `memory_types` | enum[] | No | Filter by: fact, rule, decision, episode |
+| `memory_types` | enum[] | No | Filter by: guide, context |
 
 ### Execution Flow
 

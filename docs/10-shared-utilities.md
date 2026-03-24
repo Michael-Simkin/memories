@@ -45,7 +45,7 @@ graph TD
 All named constants and configuration values.
 
 ### Memory Types
-- `MEMORY_TYPES = ['fact', 'rule', 'decision', 'episode']`
+- `MEMORY_TYPES = ['guide', 'context']`
 
 ### File Names
 - `MEMORY_DB_FILE = 'memories.db'`
@@ -103,7 +103,7 @@ OLLAMA_PROFILE_CONFIG = {
 All Zod schemas and TypeScript types.
 
 ### Core Types
-- `memoryTypeSchema` -- `z.enum(['fact', 'rule', 'decision', 'episode'])`
+- `memoryTypeSchema` -- `z.enum(['guide', 'context'])`
 - `pathMatcherSchema` -- `z.object({ path_matcher: z.string() })`
 - `MemoryRecord` -- full memory with id, timestamps, matchers
 - `SearchMatchSource` -- `'path' | 'lexical' | 'semantic'`
