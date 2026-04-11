@@ -1,6 +1,6 @@
 {
   "name": "transcripts",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Semantic search over Claude Code session transcripts",
   "author": {
     "name": "Michael Simkin"
