@@ -1,0 +1,11 @@
+{
+  "name": "transcripts",
+  "version": "0.1.0",
+  "description": "Semantic search over Claude Code session transcripts",
+  "author": {
+    "name": "Michael Simkin"
+  },
+  "repository": "https://github.com/Michael-Simkin/memories",
+  "license": "MIT",
+  "keywords": ["transcripts", "search", "embeddings", "sqlite"]
+}

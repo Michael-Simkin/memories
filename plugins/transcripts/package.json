@@ -1,0 +1,22 @@
+{
+  "name": "transcripts-plugin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Semantic search over Claude Code session transcripts",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "lint": "eslint \"src/**/*.ts\"",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.23.0",
+    "ulid": "^3.0.1",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {}
+}

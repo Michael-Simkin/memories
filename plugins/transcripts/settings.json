@@ -1,0 +1,6 @@
+{
+  "searchLimit": 10,
+  "readMaxLines": 50,
+  "chunkMaxChars": 2000,
+  "snippetMaxChars": 200
+}

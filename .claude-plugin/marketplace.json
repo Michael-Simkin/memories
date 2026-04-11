@@ -19,6 +19,18 @@
       "category": "developer-productivity",
       "tags": ["memory", "context", "retrieval"],
       "strict": true
+    },
+    {
+      "name": "transcripts",
+      "source": "./plugins/transcripts",
+      "description": "Semantic search over Claude Code session transcripts for rules and preferences",
+      "homepage": "https://github.com/Michael-Simkin/memories/tree/master/plugins/transcripts",
+      "repository": "https://github.com/Michael-Simkin/memories",
+      "license": "MIT",
+      "keywords": ["claude-code", "transcripts", "search", "embeddings"],
+      "category": "developer-productivity",
+      "tags": ["transcripts", "search", "retrieval"],
+      "strict": true
     }
   ]
 }
