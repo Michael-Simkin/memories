@@ -6,6 +6,7 @@ description: >
   anything to validate your approach against established conventions.
   Invoke once per aspect, e.g. /validate http-routes
 context: fork
+agent: general-purpose
 ---
 
 # Transcript Validation
