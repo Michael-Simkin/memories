@@ -35,7 +35,7 @@ const searchInputFields = {
     .min(1)
     .describe('Semantic search query to find relevant transcript segments.'),
   limit: z
-    .number()
+    .coerce.number()
     .int()
     .min(1)
     .max(MAX_SEARCH_LIMIT)
@@ -50,12 +50,12 @@ const readInputFields = {
     .min(1)
     .describe('Absolute path to the transcript .jsonl file.'),
   start_line: z
-    .number()
+    .coerce.number()
     .int()
     .min(1)
     .describe('Start line number (1-based, inclusive).'),
   end_line: z
-    .number()
+    .coerce.number()
     .int()
     .min(1)
     .describe('End line number (1-based, inclusive).'),
@@ -84,7 +84,7 @@ function formatSearchResults(results: SearchResult[]): string {
 function createServer(): McpServer {
   const server = new McpServer({
     name: 'transcripts',
-    version: '0.1.0',
+    version: '0.1.1',
   });
 
   server.registerTool(

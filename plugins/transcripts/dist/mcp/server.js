@@ -30735,12 +30735,12 @@ function getStore() {
 }
 var searchInputFields = {
   query: external_exports3.string().trim().min(1).describe("Semantic search query to find relevant transcript segments."),
-  limit: external_exports3.number().int().min(1).max(MAX_SEARCH_LIMIT).optional().describe(`Number of results to return (default ${DEFAULT_SEARCH_LIMIT}, max ${MAX_SEARCH_LIMIT}).`)
+  limit: external_exports3.coerce.number().int().min(1).max(MAX_SEARCH_LIMIT).optional().describe(`Number of results to return (default ${DEFAULT_SEARCH_LIMIT}, max ${MAX_SEARCH_LIMIT}).`)
 };
 var readInputFields = {
   transcript_path: external_exports3.string().trim().min(1).describe("Absolute path to the transcript .jsonl file."),
-  start_line: external_exports3.number().int().min(1).describe("Start line number (1-based, inclusive)."),
-  end_line: external_exports3.number().int().min(1).describe("End line number (1-based, inclusive).")
+  start_line: external_exports3.coerce.number().int().min(1).describe("Start line number (1-based, inclusive)."),
+  end_line: external_exports3.coerce.number().int().min(1).describe("End line number (1-based, inclusive).")
 };
 function formatSearchResults(results) {
   if (results.length === 0) {
@@ -30764,7 +30764,7 @@ function formatSearchResults(results) {
 function createServer() {
   const server = new McpServer({
     name: "transcripts",
-    version: "0.1.0"
+    version: "0.1.1"
   });
   server.registerTool(
     "search_transcripts",
