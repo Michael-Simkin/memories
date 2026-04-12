@@ -15,7 +15,7 @@ describe('TranscriptStore', () => {
   it('inserts and retrieves chunks with embeddings', async () => {
     const store = await createTempStore();
 
-    store.setSyncProgress('/test.jsonl', 100, 1, 'complete');
+    store.setCheckpoint('/test.jsonl', 100, 10, 1, '/project', 1000, 'complete');
     store.insertChunk({
       chunkId: 'c1',
       transcriptPath: '/test.jsonl',
@@ -39,35 +39,41 @@ describe('TranscriptStore', () => {
     store.close();
   });
 
-  it('tracks sync progress per transcript', async () => {
+  it('tracks checkpoint per transcript', async () => {
     const store = await createTempStore();
 
-    store.setSyncProgress('/a.jsonl', 100, 10, 'complete');
-    store.setSyncProgress('/b.jsonl', 200, 5, 'error');
+    store.setCheckpoint('/a.jsonl', 100, 50, 10, '/proj-a', 1000, 'complete');
+    store.setCheckpoint('/b.jsonl', 200, 30, 5, '/proj-b', 2000, 'error');
 
-    const a = store.getSyncStatus('/a.jsonl');
+    const a = store.getCheckpoint('/a.jsonl');
     expect(a).not.toBeNull();
     expect(a!.mtime).toBe(100);
+    expect(a!.linesTotal).toBe(50);
+    expect(a!.linesIndexed).toBe(10);
+    expect(a!.projectPath).toBe('/proj-a');
+    expect(a!.sessionTimestamp).toBe(1000);
     expect(a!.status).toBe('complete');
 
-    const b = store.getSyncStatus('/b.jsonl');
+    const b = store.getCheckpoint('/b.jsonl');
     expect(b!.status).toBe('error');
 
-    const missing = store.getSyncStatus('/c.jsonl');
+    const missing = store.getCheckpoint('/c.jsonl');
     expect(missing).toBeNull();
 
     store.close();
   });
 
-  it('upserts sync progress on conflict', async () => {
+  it('upserts checkpoint on conflict', async () => {
     const store = await createTempStore();
 
-    store.setSyncProgress('/a.jsonl', 100, 10, 'partial');
-    store.setSyncProgress('/a.jsonl', 200, 20, 'complete');
+    store.setCheckpoint('/a.jsonl', 100, 50, 10, '/p', 1000, 'partial');
+    store.setCheckpoint('/a.jsonl', 200, 80, 20, '/p', 1000, 'complete');
 
-    const status = store.getSyncStatus('/a.jsonl');
-    expect(status!.mtime).toBe(200);
-    expect(status!.status).toBe('complete');
+    const cp = store.getCheckpoint('/a.jsonl');
+    expect(cp!.mtime).toBe(200);
+    expect(cp!.linesTotal).toBe(80);
+    expect(cp!.linesIndexed).toBe(20);
+    expect(cp!.status).toBe('complete');
 
     store.close();
   });
@@ -75,7 +81,7 @@ describe('TranscriptStore', () => {
   it('deletes all chunks for a transcript', async () => {
     const store = await createTempStore();
 
-    store.setSyncProgress('/a.jsonl', 100, 2, 'complete');
+    store.setCheckpoint('/a.jsonl', 100, 10, 2, '/p', 1000, 'complete');
     store.insertChunk({
       chunkId: 'c1',
       transcriptPath: '/a.jsonl',
@@ -102,7 +108,7 @@ describe('TranscriptStore', () => {
     store.deleteChunksForTranscript('/a.jsonl');
 
     expect(store.getAllEmbeddings()).toHaveLength(0);
-    expect(store.getSyncStatus('/a.jsonl')).toBeNull();
+    expect(store.getCheckpoint('/a.jsonl')).toBeNull();
 
     store.close();
   });
@@ -110,8 +116,8 @@ describe('TranscriptStore', () => {
   it('returns all synced paths', async () => {
     const store = await createTempStore();
 
-    store.setSyncProgress('/a.jsonl', 100, 10, 'complete');
-    store.setSyncProgress('/b.jsonl', 200, 5, 'complete');
+    store.setCheckpoint('/a.jsonl', 100, 10, 10, '/p', 1000, 'complete');
+    store.setCheckpoint('/b.jsonl', 200, 20, 5, '/p', 2000, 'complete');
 
     const paths = store.getAllSyncedPaths();
     expect(paths.size).toBe(2);
@@ -124,7 +130,7 @@ describe('TranscriptStore', () => {
   it('handles transactions correctly', async () => {
     const store = await createTempStore();
 
-    store.setSyncProgress('/a.jsonl', 100, 0, 'complete');
+    store.setCheckpoint('/a.jsonl', 100, 10, 0, '/p', 1000, 'complete');
 
     store.beginTransaction();
     store.insertChunk({

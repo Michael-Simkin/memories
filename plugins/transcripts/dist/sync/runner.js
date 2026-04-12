@@ -14001,10 +14001,13 @@ var TranscriptStore = class {
   initializeSchema() {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sync_progress (
-        transcript_path TEXT PRIMARY KEY,
-        file_mtime      INTEGER NOT NULL,
-        lines_indexed   INTEGER NOT NULL,
-        status          TEXT NOT NULL CHECK(status IN ('complete', 'partial', 'error'))
+        transcript_path    TEXT PRIMARY KEY,
+        file_mtime         INTEGER NOT NULL,
+        lines_total        INTEGER NOT NULL DEFAULT 0,
+        lines_indexed      INTEGER NOT NULL DEFAULT 0,
+        project_path       TEXT NOT NULL DEFAULT '',
+        session_timestamp  INTEGER NOT NULL DEFAULT 0,
+        status             TEXT NOT NULL CHECK(status IN ('complete', 'partial', 'error'))
       );
 
       CREATE TABLE IF NOT EXISTS chunks (
@@ -14030,10 +14033,35 @@ var TranscriptStore = class {
       CREATE INDEX IF NOT EXISTS idx_chunks_project
         ON chunks(project_path);
     `);
+    this.migrateSchema();
   }
-  getSyncStatus(transcriptPath) {
-    const row = this.db.prepare("SELECT file_mtime, status FROM sync_progress WHERE transcript_path = ?").get(transcriptPath);
-    return row ? { mtime: row.file_mtime, status: row.status } : null;
+  migrateSchema() {
+    const columns = this.db.prepare("PRAGMA table_info(sync_progress)").all();
+    const columnNames = new Set(columns.map((c) => c.name));
+    if (!columnNames.has("lines_total")) {
+      this.db.exec("ALTER TABLE sync_progress ADD COLUMN lines_total INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!columnNames.has("project_path")) {
+      this.db.exec("ALTER TABLE sync_progress ADD COLUMN project_path TEXT NOT NULL DEFAULT ''");
+    }
+    if (!columnNames.has("session_timestamp")) {
+      this.db.exec("ALTER TABLE sync_progress ADD COLUMN session_timestamp INTEGER NOT NULL DEFAULT 0");
+    }
+  }
+  getCheckpoint(transcriptPath) {
+    const row = this.db.prepare(
+      `SELECT file_mtime, lines_total, lines_indexed, project_path, session_timestamp, status
+         FROM sync_progress WHERE transcript_path = ?`
+    ).get(transcriptPath);
+    if (!row) return null;
+    return {
+      mtime: row.file_mtime,
+      linesTotal: row.lines_total,
+      linesIndexed: row.lines_indexed,
+      projectPath: row.project_path,
+      sessionTimestamp: row.session_timestamp,
+      status: row.status
+    };
   }
   deleteChunksForTranscript(transcriptPath) {
     this.db.exec("BEGIN");
@@ -14065,11 +14093,12 @@ var TranscriptStore = class {
   insertEmbedding(chunkId, vector) {
     this.db.prepare("INSERT INTO chunk_embeddings (chunk_id, vector_json) VALUES (?, ?)").run(chunkId, JSON.stringify(vector));
   }
-  setSyncProgress(transcriptPath, mtime, linesIndexed, status) {
+  setCheckpoint(transcriptPath, mtime, linesTotal, linesIndexed, projectPath, sessionTimestamp, status) {
     this.db.prepare(
-      `INSERT OR REPLACE INTO sync_progress (transcript_path, file_mtime, lines_indexed, status)
-         VALUES (?, ?, ?, ?)`
-    ).run(transcriptPath, mtime, linesIndexed, status);
+      `INSERT OR REPLACE INTO sync_progress
+         (transcript_path, file_mtime, lines_total, lines_indexed, project_path, session_timestamp, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(transcriptPath, mtime, linesTotal, linesIndexed, projectPath, sessionTimestamp, status);
   }
   getAllEmbeddings() {
     const rows = this.db.prepare(
@@ -14352,7 +14381,7 @@ function isFiniteNumber(v) {
 }
 
 // src/sync/parser.ts
-function parseTranscriptFile(rawLines) {
+function parseTranscriptFile(rawLines, lineOffset = 0) {
   let projectPath = "";
   let sessionTimestamp = 0;
   const turns = [];
@@ -14376,7 +14405,7 @@ function parseTranscriptFile(rawLines) {
     const text = contentToText(obj.message.content);
     if (!text.trim()) continue;
     turns.push({
-      lineNumber: i + 1,
+      lineNumber: lineOffset + i + 1,
       role,
       text
     });
@@ -14483,62 +14512,102 @@ function scanTranscripts(claudeProjectsDir) {
 }
 
 // src/sync/runner.ts
+var MAX_RESCAN_ROUNDS = 10;
 async function run() {
   const paths = await ensureGlobalDirectories();
   await writeSyncLock(paths.syncLockPath);
   logInfo("Sync started");
   const store = new TranscriptStore(paths.dbPath);
   const embedder = new EmbeddingClient();
-  let totalIndexed = 0;
-  let totalSkipped = 0;
-  let totalErrors = 0;
   try {
-    const transcripts = scanTranscripts(paths.claudeProjectsDir);
-    const syncedPaths = store.getAllSyncedPaths();
-    for (const transcript of transcripts) {
-      const existing = store.getSyncStatus(transcript.path);
-      if (existing && existing.mtime >= transcript.mtime && existing.status === "complete") {
-        totalSkipped++;
-        continue;
+    let round = 0;
+    let totalIndexed = 0;
+    let totalDelta = 0;
+    let totalSkipped = 0;
+    let totalErrors = 0;
+    while (round < MAX_RESCAN_ROUNDS) {
+      round++;
+      const transcripts = scanTranscripts(paths.claudeProjectsDir);
+      let changesThisRound = 0;
+      for (const transcript of transcripts) {
+        const checkpoint = store.getCheckpoint(transcript.path);
+        if (checkpoint && checkpoint.mtime >= transcript.mtime && checkpoint.status === "complete") {
+          totalSkipped++;
+          continue;
+        }
+        try {
+          const result = await syncTranscript(store, embedder, transcript.path, transcript.mtime, checkpoint);
+          if (result === "full") totalIndexed++;
+          if (result === "delta") totalDelta++;
+          changesThisRound++;
+        } catch (error48) {
+          logError("Failed to index transcript", {
+            path: transcript.path,
+            error: error48 instanceof Error ? error48.message : String(error48)
+          });
+          store.setCheckpoint(transcript.path, transcript.mtime, 0, 0, "", 0, "error");
+          totalErrors++;
+        }
       }
-      try {
-        await indexTranscript(store, embedder, transcript.path, transcript.mtime);
-        totalIndexed++;
-      } catch (error48) {
-        logError("Failed to index transcript", {
-          path: transcript.path,
-          error: error48 instanceof Error ? error48.message : String(error48)
-        });
-        store.setSyncProgress(transcript.path, transcript.mtime, 0, "error");
-        totalErrors++;
+      if (round === 1) {
+        const currentPaths = new Set(transcripts.map((t) => t.path));
+        for (const syncedPath of store.getAllSyncedPaths()) {
+          if (!currentPaths.has(syncedPath)) {
+            store.deleteChunksForTranscript(syncedPath);
+            logInfo("Removed stale transcript", { path: syncedPath });
+          }
+        }
       }
+      if (changesThisRound === 0) {
+        logInfo("No more changes detected", { round });
+        break;
+      }
+      logInfo("Re-scanning for changes added during sync", { round, changesThisRound });
     }
-    const currentPaths = new Set(transcripts.map((t) => t.path));
-    for (const syncedPath of syncedPaths) {
-      if (!currentPaths.has(syncedPath)) {
-        store.deleteChunksForTranscript(syncedPath);
-        logInfo("Removed stale transcript", { path: syncedPath });
-      }
-    }
+    logInfo("Sync complete", {
+      rounds: round,
+      fullIndexed: totalIndexed,
+      deltaIndexed: totalDelta,
+      skipped: totalSkipped,
+      errors: totalErrors
+    });
   } finally {
     store.close();
     await removeSyncLockIfOwned(paths.syncLockPath);
   }
-  logInfo("Sync complete", { indexed: totalIndexed, skipped: totalSkipped, errors: totalErrors });
 }
-async function indexTranscript(store, embedder, transcriptPath, mtime) {
+async function syncTranscript(store, embedder, transcriptPath, mtime, checkpoint) {
   const rawContent = readFileSync(transcriptPath, "utf8");
   const rawLines = rawContent.split("\n");
-  const { metadata, turns } = parseTranscriptFile(rawLines);
+  while (rawLines.length > 0 && rawLines[rawLines.length - 1].trim() === "") {
+    rawLines.pop();
+  }
+  const currentLineCount = rawLines.length;
+  if (checkpoint && checkpoint.status === "complete" && checkpoint.linesTotal > 0 && currentLineCount > checkpoint.linesTotal) {
+    await indexDelta(store, embedder, transcriptPath, mtime, rawLines, checkpoint, currentLineCount);
+    return "delta";
+  }
+  await indexFull(store, embedder, transcriptPath, mtime, rawLines, currentLineCount);
+  return "full";
+}
+async function indexDelta(store, embedder, transcriptPath, mtime, rawLines, checkpoint, currentLineCount) {
+  const deltaLines = rawLines.slice(checkpoint.linesTotal);
+  const { turns } = parseTranscriptFile(deltaLines, checkpoint.linesTotal);
   if (turns.length === 0) {
-    store.setSyncProgress(transcriptPath, mtime, 0, "complete");
+    store.setCheckpoint(
+      transcriptPath,
+      mtime,
+      currentLineCount,
+      checkpoint.linesIndexed,
+      checkpoint.projectPath,
+      checkpoint.sessionTimestamp,
+      "complete"
+    );
     return;
   }
-  const chunks = chunkTurns(turns, transcriptPath, metadata.sessionTimestamp, metadata.projectPath);
-  store.deleteChunksForTranscript(transcriptPath);
+  const chunks = chunkTurns(turns, transcriptPath, checkpoint.sessionTimestamp, checkpoint.projectPath);
   store.beginTransaction();
   try {
-    store.setSyncProgress(transcriptPath, mtime, 0, "partial");
     let embeddedCount = 0;
     for (const chunk of chunks) {
       store.insertChunk(chunk);
@@ -14548,7 +14617,66 @@ async function indexTranscript(store, embedder, transcriptPath, mtime) {
         embeddedCount++;
       }
     }
-    store.setSyncProgress(transcriptPath, mtime, embeddedCount, "complete");
+    store.setCheckpoint(
+      transcriptPath,
+      mtime,
+      currentLineCount,
+      checkpoint.linesIndexed + embeddedCount,
+      checkpoint.projectPath,
+      checkpoint.sessionTimestamp,
+      "complete"
+    );
+    store.commitTransaction();
+    logInfo("Delta indexed transcript", {
+      path: transcriptPath,
+      newLines: deltaLines.length,
+      newTurns: turns.length,
+      newChunks: chunks.length,
+      embedded: embeddedCount
+    });
+  } catch (error48) {
+    store.rollbackTransaction();
+    throw error48;
+  }
+}
+async function indexFull(store, embedder, transcriptPath, mtime, rawLines, currentLineCount) {
+  const { metadata, turns } = parseTranscriptFile(rawLines);
+  if (turns.length === 0) {
+    store.deleteChunksForTranscript(transcriptPath);
+    store.setCheckpoint(transcriptPath, mtime, currentLineCount, 0, metadata.projectPath, metadata.sessionTimestamp, "complete");
+    return;
+  }
+  const chunks = chunkTurns(turns, transcriptPath, metadata.sessionTimestamp, metadata.projectPath);
+  store.deleteChunksForTranscript(transcriptPath);
+  store.beginTransaction();
+  try {
+    store.setCheckpoint(
+      transcriptPath,
+      mtime,
+      currentLineCount,
+      0,
+      metadata.projectPath,
+      metadata.sessionTimestamp,
+      "partial"
+    );
+    let embeddedCount = 0;
+    for (const chunk of chunks) {
+      store.insertChunk(chunk);
+      const vector = await embedder.embed(chunk.chunkText);
+      if (vector) {
+        store.insertEmbedding(chunk.chunkId, vector);
+        embeddedCount++;
+      }
+    }
+    store.setCheckpoint(
+      transcriptPath,
+      mtime,
+      currentLineCount,
+      embeddedCount,
+      metadata.projectPath,
+      metadata.sessionTimestamp,
+      "complete"
+    );
     store.commitTransaction();
     logInfo("Indexed transcript", {
       path: transcriptPath,

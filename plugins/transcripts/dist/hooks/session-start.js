@@ -6,10 +6,15 @@ var __export = (target, all) => {
 };
 
 // src/hooks/session-start.ts
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { execFile as execFile2, spawn } from "child_process";
+import { openSync } from "fs";
+import path3 from "path";
+import { promisify as promisify2 } from "util";
 
 // src/shared/constants.ts
+var TRANSCRIPT_DB_FILE = "transcripts.db";
+var SYNC_LOCK_FILE = "transcripts.sync.lock.json";
+var SYNC_STDERR_LOG_FILE = "transcripts.sync.stderr.log";
 var DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 var DEFAULT_OLLAMA_TIMEOUT_MS = 1e4;
 var OLLAMA_PROFILE_CONFIG = {
@@ -71,45 +76,6 @@ function writeHookOutput(payload) {
 }
 function writeFailOpenOutput() {
   writeHookOutput({ continue: true });
-}
-
-// src/shared/logger.ts
-var LOG_LEVEL_ORDER = {
-  debug: 10,
-  info: 20,
-  warn: 30,
-  error: 40
-};
-function resolveLogLevel(raw) {
-  const normalized = raw?.trim().toLowerCase();
-  if (normalized === "debug" || normalized === "info" || normalized === "warn" || normalized === "error" || normalized === "silent") {
-    return normalized;
-  }
-  return "info";
-}
-var configuredLogLevel = resolveLogLevel(process.env.LOG_LEVEL);
-function shouldWrite(level) {
-  if (configuredLogLevel === "silent") {
-    return false;
-  }
-  return LOG_LEVEL_ORDER[level] >= LOG_LEVEL_ORDER[configuredLogLevel];
-}
-function writeLog(level, message, data) {
-  if (!shouldWrite(level)) {
-    return;
-  }
-  const payload = {
-    at: (/* @__PURE__ */ new Date()).toISOString(),
-    level,
-    plugin: "transcripts",
-    message,
-    ...data ? { data } : {}
-  };
-  process.stderr.write(`${JSON.stringify(payload)}
-`);
-}
-function logError(message, data) {
-  writeLog("error", message, data);
 }
 
 // node_modules/zod/v4/classic/external.js
@@ -879,10 +845,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path) {
-  if (!path)
+function getElementAtPath(obj, path4) {
+  if (!path4)
     return obj;
-  return path.reduce((acc, key) => acc?.[key], obj);
+  return path4.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -1265,11 +1231,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path, issues) {
+function prefixIssues(path4, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path);
+    iss.path.unshift(path4);
     return iss;
   });
 }
@@ -1452,7 +1418,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path = []) => {
+  const processError = (error49, path4 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1462,7 +1428,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path, ...issue2.path];
+        const fullpath = [...path4, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1494,8 +1460,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path) {
+  const path4 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path4) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13472,13 +13438,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path = ref.slice(1).split("/").filter(Boolean);
-  if (path.length === 0) {
+  const path4 = ref.slice(1).split("/").filter(Boolean);
+  if (path4.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path[0] === defsKey) {
-    const key = path[1];
+  if (path4[0] === defsKey) {
+    const key = path4[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -13880,6 +13846,202 @@ function date4(params) {
 // node_modules/zod/v4/classic/external.js
 config(en_default());
 
+// src/shared/fs-utils.ts
+import { readFile, rename, rm, writeFile } from "fs/promises";
+async function readJsonFile(filePath) {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (error48) {
+    if (isErrnoException(error48) && error48.code === "ENOENT") {
+      return null;
+    }
+    throw error48;
+  }
+}
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function isErrnoException(error48) {
+  return typeof error48 === "object" && error48 !== null && "code" in error48;
+}
+
+// src/shared/lockfile.ts
+var syncLockSchema = external_exports.object({
+  pid: external_exports.number().int().positive(),
+  started_at: external_exports.string().min(1)
+});
+async function readSyncLock(lockPath) {
+  const raw = await readJsonFile(lockPath);
+  if (!raw) {
+    return null;
+  }
+  const parsed = syncLockSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+async function isSyncRunning(lockPath) {
+  const lock = await readSyncLock(lockPath);
+  if (!lock) {
+    return false;
+  }
+  return isPidAlive(lock.pid);
+}
+
+// src/shared/logger.ts
+var LOG_LEVEL_ORDER = {
+  debug: 10,
+  info: 20,
+  warn: 30,
+  error: 40
+};
+function resolveLogLevel(raw) {
+  const normalized = raw?.trim().toLowerCase();
+  if (normalized === "debug" || normalized === "info" || normalized === "warn" || normalized === "error" || normalized === "silent") {
+    return normalized;
+  }
+  return "info";
+}
+var configuredLogLevel = resolveLogLevel(process.env.LOG_LEVEL);
+function shouldWrite(level) {
+  if (configuredLogLevel === "silent") {
+    return false;
+  }
+  return LOG_LEVEL_ORDER[level] >= LOG_LEVEL_ORDER[configuredLogLevel];
+}
+function writeLog(level, message, data) {
+  if (!shouldWrite(level)) {
+    return;
+  }
+  const payload = {
+    at: (/* @__PURE__ */ new Date()).toISOString(),
+    level,
+    plugin: "transcripts",
+    message,
+    ...data ? { data } : {}
+  };
+  process.stderr.write(`${JSON.stringify(payload)}
+`);
+}
+function logInfo(message, data) {
+  writeLog("info", message, data);
+}
+function logError(message, data) {
+  writeLog("error", message, data);
+}
+
+// src/shared/node-runtime.ts
+import { execFile } from "child_process";
+import { existsSync, readdirSync } from "fs";
+import os from "os";
+import path from "path";
+import { promisify } from "util";
+var execFileAsync = promisify(execFile);
+var REQUIRED_NODE_MAJOR = 24;
+var NODE_PROBE_TIMEOUT_MS = 1500;
+async function resolveNode24Runtime() {
+  const discovered = [];
+  for (const executable of candidateNodeExecutables()) {
+    const version2 = await probeNodeVersion(executable);
+    if (!version2) continue;
+    const major = parseNodeMajor(version2);
+    if (!Number.isFinite(major) || major < REQUIRED_NODE_MAJOR) continue;
+    discovered.push({ executable, version: version2, major });
+    if (major === REQUIRED_NODE_MAJOR) break;
+  }
+  const preferred = discovered.find((d) => d.major === REQUIRED_NODE_MAJOR) ?? discovered.sort((a, b) => a.major - b.major)[0];
+  if (preferred) {
+    return preferred;
+  }
+  throw new Error(
+    `Node ${REQUIRED_NODE_MAJOR}.x+ is required. Install with \`nvm install ${REQUIRED_NODE_MAJOR}\` or set TRANSCRIPTS_NODE_BIN to an absolute Node ${REQUIRED_NODE_MAJOR}+ binary path.`
+  );
+}
+function parseNodeMajor(version2) {
+  const majorText = version2.trim().replace(/^v/i, "").split(".")[0] ?? "";
+  return Number.parseInt(majorText, 10);
+}
+function candidateNodeExecutables() {
+  const homeDirectory = os.homedir();
+  const nvmDirectory = process.env.NVM_DIR || path.join(homeDirectory, ".nvm");
+  const candidates = [
+    process.env.TRANSCRIPTS_NODE_BIN ?? "",
+    "/opt/homebrew/opt/node@24/bin/node",
+    "/usr/local/opt/node@24/bin/node",
+    process.env.NVM_BIN ? path.join(process.env.NVM_BIN, "node") : "",
+    ...listVersionedNodeBins(path.join(nvmDirectory, "versions", "node")),
+    ...listVersionedNodeBins(path.join(homeDirectory, ".asdf", "installs", "nodejs")),
+    ...listVersionedNodeBins(path.join(homeDirectory, ".volta", "tools", "image", "node")),
+    process.execPath,
+    "/opt/homebrew/bin/node",
+    "/usr/local/bin/node"
+  ];
+  const seen = /* @__PURE__ */ new Set();
+  return candidates.map((c) => c.trim()).filter((c) => c.length > 0).map((c) => path.resolve(c)).filter((c) => {
+    if (seen.has(c)) return false;
+    seen.add(c);
+    return true;
+  });
+}
+function listVersionedNodeBins(rootDirectory) {
+  if (!existsSync(rootDirectory)) return [];
+  return readdirSync(rootDirectory, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort((a, b) => compareVersions(b, a)).map((version2) => path.join(rootDirectory, version2, "bin", "node"));
+}
+function compareVersions(left, right) {
+  const leftParts = left.replace(/^v/i, "").split(".").map(Number);
+  const rightParts = right.replace(/^v/i, "").split(".").map(Number);
+  for (let i = 0; i < Math.max(leftParts.length, rightParts.length); i++) {
+    const diff = (leftParts[i] ?? 0) - (rightParts[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+async function probeNodeVersion(executable) {
+  if (!existsSync(executable)) return null;
+  try {
+    const { stdout } = await execFileAsync(executable, ["-p", "process.versions.node"], {
+      timeout: NODE_PROBE_TIMEOUT_MS
+    });
+    return String(stdout).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+// src/shared/paths.ts
+import { mkdir } from "fs/promises";
+import os2 from "os";
+import path2 from "path";
+import { fileURLToPath } from "url";
+function resolvePluginRoot() {
+  const envPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (envPluginRoot && path2.isAbsolute(envPluginRoot)) {
+    return envPluginRoot;
+  }
+  const currentFilePath = fileURLToPath(import.meta.url);
+  const moduleDirectory = path2.dirname(currentFilePath);
+  return path2.resolve(moduleDirectory, "..", "..");
+}
+function getGlobalPaths() {
+  const transcriptsDir = path2.join(os2.homedir(), ".claude", "transcripts");
+  return {
+    transcriptsDir,
+    dbPath: path2.join(transcriptsDir, TRANSCRIPT_DB_FILE),
+    syncLockPath: path2.join(transcriptsDir, SYNC_LOCK_FILE),
+    syncStderrPath: path2.join(transcriptsDir, SYNC_STDERR_LOG_FILE),
+    claudeProjectsDir: path2.join(os2.homedir(), ".claude", "projects")
+  };
+}
+async function ensureGlobalDirectories() {
+  const globalPaths = getGlobalPaths();
+  await mkdir(globalPaths.transcriptsDir, { recursive: true });
+  return globalPaths;
+}
+
 // src/shared/types.ts
 var sessionStartPayloadSchema = external_exports.object({
   cwd: external_exports.string().optional(),
@@ -13893,7 +14055,7 @@ var sessionEndPayloadSchema = external_exports.object({
 }).catchall(external_exports.unknown());
 
 // src/hooks/session-start.ts
-var execFileAsync = promisify(execFile);
+var execFileAsync2 = promisify2(execFile2);
 var MAX_STARTUP_OLLAMA_TIMEOUT_MS = 2500;
 function resolveModel() {
   const profile = resolveOllamaProfile(process.env.TRANSCRIPTS_OLLAMA_PROFILE);
@@ -13945,7 +14107,7 @@ function renderSetupAdditionalContext(code, model) {
 }
 async function isOllamaInstalled() {
   try {
-    await execFileAsync("ollama", ["--version"]);
+    await execFileAsync2("ollama", ["--version"]);
     return true;
   } catch (error48) {
     if (error48?.code === "ENOENT") {
@@ -14014,6 +14176,26 @@ function renderHealthyContext() {
     "</transcript-search>"
   ].join("\n");
 }
+async function trySpawnSync() {
+  const paths = await ensureGlobalDirectories();
+  if (await isSyncRunning(paths.syncLockPath)) {
+    return;
+  }
+  try {
+    const runtime = await resolveNode24Runtime();
+    const pluginRoot = resolvePluginRoot();
+    const runnerScript = path3.join(pluginRoot, "dist", "sync", "runner.js");
+    const stderrFd = openSync(paths.syncStderrPath, "a");
+    const child = spawn(runtime.executable, [runnerScript], {
+      detached: true,
+      stdio: ["ignore", "ignore", stderrFd],
+      env: { ...process.env }
+    });
+    child.unref();
+    logInfo("Spawned sync runner from session-start", { pid: child.pid });
+  } catch {
+  }
+}
 async function handleSessionStart() {
   const issue2 = await diagnoseOllama();
   if (issue2) {
@@ -14026,6 +14208,7 @@ async function handleSessionStart() {
       }
     };
   }
+  await trySpawnSync();
   return {
     continue: true,
     hookSpecificOutput: {

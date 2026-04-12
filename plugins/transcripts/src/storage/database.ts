@@ -6,6 +6,15 @@ import path from 'node:path';
 import { logInfo, logWarn } from '../shared/logger.js';
 import { resolvePluginRoot } from '../shared/paths.js';
 
+export interface SyncCheckpoint {
+  mtime: number;
+  linesTotal: number;
+  linesIndexed: number;
+  projectPath: string;
+  sessionTimestamp: number;
+  status: string;
+}
+
 export class TranscriptStore {
   private readonly db: DatabaseSync;
   private sqliteVecLoaded = false;
@@ -47,10 +56,13 @@ export class TranscriptStore {
   private initializeSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sync_progress (
-        transcript_path TEXT PRIMARY KEY,
-        file_mtime      INTEGER NOT NULL,
-        lines_indexed   INTEGER NOT NULL,
-        status          TEXT NOT NULL CHECK(status IN ('complete', 'partial', 'error'))
+        transcript_path    TEXT PRIMARY KEY,
+        file_mtime         INTEGER NOT NULL,
+        lines_total        INTEGER NOT NULL DEFAULT 0,
+        lines_indexed      INTEGER NOT NULL DEFAULT 0,
+        project_path       TEXT NOT NULL DEFAULT '',
+        session_timestamp  INTEGER NOT NULL DEFAULT 0,
+        status             TEXT NOT NULL CHECK(status IN ('complete', 'partial', 'error'))
       );
 
       CREATE TABLE IF NOT EXISTS chunks (
@@ -76,13 +88,51 @@ export class TranscriptStore {
       CREATE INDEX IF NOT EXISTS idx_chunks_project
         ON chunks(project_path);
     `);
+
+    this.migrateSchema();
   }
 
-  getSyncStatus(transcriptPath: string): { mtime: number; status: string } | null {
+  private migrateSchema(): void {
+    const columns = this.db
+      .prepare("PRAGMA table_info(sync_progress)")
+      .all() as Array<{ name: string }>;
+    const columnNames = new Set(columns.map((c) => c.name));
+
+    if (!columnNames.has('lines_total')) {
+      this.db.exec("ALTER TABLE sync_progress ADD COLUMN lines_total INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!columnNames.has('project_path')) {
+      this.db.exec("ALTER TABLE sync_progress ADD COLUMN project_path TEXT NOT NULL DEFAULT ''");
+    }
+    if (!columnNames.has('session_timestamp')) {
+      this.db.exec("ALTER TABLE sync_progress ADD COLUMN session_timestamp INTEGER NOT NULL DEFAULT 0");
+    }
+  }
+
+  getCheckpoint(transcriptPath: string): SyncCheckpoint | null {
     const row = this.db
-      .prepare('SELECT file_mtime, status FROM sync_progress WHERE transcript_path = ?')
-      .get(transcriptPath) as { file_mtime: number; status: string } | undefined;
-    return row ? { mtime: row.file_mtime, status: row.status } : null;
+      .prepare(
+        `SELECT file_mtime, lines_total, lines_indexed, project_path, session_timestamp, status
+         FROM sync_progress WHERE transcript_path = ?`,
+      )
+      .get(transcriptPath) as {
+      file_mtime: number;
+      lines_total: number;
+      lines_indexed: number;
+      project_path: string;
+      session_timestamp: number;
+      status: string;
+    } | undefined;
+
+    if (!row) return null;
+    return {
+      mtime: row.file_mtime,
+      linesTotal: row.lines_total,
+      linesIndexed: row.lines_indexed,
+      projectPath: row.project_path,
+      sessionTimestamp: row.session_timestamp,
+      status: row.status,
+    };
   }
 
   deleteChunksForTranscript(transcriptPath: string): void {
@@ -137,13 +187,22 @@ export class TranscriptStore {
       .run(chunkId, JSON.stringify(vector));
   }
 
-  setSyncProgress(transcriptPath: string, mtime: number, linesIndexed: number, status: string): void {
+  setCheckpoint(
+    transcriptPath: string,
+    mtime: number,
+    linesTotal: number,
+    linesIndexed: number,
+    projectPath: string,
+    sessionTimestamp: number,
+    status: string,
+  ): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO sync_progress (transcript_path, file_mtime, lines_indexed, status)
-         VALUES (?, ?, ?, ?)`,
+        `INSERT OR REPLACE INTO sync_progress
+         (transcript_path, file_mtime, lines_total, lines_indexed, project_path, session_timestamp, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(transcriptPath, mtime, linesIndexed, status);
+      .run(transcriptPath, mtime, linesTotal, linesIndexed, projectPath, sessionTimestamp, status);
   }
 
   getAllEmbeddings(): Array<{

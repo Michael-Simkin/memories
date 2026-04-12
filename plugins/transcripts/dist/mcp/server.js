@@ -30314,10 +30314,13 @@ var TranscriptStore = class {
   initializeSchema() {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sync_progress (
-        transcript_path TEXT PRIMARY KEY,
-        file_mtime      INTEGER NOT NULL,
-        lines_indexed   INTEGER NOT NULL,
-        status          TEXT NOT NULL CHECK(status IN ('complete', 'partial', 'error'))
+        transcript_path    TEXT PRIMARY KEY,
+        file_mtime         INTEGER NOT NULL,
+        lines_total        INTEGER NOT NULL DEFAULT 0,
+        lines_indexed      INTEGER NOT NULL DEFAULT 0,
+        project_path       TEXT NOT NULL DEFAULT '',
+        session_timestamp  INTEGER NOT NULL DEFAULT 0,
+        status             TEXT NOT NULL CHECK(status IN ('complete', 'partial', 'error'))
       );
 
       CREATE TABLE IF NOT EXISTS chunks (
@@ -30343,10 +30346,35 @@ var TranscriptStore = class {
       CREATE INDEX IF NOT EXISTS idx_chunks_project
         ON chunks(project_path);
     `);
+    this.migrateSchema();
   }
-  getSyncStatus(transcriptPath) {
-    const row = this.db.prepare("SELECT file_mtime, status FROM sync_progress WHERE transcript_path = ?").get(transcriptPath);
-    return row ? { mtime: row.file_mtime, status: row.status } : null;
+  migrateSchema() {
+    const columns = this.db.prepare("PRAGMA table_info(sync_progress)").all();
+    const columnNames = new Set(columns.map((c) => c.name));
+    if (!columnNames.has("lines_total")) {
+      this.db.exec("ALTER TABLE sync_progress ADD COLUMN lines_total INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!columnNames.has("project_path")) {
+      this.db.exec("ALTER TABLE sync_progress ADD COLUMN project_path TEXT NOT NULL DEFAULT ''");
+    }
+    if (!columnNames.has("session_timestamp")) {
+      this.db.exec("ALTER TABLE sync_progress ADD COLUMN session_timestamp INTEGER NOT NULL DEFAULT 0");
+    }
+  }
+  getCheckpoint(transcriptPath) {
+    const row = this.db.prepare(
+      `SELECT file_mtime, lines_total, lines_indexed, project_path, session_timestamp, status
+         FROM sync_progress WHERE transcript_path = ?`
+    ).get(transcriptPath);
+    if (!row) return null;
+    return {
+      mtime: row.file_mtime,
+      linesTotal: row.lines_total,
+      linesIndexed: row.lines_indexed,
+      projectPath: row.project_path,
+      sessionTimestamp: row.session_timestamp,
+      status: row.status
+    };
   }
   deleteChunksForTranscript(transcriptPath) {
     this.db.exec("BEGIN");
@@ -30378,11 +30406,12 @@ var TranscriptStore = class {
   insertEmbedding(chunkId, vector) {
     this.db.prepare("INSERT INTO chunk_embeddings (chunk_id, vector_json) VALUES (?, ?)").run(chunkId, JSON.stringify(vector));
   }
-  setSyncProgress(transcriptPath, mtime, linesIndexed, status) {
+  setCheckpoint(transcriptPath, mtime, linesTotal, linesIndexed, projectPath, sessionTimestamp, status) {
     this.db.prepare(
-      `INSERT OR REPLACE INTO sync_progress (transcript_path, file_mtime, lines_indexed, status)
-         VALUES (?, ?, ?, ?)`
-    ).run(transcriptPath, mtime, linesIndexed, status);
+      `INSERT OR REPLACE INTO sync_progress
+         (transcript_path, file_mtime, lines_total, lines_indexed, project_path, session_timestamp, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(transcriptPath, mtime, linesTotal, linesIndexed, projectPath, sessionTimestamp, status);
   }
   getAllEmbeddings() {
     const rows = this.db.prepare(
@@ -30764,7 +30793,7 @@ function formatSearchResults(results) {
 function createServer() {
   const server = new McpServer({
     name: "transcripts",
-    version: "0.1.4"
+    version: "0.1.5"
   });
   server.registerTool(
     "search_transcripts",

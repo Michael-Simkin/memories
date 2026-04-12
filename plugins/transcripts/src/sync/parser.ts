@@ -10,7 +10,10 @@ export interface TranscriptMetadata {
   sessionTimestamp: number;
 }
 
-export function parseTranscriptFile(rawLines: string[]): {
+export function parseTranscriptFile(
+  rawLines: string[],
+  lineOffset = 0,
+): {
   metadata: TranscriptMetadata;
   turns: ParsedTurn[];
 } {
@@ -45,7 +48,7 @@ export function parseTranscriptFile(rawLines: string[]): {
     if (!text.trim()) continue;
 
     turns.push({
-      lineNumber: i + 1,
+      lineNumber: lineOffset + i + 1,
       role: role as 'user' | 'assistant',
       text,
     });

@@ -1,4 +1,6 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { openSync } from 'node:fs';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 import {
@@ -14,7 +16,10 @@ import {
   writeFailOpenOutput,
   writeHookOutput,
 } from '../shared/hook-io.js';
-import { logError } from '../shared/logger.js';
+import { isSyncRunning } from '../shared/lockfile.js';
+import { logError, logInfo } from '../shared/logger.js';
+import { resolveNode24Runtime } from '../shared/node-runtime.js';
+import { ensureGlobalDirectories, resolvePluginRoot } from '../shared/paths.js';
 import { sessionStartPayloadSchema } from '../shared/types.js';
 
 const execFileAsync = promisify(execFile);
@@ -161,6 +166,32 @@ function renderHealthyContext(): string {
   ].join('\n');
 }
 
+async function trySpawnSync(): Promise<void> {
+  const paths = await ensureGlobalDirectories();
+
+  if (await isSyncRunning(paths.syncLockPath)) {
+    return;
+  }
+
+  try {
+    const runtime = await resolveNode24Runtime();
+    const pluginRoot = resolvePluginRoot();
+    const runnerScript = path.join(pluginRoot, 'dist', 'sync', 'runner.js');
+    const stderrFd = openSync(paths.syncStderrPath, 'a');
+
+    const child = spawn(runtime.executable, [runnerScript], {
+      detached: true,
+      stdio: ['ignore', 'ignore', stderrFd],
+      env: { ...process.env },
+    });
+    child.unref();
+
+    logInfo('Spawned sync runner from session-start', { pid: child.pid });
+  } catch {
+    // Non-fatal — sync will run at session end instead
+  }
+}
+
 async function handleSessionStart(): Promise<HookResult> {
   const issue = await diagnoseOllama();
 
@@ -174,6 +205,9 @@ async function handleSessionStart(): Promise<HookResult> {
       },
     };
   }
+
+  // Ollama is healthy — trigger sync to catch up on any new transcripts
+  await trySpawnSync();
 
   return {
     continue: true,

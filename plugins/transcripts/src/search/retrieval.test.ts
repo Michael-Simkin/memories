@@ -33,7 +33,7 @@ async function createStoreWithChunks(): Promise<TranscriptStore> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'transcripts-search-'));
   const store = new TranscriptStore(path.join(dir, 'test.db'));
 
-  store.setSyncProgress('/a.jsonl', 100, 3, 'complete');
+  store.setCheckpoint('/a.jsonl', 100, 50, 3, '/project', 1000, 'complete');
 
   const chunks = [
     { id: 'c1', line: 1, role: 'user', text: 'How to write tests', seed: 1.0, ts: 1000 },

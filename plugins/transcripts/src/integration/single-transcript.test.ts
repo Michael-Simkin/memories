@@ -77,7 +77,7 @@ describe.skipIf(!transcriptExists)('single transcript integration', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'transcripts-integ-'));
     const store = new TranscriptStore(path.join(dir, 'test.db'));
 
-    store.setSyncProgress(SAMPLE_TRANSCRIPT, Date.now(), chunks.length, 'complete');
+    store.setCheckpoint(SAMPLE_TRANSCRIPT, Date.now(), 300, chunks.length, metadata.projectPath, metadata.sessionTimestamp, 'complete');
 
     for (const chunk of chunks) {
       store.insertChunk(chunk);
@@ -142,7 +142,7 @@ describe.skipIf(!transcriptExists)('single transcript ollama integration', () =>
     const dir = await mkdtemp(path.join(os.tmpdir(), 'transcripts-ollama-'));
     const store = new TranscriptStore(path.join(dir, 'test.db'));
 
-    store.setSyncProgress(SAMPLE_TRANSCRIPT, Date.now(), testChunks.length, 'complete');
+    store.setCheckpoint(SAMPLE_TRANSCRIPT, Date.now(), 300, testChunks.length, metadata.projectPath, metadata.sessionTimestamp, 'complete');
 
     for (const chunk of testChunks) {
       store.insertChunk(chunk);
