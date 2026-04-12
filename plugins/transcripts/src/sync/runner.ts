@@ -140,18 +140,20 @@ async function indexDelta(
 
   const chunks = chunkTurns(turns, transcriptPath, checkpoint.sessionTimestamp, checkpoint.projectPath);
 
+  // Embed OUTSIDE transaction — this is the slow part (network I/O)
+  const embeddings = await embedAllChunks(embedder, chunks);
+
+  // Write in one fast batch — transaction held only for SQLite writes
   store.beginTransaction();
   try {
-    let embeddedCount = 0;
-    for (const chunk of chunks) {
-      store.insertChunk(chunk);
-      const vector = await embedder.embed(chunk.chunkText);
-      if (vector) {
-        store.insertEmbedding(chunk.chunkId, vector);
-        embeddedCount++;
+    for (let i = 0; i < chunks.length; i++) {
+      store.insertChunk(chunks[i]!);
+      if (embeddings[i]) {
+        store.insertEmbedding(chunks[i]!.chunkId, embeddings[i]!);
       }
     }
 
+    const embeddedCount = embeddings.filter(Boolean).length;
     store.setCheckpoint(
       transcriptPath, mtime, currentLineCount, checkpoint.linesIndexed + embeddedCount,
       checkpoint.projectPath, checkpoint.sessionTimestamp, 'complete',
@@ -189,6 +191,10 @@ async function indexFull(
 
   const chunks = chunkTurns(turns, transcriptPath, metadata.sessionTimestamp, metadata.projectPath);
 
+  // Embed OUTSIDE transaction — this is the slow part (network I/O)
+  const embeddings = await embedAllChunks(embedder, chunks);
+
+  // Write in one fast batch — transaction held only for SQLite writes
   store.deleteChunksForTranscript(transcriptPath);
   store.beginTransaction();
 
@@ -198,16 +204,14 @@ async function indexFull(
       metadata.projectPath, metadata.sessionTimestamp, 'partial',
     );
 
-    let embeddedCount = 0;
-    for (const chunk of chunks) {
-      store.insertChunk(chunk);
-      const vector = await embedder.embed(chunk.chunkText);
-      if (vector) {
-        store.insertEmbedding(chunk.chunkId, vector);
-        embeddedCount++;
+    for (let i = 0; i < chunks.length; i++) {
+      store.insertChunk(chunks[i]!);
+      if (embeddings[i]) {
+        store.insertEmbedding(chunks[i]!.chunkId, embeddings[i]!);
       }
     }
 
+    const embeddedCount = embeddings.filter(Boolean).length;
     store.setCheckpoint(
       transcriptPath, mtime, currentLineCount, embeddedCount,
       metadata.projectPath, metadata.sessionTimestamp, 'complete',
@@ -224,6 +228,17 @@ async function indexFull(
     store.rollbackTransaction();
     throw error;
   }
+}
+
+async function embedAllChunks(
+  embedder: EmbeddingClient,
+  chunks: Array<{ chunkText: string }>,
+): Promise<Array<number[] | null>> {
+  const results: Array<number[] | null> = [];
+  for (const chunk of chunks) {
+    results.push(await embedder.embed(chunk.chunkText));
+  }
+  return results;
 }
 
 void run().catch((error) => {

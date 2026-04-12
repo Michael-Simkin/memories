@@ -14606,17 +14606,16 @@ async function indexDelta(store, embedder, transcriptPath, mtime, rawLines, chec
     return;
   }
   const chunks = chunkTurns(turns, transcriptPath, checkpoint.sessionTimestamp, checkpoint.projectPath);
+  const embeddings = await embedAllChunks(embedder, chunks);
   store.beginTransaction();
   try {
-    let embeddedCount = 0;
-    for (const chunk of chunks) {
-      store.insertChunk(chunk);
-      const vector = await embedder.embed(chunk.chunkText);
-      if (vector) {
-        store.insertEmbedding(chunk.chunkId, vector);
-        embeddedCount++;
+    for (let i = 0; i < chunks.length; i++) {
+      store.insertChunk(chunks[i]);
+      if (embeddings[i]) {
+        store.insertEmbedding(chunks[i].chunkId, embeddings[i]);
       }
     }
+    const embeddedCount = embeddings.filter(Boolean).length;
     store.setCheckpoint(
       transcriptPath,
       mtime,
@@ -14647,6 +14646,7 @@ async function indexFull(store, embedder, transcriptPath, mtime, rawLines, curre
     return;
   }
   const chunks = chunkTurns(turns, transcriptPath, metadata.sessionTimestamp, metadata.projectPath);
+  const embeddings = await embedAllChunks(embedder, chunks);
   store.deleteChunksForTranscript(transcriptPath);
   store.beginTransaction();
   try {
@@ -14659,15 +14659,13 @@ async function indexFull(store, embedder, transcriptPath, mtime, rawLines, curre
       metadata.sessionTimestamp,
       "partial"
     );
-    let embeddedCount = 0;
-    for (const chunk of chunks) {
-      store.insertChunk(chunk);
-      const vector = await embedder.embed(chunk.chunkText);
-      if (vector) {
-        store.insertEmbedding(chunk.chunkId, vector);
-        embeddedCount++;
+    for (let i = 0; i < chunks.length; i++) {
+      store.insertChunk(chunks[i]);
+      if (embeddings[i]) {
+        store.insertEmbedding(chunks[i].chunkId, embeddings[i]);
       }
     }
+    const embeddedCount = embeddings.filter(Boolean).length;
     store.setCheckpoint(
       transcriptPath,
       mtime,
@@ -14688,6 +14686,13 @@ async function indexFull(store, embedder, transcriptPath, mtime, rawLines, curre
     store.rollbackTransaction();
     throw error48;
   }
+}
+async function embedAllChunks(embedder, chunks) {
+  const results = [];
+  for (const chunk of chunks) {
+    results.push(await embedder.embed(chunk.chunkText));
+  }
+  return results;
 }
 void run().catch((error48) => {
   logError("Sync runner failed", {
