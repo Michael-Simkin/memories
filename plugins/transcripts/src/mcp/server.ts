@@ -84,7 +84,7 @@ function formatSearchResults(results: SearchResult[]): string {
 function createServer(): McpServer {
   const server = new McpServer({
     name: 'transcripts',
-    version: '0.1.7',
+    version: '0.1.8',
   });
 
   server.registerTool(

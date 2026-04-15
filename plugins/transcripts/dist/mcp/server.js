@@ -30793,7 +30793,7 @@ function formatSearchResults(results) {
 function createServer() {
   const server = new McpServer({
     name: "transcripts",
-    version: "0.1.7"
+    version: "0.1.8"
   });
   server.registerTool(
     "search_transcripts",
