@@ -25,6 +25,7 @@ export default tseslint.config(
           path.join(configDirectory, 'plugins/memories/tsconfig.json'),
           path.join(configDirectory, 'plugins/memories/tsconfig.test.json'),
           path.join(configDirectory, 'plugins/memories/web/tsconfig.json'),
+          path.join(configDirectory, 'plugins/mermaid-validator/tsconfig.json'),
         ],
         tsconfigRootDir: configDirectory,
       },

@@ -31,6 +31,18 @@
       "category": "developer-productivity",
       "tags": ["transcripts", "search", "retrieval"],
       "strict": true
+    },
+    {
+      "name": "mermaid-validator",
+      "source": "./plugins/mermaid-validator",
+      "description": "Validate mermaid diagrams in markdown files on every Write/Edit and feed parse errors back to Claude",
+      "homepage": "https://github.com/Michael-Simkin/memories/tree/master/plugins/mermaid-validator",
+      "repository": "https://github.com/Michael-Simkin/memories",
+      "license": "MIT",
+      "keywords": ["claude-code", "mermaid", "markdown", "validation", "hooks"],
+      "category": "developer-productivity",
+      "tags": ["mermaid", "markdown", "validation"],
+      "strict": true
     }
   ]
 }

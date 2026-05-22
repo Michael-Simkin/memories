@@ -1,0 +1,11 @@
+{
+  "name": "mermaid-validator",
+  "version": "0.1.0",
+  "description": "Validate mermaid diagrams in markdown files after every Write/Edit",
+  "author": {
+    "name": "Michael Simkin"
+  },
+  "repository": "https://github.com/Michael-Simkin/memories",
+  "license": "MIT",
+  "keywords": ["mermaid", "validation", "markdown", "hooks", "claude-code"]
+}

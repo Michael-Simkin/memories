@@ -1,0 +1,14 @@
+# False positives from bundled library code in mermaid-validator's dist build.
+# All findings are inside `plugins/mermaid-validator/dist/hooks/post-tool-use.js`,
+# which is a tsup-produced ESM bundle of happy-dom + mermaid + dompurify.
+
+# happy-dom ships a self-signed test cert/key for its mock HTTPS fetch path.
+# Source: node_modules/happy-dom/src/fetch/certificate/FetchHTTPSCertificate.ts
+plugins/mermaid-validator/dist/hooks/post-tool-use.js:private-key:207161
+
+# Minified-looking identifiers from lodash (getAllKeysIn_default2) and
+# chevrotain (setNodeLocationFromToken) — pure code, not secrets.
+plugins/mermaid-validator/dist/hooks/post-tool-use.js:generic-api-key:101308
+plugins/mermaid-validator/dist/hooks/post-tool-use.js:generic-api-key:119456
+plugins/mermaid-validator/dist/hooks/post-tool-use.js:generic-api-key:119468
+plugins/mermaid-validator/dist/hooks/post-tool-use.js:generic-api-key:119474
