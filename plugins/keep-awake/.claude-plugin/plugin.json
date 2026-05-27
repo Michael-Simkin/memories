@@ -1,0 +1,11 @@
+{
+  "name": "keep-awake",
+  "version": "0.1.0",
+  "description": "Keep macOS awake while Claude is working, via caffeinate power assertions",
+  "author": {
+    "name": "Michael Simkin"
+  },
+  "repository": "https://github.com/Michael-Simkin/memories",
+  "license": "MIT",
+  "keywords": ["caffeinate", "macos", "sleep", "power", "hooks", "claude-code"]
+}

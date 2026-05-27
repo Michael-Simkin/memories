@@ -43,6 +43,18 @@
       "category": "developer-productivity",
       "tags": ["mermaid", "markdown", "validation"],
       "strict": true
+    },
+    {
+      "name": "keep-awake",
+      "source": "./plugins/keep-awake",
+      "description": "Keep your Mac awake while Claude is working — macOS caffeinate power assertions driven by activity hooks",
+      "homepage": "https://github.com/Michael-Simkin/memories/tree/master/plugins/keep-awake",
+      "repository": "https://github.com/Michael-Simkin/memories",
+      "license": "MIT",
+      "keywords": ["claude-code", "caffeinate", "macos", "sleep", "hooks"],
+      "category": "developer-productivity",
+      "tags": ["macos", "power", "sleep"],
+      "strict": true
     }
   ]
 }
