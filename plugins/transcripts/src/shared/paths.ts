@@ -14,7 +14,8 @@ export interface GlobalPaths {
 }
 
 export function resolvePluginRoot(): string {
-  const envPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  const envPluginRoot =
+    process.env.PLUGIN_ROOT ?? process.env.CODEX_PLUGIN_ROOT ?? process.env.CLAUDE_PLUGIN_ROOT;
   if (envPluginRoot && path.isAbsolute(envPluginRoot)) {
     return envPluginRoot;
   }

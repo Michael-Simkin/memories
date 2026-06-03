@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/post-tool-use.js\""
+            "command": "sh -c 'root=\"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}}\"; [ -n \"$root\" ] || exit 0; exec node \"$root/dist/hooks/post-tool-use.js\"'"
           }
         ]
       }

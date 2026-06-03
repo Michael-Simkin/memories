@@ -2,8 +2,11 @@
   "mcpServers": {
     "memories": {
       "type": "stdio",
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/search-server.js"],
+      "command": "sh",
+      "args": [
+        "-c",
+        "root=\"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$(pwd)}}}\"; exec node \"$root/dist/mcp/search-server.js\""
+      ],
       "env": {
         "MEMORIES_MCP_ENGINE_TIMEOUT_MS": "2500"
       }

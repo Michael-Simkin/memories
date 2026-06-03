@@ -1,0 +1,56 @@
+{
+  "name": "claude-memory",
+  "interface": {
+    "displayName": "Claude Memory Codex Plugins"
+  },
+  "plugins": [
+    {
+      "name": "memories",
+      "source": {
+        "source": "local",
+        "path": "./plugins/memories"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "transcripts",
+      "source": {
+        "source": "local",
+        "path": "./plugins/transcripts"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "mermaid-validator",
+      "source": {
+        "source": "local",
+        "path": "./plugins/mermaid-validator"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "keep-awake",
+      "source": {
+        "source": "local",
+        "path": "./plugins/keep-awake"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

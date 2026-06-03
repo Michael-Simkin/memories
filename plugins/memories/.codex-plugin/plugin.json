@@ -1,0 +1,24 @@
+{
+  "name": "memories",
+  "version": "0.2.30",
+  "description": "Project-scoped memory for coding agent sessions",
+  "author": {
+    "name": "Michael Simkin",
+    "email": "michaelsi@monday.com"
+  },
+  "homepage": "https://github.com/Michael-Simkin/memories/tree/master/plugins/memories",
+  "repository": "https://github.com/Michael-Simkin/memories",
+  "license": "MIT",
+  "keywords": ["memory", "retrieval", "hooks", "sqlite", "codex"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Memories",
+    "shortDescription": "Project memory retrieval for agent sessions",
+    "longDescription": "Provides project-scoped memory retrieval and lifecycle support for local coding-agent workflows.",
+    "developerName": "Michael Simkin",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "websiteURL": "https://github.com/Michael-Simkin/memories",
+    "defaultPrompt": ["Search project memories before changing code."]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "transcripts",
+  "version": "0.1.8",
+  "description": "Semantic search over coding-agent session transcripts",
+  "author": {
+    "name": "Michael Simkin",
+    "email": "michaelsi@monday.com"
+  },
+  "homepage": "https://github.com/Michael-Simkin/memories/tree/master/plugins/transcripts",
+  "repository": "https://github.com/Michael-Simkin/memories",
+  "license": "MIT",
+  "keywords": ["transcripts", "search", "embeddings", "sqlite", "codex"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Transcripts",
+    "shortDescription": "Search prior session transcripts",
+    "longDescription": "Adds skills and MCP tools for validating implementation plans against prior local coding-agent transcripts.",
+    "developerName": "Michael Simkin",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read"],
+    "websiteURL": "https://github.com/Michael-Simkin/memories",
+    "defaultPrompt": ["Validate this plan against past transcripts."]
+  }
+}

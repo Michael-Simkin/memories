@@ -2,8 +2,11 @@
   "mcpServers": {
     "transcripts": {
       "type": "stdio",
-      "command": "bash",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/mcp-launcher.sh"]
+      "command": "sh",
+      "args": [
+        "-c",
+        "root=\"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$(pwd)}}}\"; exec \"$root/bin/mcp-launcher.sh\""
+      ]
     }
   }
 }

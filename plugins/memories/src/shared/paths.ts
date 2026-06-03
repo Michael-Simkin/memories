@@ -25,7 +25,7 @@ export function resolveProjectRoot(explicitProjectRoot?: string): string {
     return explicitProjectRoot;
   }
 
-  const envProjectRoot = process.env.CLAUDE_PROJECT_DIR;
+  const envProjectRoot = process.env.CODEX_PROJECT_DIR ?? process.env.CLAUDE_PROJECT_DIR;
   if (envProjectRoot && path.isAbsolute(envProjectRoot)) {
     return envProjectRoot;
   }
@@ -34,7 +34,8 @@ export function resolveProjectRoot(explicitProjectRoot?: string): string {
 }
 
 export function resolvePluginRoot(): string {
-  const envPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  const envPluginRoot =
+    process.env.PLUGIN_ROOT ?? process.env.CODEX_PLUGIN_ROOT ?? process.env.CLAUDE_PLUGIN_ROOT;
   if (envPluginRoot && path.isAbsolute(envPluginRoot)) {
     return envPluginRoot;
   }

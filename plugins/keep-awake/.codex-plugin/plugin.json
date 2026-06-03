@@ -1,0 +1,23 @@
+{
+  "name": "keep-awake",
+  "version": "0.1.0",
+  "description": "Keep macOS awake during local coding-agent work",
+  "author": {
+    "name": "Michael Simkin",
+    "email": "michaelsi@monday.com"
+  },
+  "homepage": "https://github.com/Michael-Simkin/memories/tree/master/plugins/keep-awake",
+  "repository": "https://github.com/Michael-Simkin/memories",
+  "license": "MIT",
+  "keywords": ["caffeinate", "macos", "sleep", "power", "hooks", "codex"],
+  "interface": {
+    "displayName": "Keep Awake",
+    "shortDescription": "Keep macOS awake while agents work",
+    "longDescription": "Refreshes a macOS caffeinate power assertion during local coding-agent activity so long-running work is not interrupted by sleep.",
+    "developerName": "Michael Simkin",
+    "category": "Productivity",
+    "capabilities": ["Interactive"],
+    "websiteURL": "https://github.com/Michael-Simkin/memories",
+    "defaultPrompt": ["Keep my Mac awake while Codex works."]
+  }
+}

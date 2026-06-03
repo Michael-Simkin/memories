@@ -1,0 +1,23 @@
+{
+  "name": "mermaid-validator",
+  "version": "0.1.0",
+  "description": "Validate Mermaid diagrams in markdown files after edits",
+  "author": {
+    "name": "Michael Simkin",
+    "email": "michaelsi@monday.com"
+  },
+  "homepage": "https://github.com/Michael-Simkin/memories/tree/master/plugins/mermaid-validator",
+  "repository": "https://github.com/Michael-Simkin/memories",
+  "license": "MIT",
+  "keywords": ["mermaid", "validation", "markdown", "hooks", "codex"],
+  "interface": {
+    "displayName": "Mermaid Validator",
+    "shortDescription": "Validate Mermaid markdown diagrams",
+    "longDescription": "Runs local Mermaid validation for markdown diagrams so syntax errors are surfaced during coding-agent edits.",
+    "developerName": "Michael Simkin",
+    "category": "Developer Tools",
+    "capabilities": ["Read"],
+    "websiteURL": "https://github.com/Michael-Simkin/memories",
+    "defaultPrompt": ["Validate Mermaid diagrams in markdown edits."]
+  }
+}
